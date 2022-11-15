@@ -5,13 +5,17 @@ use bevy::{
 use std::{borrow::Cow, collections::HashMap, num::NonZeroU16, str::FromStr};
 use thiserror::Error;
 
-const CHUNK_DIAMETER: usize = 16;
-
 type BlockID = NonZeroU16;
 pub type BlockCoordinate = nalgebra::Vector3<i64>;
 pub type BlockLocalCoordinate = nalgebra::Vector3<i8>;
 
-#[derive(Clone, Copy)]
+#[derive(Error, Debug)]
+pub enum BlockIndexError {
+    #[error("Indexed block out of chunk range.")]
+    OutOfRange,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub enum BlockDirection {
     Up,
     Down,
@@ -104,17 +108,17 @@ impl BlockFaces {
     }
 }
 
-struct BlockNeighborSet<'a> {
-    up: Option<&'a Block>,
-    down: Option<&'a Block>,
-    north: Option<&'a Block>,
-    south: Option<&'a Block>,
-    east: Option<&'a Block>,
-    west: Option<&'a Block>,
+struct BlockNeighborSet {
+    up: Option<Block>,
+    down: Option<Block>,
+    north: Option<Block>,
+    south: Option<Block>,
+    east: Option<Block>,
+    west: Option<Block>,
 }
 
-impl<'a> BlockNeighborSet<'a> {
-    fn get(&self, direction: BlockDirection) -> Option<&'a Block> {
+impl<'a> BlockNeighborSet {
+    fn get(&self, direction: BlockDirection) -> Option<Block> {
         match direction {
             BlockDirection::Up => self.up,
             BlockDirection::Down => self.down,
@@ -328,7 +332,7 @@ impl BlockRegistry {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Block {
     id: BlockID,
 }
@@ -441,6 +445,7 @@ impl Block {
             [0.0, 1.0],
         ];
 
+        // if matches!(direction, BlockDirection::Up) {
         let range = match direction {
             BlockDirection::Up => 0..=3,
             BlockDirection::Down => 4..=7,
@@ -471,6 +476,7 @@ impl Block {
             starting_index + 3,
             starting_index + 0,
         ]);
+        // }
     }
 
     fn add_to_mesh(
@@ -483,7 +489,7 @@ impl Block {
         indices: &mut Vec<u32>,
     ) {
         for direction in BlockDirection::ALL {
-            let neighbor = neighbors.get(direction.inverse());
+            let neighbor = neighbors.get(direction);
 
             // We have to draw this face.
             if neighbor.is_none() {
@@ -495,13 +501,15 @@ impl Block {
 
 #[derive(Component)]
 pub struct Chunk {
-    blocks: [[[Option<Block>; CHUNK_DIAMETER]; CHUNK_DIAMETER]; CHUNK_DIAMETER],
+    blocks: [[[Option<Block>; Self::CHUNK_DIAMETER]; Self::CHUNK_DIAMETER]; Self::CHUNK_DIAMETER],
 }
 
 impl Chunk {
+    pub const CHUNK_DIAMETER: usize = 16;
+
     pub fn new(block: Option<Block>) -> Self {
         Self {
-            blocks: [[[block; CHUNK_DIAMETER]; CHUNK_DIAMETER]; CHUNK_DIAMETER],
+            blocks: [[[block; Self::CHUNK_DIAMETER]; Self::CHUNK_DIAMETER]; Self::CHUNK_DIAMETER],
         }
     }
 
@@ -509,19 +517,49 @@ impl Chunk {
         &self,
         position: BlockLocalCoordinate,
         direction: BlockDirection,
-    ) -> Option<&Block> {
-        let offset: BlockLocalCoordinate = direction.inverse().into();
+    ) -> Option<Block> {
+        let offset: BlockLocalCoordinate = direction.into();
         let new_position = position + offset;
 
         self.get_block_local(new_position)
     }
 
-    pub fn get_block_local(&self, position: BlockLocalCoordinate) -> Option<&Block> {
+    pub fn get_block_local(&self, position: BlockLocalCoordinate) -> Option<Block> {
         let x: usize = position.x.try_into().ok()?;
         let y: usize = position.y.try_into().ok()?;
         let z: usize = position.z.try_into().ok()?;
 
-        self.blocks.get(x)?.get(y)?.get(z)?.as_ref()
+        self.blocks.get(z)?.get(y)?.get(x).and_then(|block| *block)
+    }
+
+    pub fn set_block_local(
+        &mut self,
+        position: BlockLocalCoordinate,
+        block: Option<Block>,
+    ) -> Result<(), BlockIndexError> {
+        let x: usize = position
+            .x
+            .try_into()
+            .map_err(|_error| BlockIndexError::OutOfRange)?;
+        let y: usize = position
+            .y
+            .try_into()
+            .map_err(|_error| BlockIndexError::OutOfRange)?;
+        let z: usize = position
+            .z
+            .try_into()
+            .map_err(|_error| BlockIndexError::OutOfRange)?;
+
+        *self
+            .blocks
+            .get_mut(z)
+            .ok_or(BlockIndexError::OutOfRange)?
+            .get_mut(y)
+            .ok_or(BlockIndexError::OutOfRange)?
+            .get_mut(x)
+            .ok_or(BlockIndexError::OutOfRange)? = block;
+
+        Ok(())
     }
 
     pub fn build_mesh(&self) -> Mesh {

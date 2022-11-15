@@ -1,6 +1,9 @@
 use bevy::prelude::*;
 use bevy_flycam::PlayerPlugin;
+use integer_sqrt::IntegerSquareRoot;
 use terrain::{BlockRegistry, BlockTag};
+
+use crate::terrain::BlockLocalCoordinate;
 
 mod terrain;
 
@@ -57,7 +60,28 @@ fn setup(
     let stone_data = block_registry.get_by_tag(&stone_tag).unwrap();
     let stone_block = stone_data.spawn();
 
-    let chunk = terrain::Chunk::new(Some(stone_block));
+    use terrain::Chunk;
+
+    let mut chunk = Chunk::new(Some(stone_block));
+    for x in 0..Chunk::CHUNK_DIAMETER {
+        for y in 0..Chunk::CHUNK_DIAMETER {
+            for z in 0..Chunk::CHUNK_DIAMETER {
+                let x = x as f32;
+                let y = y as f32;
+                let z = z as f32;
+
+                let height = ((x / 16.0) * std::f64::consts::PI as f32).sin()
+                    * ((z / 16.0) * std::f64::consts::PI as f32).sin()
+                    * 16.0;
+                if y > height {
+                    chunk
+                        .set_block_local(BlockLocalCoordinate::new(x as i8, y as i8, z as i8), None)
+                        .ok();
+                }
+            }
+        }
+    }
+
     let chunk_mesh = chunk.build_mesh();
 
     commands.spawn(chunk);

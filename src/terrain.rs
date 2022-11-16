@@ -185,16 +185,16 @@ impl<'a> BlockTag<'a> {
     }
 
     fn get_parts(s: &str) -> Result<(&str, &str), BlockTagParseError> {
-        if s.contains(":") {
+        if s.contains(':') {
             let mut iter = s.split(':');
             let namespace = iter
                 .next()
-                .filter(|s| *s != "")
+                .filter(|s| !s.is_empty())
                 .map_or(Err(BlockTagParseError::MissingNamespace), Ok)?;
 
             let block_name = iter
                 .next()
-                .filter(|s| *s != "")
+                .filter(|s| !s.is_empty())
                 .map_or(Err(BlockTagParseError::MissingBlockName), Ok)?;
 
             if iter.next().is_some() {
@@ -303,28 +303,30 @@ impl BlockRegistry {
         name: impl Into<String>,
         faces: Option<BlockFaces>,
     ) -> Result<(), BlockTagError<'static>> {
-        if !self.block_tags.contains_key(&tag) {
+        // We need to report an error if an insertion isn't done, so this will stay an error if an insertion doesn't happen.
+        let mut result = Err(BlockTagError::AlreadyExists);
+        self.block_tags.entry(tag).or_insert_with(|| {
+            result = Ok(()); // We inserted! That means we can return Ok.
+
             let name = name.into();
 
             let id = self.block_data.len() as u16;
             let id = BlockID::new(id + 1).expect("Block ID miscalculated.");
             self.block_data.push(BlockData { name, id, faces });
-            self.block_tags.insert(tag, id);
+            id
+        });
 
-            Ok(())
-        } else {
-            Err(BlockTagError::AlreadyExists)
-        }
+        result
     }
 
-    pub fn get_by_tag<'a>(&self, tag: &BlockTag) -> Result<&BlockData, BlockTagError> {
+    pub fn get_by_tag(&self, tag: &BlockTag) -> Result<&BlockData, BlockTagError> {
         let id = self
             .block_tags
             .get(tag)
-            .ok_or(BlockTagError::NotFound(tag.to_static()))?;
+            .ok_or_else(|| BlockTagError::NotFound(tag.to_static()))?;
         self.block_data
             .get(id.get() as usize - 1)
-            .ok_or(BlockTagError::NotFound(tag.to_static()))
+            .ok_or_else(|| BlockTagError::NotFound(tag.to_static()))
     }
 
     pub fn get(&self, block: &Block) -> Option<&BlockData> {
@@ -469,12 +471,12 @@ impl Block {
         uvs.extend(uv_iter);
 
         indices.extend_from_slice(&[
-            starting_index + 0,
+            starting_index,
             starting_index + 1,
             starting_index + 2,
             starting_index + 2,
             starting_index + 3,
-            starting_index + 0,
+            starting_index,
         ]);
         // }
     }

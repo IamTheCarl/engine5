@@ -1,6 +1,5 @@
 use bevy::prelude::*;
 use bevy_flycam::PlayerPlugin;
-use integer_sqrt::IntegerSquareRoot;
 use terrain::{BlockRegistry, BlockTag};
 
 use crate::terrain::BlockLocalCoordinate;

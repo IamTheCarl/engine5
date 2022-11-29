@@ -478,7 +478,6 @@ impl Block {
             starting_index + 3,
             starting_index,
         ]);
-        // }
     }
 
     fn add_to_mesh(
@@ -606,7 +605,7 @@ impl Chunk {
 
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertex_buffer);
         mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-        // mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
         mesh.set_indices(Some(Indices::U32(indices)));
 
         mesh

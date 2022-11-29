@@ -30,6 +30,7 @@ impl Plugin for Engine5 {
 
 fn setup(
     mut commands: Commands,
+    asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -83,10 +84,13 @@ fn setup(
 
     let chunk_mesh = chunk.build_mesh();
 
+    let terrain_image: Handle<Image> = asset_server.load("terrain/default-color.png");
+
     commands.spawn(chunk);
     commands.spawn(PbrBundle {
         mesh: meshes.add(chunk_mesh),
-        material: materials.add(Color::rgb(0.8, 0.2, 0.2).into()),
+        // material: materials.add(Color::rgb(0.8, 0.2, 0.2).into()),
+        material: materials.add(terrain_image.into()),
         transform: Transform::from_xyz(8.0, 0.5, 8.0),
         ..Default::default()
     });

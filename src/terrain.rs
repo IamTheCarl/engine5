@@ -1,7 +1,12 @@
 use bevy::{
     prelude::*,
-    render::{mesh::Indices, render_resource::PrimitiveTopology},
+    reflect::TypeUuid,
+    render::{
+        mesh::{Indices, MeshVertexAttribute, VertexAttributeValues},
+        render_resource::{AsBindGroup, PrimitiveTopology, ShaderRef, VertexFormat},
+    },
 };
+use nalgebra::{Vector2, Vector3};
 use std::{borrow::Cow, collections::HashMap, num::NonZeroU16, str::FromStr};
 use thiserror::Error;
 
@@ -342,109 +347,107 @@ pub struct Block {
 impl Block {
     fn insert_face(
         direction: BlockDirection,
-        offset: &[f32],
-        vertex_buffer: &mut Vec<[f32; 3]>,
-        normals: &mut Vec<[f32; 3]>,
-        uvs: &mut Vec<[f32; 2]>,
+        offset: Vector3<u8>,
+        vertex_buffer: &mut Vec<u32>,
         indices: &mut Vec<u32>,
     ) {
         let source_vertices = &[
             // Top
-            [1.0, 1.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 1.0, 1.0],
-            [1.0, 1.0, 1.0],
+            [1, 1, 0],
+            [0, 1, 0],
+            [0, 1, 1],
+            [1, 1, 1],
             // Bottom
-            [1.0, 0.0, 1.0],
-            [0.0, 0.0, 1.0],
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
+            [1, 0, 1],
+            [0, 0, 1],
+            [0, 0, 0],
+            [1, 0, 0],
             // East
-            [1.0, 0.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [1.0, 1.0, 1.0],
-            [1.0, 0.0, 1.0],
+            [1, 0, 0],
+            [1, 1, 0],
+            [1, 1, 1],
+            [1, 0, 1],
             // West
-            [0.0, 0.0, 1.0],
-            [0.0, 1.0, 1.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0],
+            [0, 0, 1],
+            [0, 1, 1],
+            [0, 1, 0],
+            [0, 0, 0],
             // North
-            [0.0, 0.0, 1.0],
-            [1.0, 0.0, 1.0],
-            [1.0, 1.0, 1.0],
-            [0.0, 1.0, 1.0],
+            [0, 0, 1],
+            [1, 0, 1],
+            [1, 1, 1],
+            [0, 1, 1],
             // South
-            [0.0, 1.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
+            [0, 1, 0],
+            [1, 1, 0],
+            [1, 0, 0],
+            [0, 0, 0],
         ];
 
         let source_normals = &[
             // Top
-            [0.0, 1.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 1.0, 0.0],
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 1, 0],
             // Bottom
-            [0.0, -1.0, 0.0],
-            [0.0, -1.0, 0.0],
-            [0.0, -1.0, 0.0],
-            [0.0, -1.0, 0.0],
+            [0, -1, 0],
+            [0, -1, 0],
+            [0, -1, 0],
+            [0, -1, 0],
             // East
-            [1.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
+            [1, 0, 0],
+            [1, 0, 0],
+            [1, 0, 0],
+            [1, 0, 0],
             // West
-            [-1.0, 0.0, 0.0],
-            [-1.0, 0.0, 0.0],
-            [-1.0, 0.0, 0.0],
-            [-1.0, 0.0, 0.0],
+            [-1, 0, 0],
+            [-1, 0, 0],
+            [-1, 0, 0],
+            [-1, 0, 0],
             // North
-            [0.0, 0.0, 1.0],
-            [0.0, 0.0, 1.0],
-            [0.0, 0.0, 1.0],
-            [0.0, 0.0, 1.0],
+            [0, 0, 1],
+            [0, 0, 1],
+            [0, 0, 1],
+            [0, 0, 1],
             // South
-            [0.0, 0.0, -1.0],
-            [0.0, 0.0, -1.0],
-            [0.0, 0.0, -1.0],
-            [0.0, 0.0, -1.0],
+            [0, 0, -1],
+            [0, 0, -1],
+            [0, 0, -1],
+            [0, 0, -1],
         ];
 
         let source_uv = [
             // Top
-            [0.0, 0.0],
-            [1.0, 0.0],
-            [1.0, 1.0],
-            [0.0, 1.0],
+            [0, 0],
+            [1, 0],
+            [1, 1],
+            [0, 1],
             // Bottom
-            [0.0, 0.0],
-            [1.0, 0.0],
-            [1.0, 1.0],
-            [0.0, 1.0],
+            [0, 0],
+            [1, 0],
+            [1, 1],
+            [0, 1],
             // East
-            [0.0, 0.0],
-            [1.0, 0.0],
-            [1.0, 1.0],
-            [0.0, 1.0],
+            [0, 0],
+            [1, 0],
+            [1, 1],
+            [0, 1],
             // West
-            [0.0, 0.0],
-            [1.0, 0.0],
-            [1.0, 1.0],
-            [0.0, 1.0],
+            [0, 0],
+            [1, 0],
+            [1, 1],
+            [0, 1],
             // North
-            [0.0, 0.0],
-            [1.0, 0.0],
-            [1.0, 1.0],
-            [0.0, 1.0],
+            [0, 0],
+            [1, 0],
+            [1, 1],
+            [0, 1],
             // South
-            [0.0, 0.0],
-            [1.0, 0.0],
-            [1.0, 1.0],
-            [0.0, 1.0],
+            [0, 0],
+            [1, 0],
+            [1, 1],
+            [0, 1],
         ];
 
         // if matches!(direction, BlockDirection::Up) {
@@ -461,14 +464,39 @@ impl Block {
 
         let vertex_iter = source_vertices[range.clone()]
             .iter()
-            .map(|vec| [vec[0] + offset[0], vec[1] + offset[1], vec[2] + offset[2]]);
+            .map(|vec| Vector3::from(*vec) + offset)
+            .zip(
+                source_normals[range.clone()]
+                    .iter()
+                    .map(|normal| Vector3::from(*normal)),
+            )
+            .zip(source_uv[range].iter().map(|uv| Vector2::from(*uv)))
+            .map(|((position, normal), uv)| -> u32 {
+                TerrainVertex {
+                    position,
+                    normal,
+                    uv,
+                }
+                .into()
+            });
+
+        // let vertex_iter = source_vertices[range]
+        //     .iter()
+        //     .map(|vec| Vector3::from(*vec) + offset)
+        //     .map(|position| -> u32 {
+        //         TerrainVertex {
+        //             position,
+        //             normal: Vector3::new(0, 1, 0),
+        //             uv: Vector2::new(0, 0),
+        //         }
+        //         .into()
+        //     });
+
+        // if !matches!(direction, BlockDirection::Up) {
+        //     return;
+        // }
+
         vertex_buffer.extend(vertex_iter);
-
-        let normal_iter = source_normals[range.clone()].iter();
-        normals.extend(normal_iter);
-
-        let uv_iter = source_uv[range].iter();
-        uvs.extend(uv_iter);
 
         indices.extend_from_slice(&[
             starting_index,
@@ -483,10 +511,8 @@ impl Block {
     fn add_to_mesh(
         &self,
         neighbors: BlockNeighborSet,
-        offset: &[f32],
-        vertex_buffer: &mut Vec<[f32; 3]>,
-        normals: &mut Vec<[f32; 3]>,
-        uvs: &mut Vec<[f32; 2]>,
+        offset: Vector3<u8>,
+        vertex_buffer: &mut Vec<u32>,
         indices: &mut Vec<u32>,
     ) {
         for direction in BlockDirection::ALL {
@@ -494,10 +520,86 @@ impl Block {
 
             // We have to draw this face.
             if neighbor.is_none() {
-                Self::insert_face(direction, offset, vertex_buffer, normals, uvs, indices);
+                Self::insert_face(direction, offset, vertex_buffer, indices);
             }
         }
     }
+}
+
+#[derive(Debug)]
+struct TerrainVertex {
+    position: Vector3<u8>,
+    normal: Vector3<i8>,
+    uv: Vector2<u8>,
+}
+
+#[inline]
+fn insert_vertex_bit(word: &mut u32, value: impl Into<u32>, width: usize, offset: usize) {
+    let value = value.into();
+
+    *word |= (value << offset) & ((!0u32 >> (32 - width)) << offset);
+}
+
+impl From<TerrainVertex> for u32 {
+    fn from(vertex: TerrainVertex) -> Self {
+        let mut value = 0u32;
+
+        insert_vertex_bit(&mut value, vertex.position.x, 5, 0);
+        insert_vertex_bit(&mut value, vertex.position.y, 5, 5);
+        insert_vertex_bit(&mut value, vertex.position.z, 5, 10);
+
+        insert_vertex_bit(&mut value, vertex.normal.x as u8, 2, 15);
+        insert_vertex_bit(&mut value, vertex.normal.y as u8, 2, 17);
+        insert_vertex_bit(&mut value, vertex.normal.z as u8, 2, 19);
+
+        insert_vertex_bit(&mut value, vertex.uv.x, 1, 21);
+        insert_vertex_bit(&mut value, vertex.uv.y, 1, 22);
+
+        value
+    }
+}
+
+#[test]
+fn terrain_vertex_encode() {
+    let value: u32 = TerrainVertex {
+        position: nalgebra::Vector3::new(0xFF, 0xEE, 0xDD),
+        normal: nalgebra::Vector3::new(0, 1, -1),
+        uv: nalgebra::Vector2::new(0, 1),
+    }
+    .into();
+
+    // This is equivalent to the decode function used in the shader side of this rendering system.
+    fn extract_unsigned(word: u32, width: u32, offset: u32) -> u32 {
+        (word >> offset) & (!0u32 >> (32u32 - width))
+    }
+
+    fn extract_signed(word: u32, width: u32, offset: u32) -> i32 {
+        let unsigned = (word >> offset) & (!0u32 >> (32u32 - width));
+        let mask = 1u32 << (width - 1u32); // mask can be pre-computed if b is fixed
+        let signed = (unsigned ^ mask).wrapping_sub(mask);
+
+        println!(
+            "{:08x} {:08x} {:08x} {:08x}",
+            mask,
+            (unsigned ^ mask),
+            unsigned,
+            signed
+        );
+
+        signed as i32
+    }
+
+    // println!("{:08x}", value);
+    assert_eq!(extract_unsigned(value, 5, 0), 0x1F);
+    assert_eq!(extract_unsigned(value, 5, 5), 0x0E);
+    assert_eq!(extract_unsigned(value, 5, 10), 0x1D);
+
+    assert_eq!(extract_signed(value, 2, 15), 0);
+    assert_eq!(extract_signed(value, 2, 17), 1);
+    assert_eq!(extract_signed(value, 2, 19), -1);
+
+    assert_eq!(extract_unsigned(value, 1, 21), 0);
+    assert_eq!(extract_unsigned(value, 1, 22), 1);
 }
 
 #[derive(Component)]
@@ -565,8 +667,6 @@ impl Chunk {
 
     pub fn build_mesh(&self) -> Mesh {
         let mut vertex_buffer = Vec::new();
-        let mut normals = Vec::new();
-        let mut uvs = Vec::new();
         let mut indices = Vec::new();
 
         for (z_offset, z) in self.blocks.iter().enumerate() {
@@ -590,10 +690,8 @@ impl Chunk {
 
                         x.add_to_mesh(
                             neighbors,
-                            &[x_offset as f32, y_offset as f32, z_offset as f32],
+                            Vector3::new(x_offset as u8, y_offset as u8, z_offset as u8),
                             &mut vertex_buffer,
-                            &mut normals,
-                            &mut uvs,
                             &mut indices,
                         );
                     }
@@ -602,12 +700,26 @@ impl Chunk {
         }
 
         let mut mesh = Mesh::new(PrimitiveTopology::TriangleList);
-
-        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertex_buffer);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+        mesh.insert_attribute(
+            MeshVertexAttribute::new("vertex", 0, VertexFormat::Uint32),
+            VertexAttributeValues::Uint32(vertex_buffer),
+        );
         mesh.set_indices(Some(Indices::U32(indices)));
 
         mesh
+    }
+}
+
+#[derive(AsBindGroup, TypeUuid, Debug, Clone)]
+#[uuid = "ab106dd3-3971-4655-a535-b3b47738c649"]
+pub struct TerrainMaterial {}
+
+impl Material for TerrainMaterial {
+    fn vertex_shader() -> ShaderRef {
+        "shaders/terrain.wgsl".into()
+    }
+
+    fn fragment_shader() -> ShaderRef {
+        "shaders/terrain.wgsl".into()
     }
 }

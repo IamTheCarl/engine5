@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy_flycam::PlayerPlugin;
 use terrain::{BlockRegistry, BlockTag};
 
-use crate::terrain::BlockLocalCoordinate;
+use crate::terrain::{BlockLocalCoordinate, TerrainMaterial};
 
 mod terrain;
 
@@ -24,6 +24,7 @@ impl Engine5 {
 
 impl Plugin for Engine5 {
     fn build(&self, app: &mut App) {
+        app.add_plugin(MaterialPlugin::<terrain::TerrainMaterial>::default());
         app.add_startup_system(setup);
     }
 }
@@ -33,6 +34,8 @@ fn setup(
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut terrain_material: ResMut<Assets<terrain::TerrainMaterial>>,
+    mut shaders: ResMut<Assets<Shader>>,
 ) {
     // plane
     commands.spawn(PbrBundle {
@@ -87,10 +90,9 @@ fn setup(
     let terrain_image: Handle<Image> = asset_server.load("terrain/default-color.png");
 
     commands.spawn(chunk);
-    commands.spawn(PbrBundle {
+    commands.spawn(MaterialMeshBundle {
         mesh: meshes.add(chunk_mesh),
-        // material: materials.add(Color::rgb(0.8, 0.2, 0.2).into()),
-        material: materials.add(terrain_image.into()),
+        material: terrain_material.add(TerrainMaterial {}), // TODO recycle this material for ALL terrain.
         transform: Transform::from_xyz(8.0, 0.5, 8.0),
         ..Default::default()
     });

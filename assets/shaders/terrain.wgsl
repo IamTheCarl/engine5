@@ -20,8 +20,8 @@ fn extract_unsigned(word: u32, width: u32, offset: u32) -> f32 {
 }
 
 fn extract_signed(word: u32, width: u32, offset: u32) -> f32 {
-    var unsigned_element = (word >> offset) & (~0u >> (32u - width)); // FIXME pretty sure this isn't going negative like its supposed to.
-    var mask = 1u << (width - 1u); // mask can be pre-computed if b is fixed
+    var unsigned_element = (word >> offset) & (~0u >> (32u - width));
+    var mask = 1u << (width - 1u);
     var element = (unsigned_element ^ mask) - mask;
     return f32(bitcast<i32>(element));
 }

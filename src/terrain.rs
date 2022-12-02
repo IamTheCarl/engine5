@@ -5,7 +5,7 @@ use bevy::{
     render::{
         mesh::{Indices, MeshVertexAttribute, VertexAttributeValues},
         render_resource::{AsBindGroup, Extent3d, PrimitiveTopology, ShaderRef, VertexFormat},
-        texture::ImageSampler,
+        texture::{ImageSampler, Volume},
     },
 };
 use nalgebra::{Vector2, Vector3};
@@ -722,8 +722,8 @@ impl Chunk {
 #[derive(Resource, AsBindGroup, TypeUuid, Debug, Clone)]
 #[uuid = "ab106dd3-3971-4655-a535-b3b47738c649"]
 pub struct TerrainMaterial {
-    // #[texture(0, dimension = "2d_array")]
-    // #[sampler(1)]
+    #[texture(0, dimension = "2d_array")]
+    #[sampler(1)]
     array_texture: Handle<Image>,
 }
 
@@ -782,13 +782,30 @@ impl TerrainTextureManager {
             panic!("No terrain images were provided.");
         }
 
+        let dimension = Extent3d {
+            width: 64,
+            height: 128,
+            depth_or_array_layers: 1,
+        };
+
+        let format = TextureFormat::Rgba8UnormSrgb;
+        let data_length = dimension.volume() * 4;
+
+        let mut image = Image::new(
+            dimension,
+            TextureDimension::D2,
+            vec![0u8; data_length],
+            format,
+        );
+        image.reinterpret_stacked_2d_as_array(2);
+
         Self {
             loading_state: TerrainLoadingState::Loading {
                 image_handles,
                 size: None,
                 final_image_data: Vec::new(),
             },
-            image_handle: image_resources.add(Image::default()),
+            image_handle: image_resources.add(image),
             image_paths,
         }
     }
@@ -812,6 +829,8 @@ pub fn terrain_texture_loading(
     asset_server: Res<AssetServer>,
     mut texture: ResMut<TerrainTextureManager>,
     mut images: ResMut<Assets<Image>>,
+    terrain_material: ResMut<TerrainMaterialHandle>,
+    mut terrain_material_assets: ResMut<Assets<TerrainMaterial>>,
 ) {
     if let TerrainLoadingState::Loading {
         size,
@@ -888,24 +907,11 @@ pub fn terrain_texture_loading(
                 );
                 image.reinterpret_stacked_2d_as_array(num_layers);
 
-                // let image = Image {
-                //     data: final_image_data,
-                //     texture_descriptor: TextureDescriptor {
-                //         label: Some("Terrain Texture Descriptor"),
-                //         size: Extent3d {
-                //             width: size.width,
-                //             height: size.height,
-                //             depth_or_array_layers: image_handles.len() as u32,
-                //         },
-                //         mip_level_count: 1,
-                //         sample_count: 1,
-                //         dimension: TextureDimension::D2,
-                //         format: TextureFormat::Rgba32Float,
-                //         usage: TextureUsages::TEXTURE_BINDING,
-                //     },
-                //     sampler_descriptor: ImageSampler::Default,
-                //     texture_view_descriptor: None,
-                // };
+                let terrain_material = terrain_material_assets
+                    .get_mut(&terrain_material.0)
+                    .expect("Terrain material is not available.");
+
+                terrain_material.array_texture = texture.image_handle.clone();
 
                 log::info!("Terrain data loaded and ready.");
             } else {

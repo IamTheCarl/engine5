@@ -8,6 +8,7 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_plugin(Engine5::new())
         .add_plugin(PlayerPlugin) // TODO remove when you implement your own player.
+        // TODO enable DBand dithering once you have control of the camera.
         .run();
 }
 
@@ -25,9 +26,9 @@ impl Plugin for Engine5 {
         app.add_plugin(MaterialPlugin::<terrain::TerrainMaterial>::default());
         app.add_system(terrain::generate_chunk_mesh);
         app.add_system(terrain::terrain_texture_loading);
+        app.add_startup_system(terrain::terrain_setup);
 
         app.add_startup_system(setup);
-        app.add_startup_system(terrain::terrain_setup);
     }
 }
 

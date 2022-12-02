@@ -1,14 +1,17 @@
 use bevy::{
+    asset::{Asset, AssetPath, LoadState},
     prelude::*,
     reflect::TypeUuid,
     render::{
         mesh::{Indices, MeshVertexAttribute, VertexAttributeValues},
-        render_resource::{AsBindGroup, PrimitiveTopology, ShaderRef, VertexFormat},
+        render_resource::{AsBindGroup, Extent3d, PrimitiveTopology, ShaderRef, VertexFormat},
+        texture::ImageSampler,
     },
 };
 use nalgebra::{Vector2, Vector3};
 use std::{borrow::Cow, collections::HashMap, num::NonZeroU16, str::FromStr};
 use thiserror::Error;
+use wgpu::{SamplerDescriptor, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages};
 
 type BlockID = NonZeroU16;
 pub type BlockCoordinate = nalgebra::Vector3<i64>;
@@ -476,6 +479,7 @@ impl Block {
                     position,
                     normal,
                     uv,
+                    w: 0,
                 }
                 .into()
             });
@@ -531,6 +535,7 @@ struct TerrainVertex {
     position: Vector3<u8>,
     normal: Vector3<i8>,
     uv: Vector2<u8>,
+    w: u16,
 }
 
 #[inline]
@@ -554,6 +559,8 @@ impl From<TerrainVertex> for u32 {
 
         insert_vertex_bit(&mut value, vertex.uv.x, 1, 21);
         insert_vertex_bit(&mut value, vertex.uv.y, 1, 22);
+        insert_vertex_bit(&mut value, vertex.w, 9, 23);
+        // 32
 
         value
     }
@@ -565,6 +572,7 @@ fn terrain_vertex_encode() {
         position: nalgebra::Vector3::new(0xFF, 0xEE, 0xDD),
         normal: nalgebra::Vector3::new(0, 1, -1),
         uv: nalgebra::Vector2::new(0, 1),
+        w: 348,
     }
     .into();
 
@@ -600,6 +608,7 @@ fn terrain_vertex_encode() {
 
     assert_eq!(extract_unsigned(value, 1, 21), 0);
     assert_eq!(extract_unsigned(value, 1, 22), 1);
+    assert_eq!(extract_unsigned(value, 9, 23), 348);
 }
 
 #[derive(Component)]
@@ -710,9 +719,21 @@ impl Chunk {
     }
 }
 
-#[derive(AsBindGroup, TypeUuid, Debug, Clone)]
+#[derive(Resource, AsBindGroup, TypeUuid, Debug, Clone)]
 #[uuid = "ab106dd3-3971-4655-a535-b3b47738c649"]
-pub struct TerrainMaterial {}
+pub struct TerrainMaterial {
+    // #[texture(0, dimension = "2d_array")]
+    // #[sampler(1)]
+    array_texture: Handle<Image>,
+}
+
+impl TerrainMaterial {
+    pub fn new(terrain_texture: &TerrainTextureManager) -> Self {
+        Self {
+            array_texture: terrain_texture.image_handle.clone(),
+        }
+    }
+}
 
 impl Material for TerrainMaterial {
     fn vertex_shader() -> ShaderRef {
@@ -721,5 +742,246 @@ impl Material for TerrainMaterial {
 
     fn fragment_shader() -> ShaderRef {
         "shaders/terrain.wgsl".into()
+    }
+}
+
+enum TerrainLoadingState {
+    Loading {
+        image_handles: Vec<Option<Handle<Image>>>,
+        size: Option<Extent3d>, // Will be set by the first image loaded.
+        final_image_data: Vec<u8>,
+    },
+    Loaded,
+}
+
+#[derive(Resource)]
+pub struct TerrainTextureManager {
+    loading_state: TerrainLoadingState,
+    image_handle: Handle<Image>,
+    image_paths: HashMap<AssetPath<'static>, usize>,
+}
+
+impl TerrainTextureManager {
+    pub fn new(
+        asset_server: &Res<AssetServer>,
+        image_resources: &mut ResMut<Assets<Image>>,
+        images: &[AssetPath<'static>],
+    ) -> Self {
+        let mut image_handles = Vec::new();
+        let mut image_paths = HashMap::new();
+
+        for image_path in images {
+            // let image_path: AssetPath<'static> = image_path.into();
+            let image_handle: Handle<Image> = asset_server.load(image_path.clone());
+            image_paths.insert(image_path.clone(), image_handles.len());
+            image_handles.push(Some(image_handle));
+        }
+
+        if image_handles.is_empty() {
+            // FIXME should switch to an error state.
+            panic!("No terrain images were provided.");
+        }
+
+        Self {
+            loading_state: TerrainLoadingState::Loading {
+                image_handles,
+                size: None,
+                final_image_data: Vec::new(),
+            },
+            image_handle: image_resources.add(Image::default()),
+            image_paths,
+        }
+    }
+
+    // /// Returns the image handle. Returns None if it has not yet been loaded.
+    // pub fn image_handle(&self) -> &Handle<Image> {
+    //     &&self.image_handle
+    // }
+
+    pub fn get_image_index<'a>(&self, asset_path: impl Into<AssetPath<'a>>) -> Option<usize> {
+        let asset_path = asset_path.into();
+        self.image_paths.get(&asset_path).copied()
+    }
+}
+
+/// A new type so I can store a handle to a resource.
+#[derive(Resource)]
+pub struct TerrainMaterialHandle(Handle<TerrainMaterial>);
+
+pub fn terrain_texture_loading(
+    asset_server: Res<AssetServer>,
+    mut texture: ResMut<TerrainTextureManager>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    if let TerrainLoadingState::Loading {
+        size,
+        image_handles,
+        final_image_data,
+    } = &mut texture.as_mut().loading_state
+    {
+        // Check that all the images we depend on are loaded, otherwise, bail out.
+        let mut ready = true;
+
+        for image_handle_container in image_handles.iter_mut() {
+            if let Some(image_handle) = image_handle_container {
+                let load_state = asset_server.get_load_state(image_handle.clone());
+
+                match load_state {
+                    LoadState::Loaded => {
+                        let image = images
+                            .remove(image_handle.clone())
+                            .expect("Image wasn't actually loaded."); // FIXME we need an error state in this game.
+                        *image_handle_container = None; // Mark that it's been transferred over.
+
+                        // We need all textures to be the same size. Make sure to enforce that.
+                        if let Some(size) = size {
+                            if image.texture_descriptor.size != *size {
+                                // FIXME this should switch us to an error state.
+                                // TODO list the culprit.
+                                panic!("All textures must be of the same size and format.");
+                            }
+                        } else {
+                            *size = Some(image.texture_descriptor.size);
+                        }
+
+                        final_image_data.extend(image.data);
+                    }
+                    LoadState::Failed => {
+                        // FIXME this should switch us to an error state.
+                        // TODO list the culprit.
+                        panic!("Failed to load a terrain texture.");
+                    }
+                    _ => {
+                        ready = false;
+                    }
+                }
+            }
+        }
+
+        if ready {
+            let mut swap_state = TerrainLoadingState::Loaded;
+            std::mem::swap(&mut swap_state, &mut texture.loading_state);
+
+            if let TerrainLoadingState::Loading {
+                image_handles,
+                size,
+                final_image_data,
+            } = swap_state
+            {
+                let num_layers = image_handles.len() as u32;
+
+                // FIXME this should switch to an error state.
+                let true_size = size.expect("Texture size was never provided.");
+                let mut pre_size = true_size; // Copies.
+                pre_size.height *= num_layers;
+
+                // FIXME switch to an error state.
+                let image = images
+                    .get_mut(&texture.image_handle)
+                    .expect("Texture image was not initially created.");
+
+                *image = Image::new(
+                    pre_size,
+                    TextureDimension::D2,
+                    final_image_data,
+                    TextureFormat::Rgba8UnormSrgb,
+                );
+                image.reinterpret_stacked_2d_as_array(num_layers);
+
+                // let image = Image {
+                //     data: final_image_data,
+                //     texture_descriptor: TextureDescriptor {
+                //         label: Some("Terrain Texture Descriptor"),
+                //         size: Extent3d {
+                //             width: size.width,
+                //             height: size.height,
+                //             depth_or_array_layers: image_handles.len() as u32,
+                //         },
+                //         mip_level_count: 1,
+                //         sample_count: 1,
+                //         dimension: TextureDimension::D2,
+                //         format: TextureFormat::Rgba32Float,
+                //         usage: TextureUsages::TEXTURE_BINDING,
+                //     },
+                //     sampler_descriptor: ImageSampler::Default,
+                //     texture_view_descriptor: None,
+                // };
+
+                log::info!("Terrain data loaded and ready.");
+            } else {
+                panic!("Texture was not loading."); // FIXME This should change to an error state.
+            }
+        }
+    }
+}
+
+pub fn terrain_setup(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    mut image_resources: ResMut<Assets<Image>>,
+    mut terrain_material_assets: ResMut<Assets<TerrainMaterial>>,
+) {
+    let block_registry = BlockRegistry::load().unwrap();
+    let stone_tag = BlockTag::try_from("core:stone").unwrap();
+    let stone_data = block_registry.get_by_tag(&stone_tag).unwrap();
+    let stone_block = stone_data.spawn();
+
+    let mut chunk = Chunk::new(Some(stone_block));
+    for x in 0..Chunk::CHUNK_DIAMETER {
+        for y in 0..Chunk::CHUNK_DIAMETER {
+            for z in 0..Chunk::CHUNK_DIAMETER {
+                let x = x as f32;
+                let y = y as f32;
+                let z = z as f32;
+
+                let height = ((x / 16.0) * std::f64::consts::PI as f32).sin()
+                    * ((z / 16.0) * std::f64::consts::PI as f32).sin()
+                    * 16.0;
+                if y > height {
+                    chunk
+                        .set_block_local(BlockLocalCoordinate::new(x as i8, y as i8, z as i8), None)
+                        .ok();
+                }
+            }
+        }
+    }
+
+    // For terrain rendering.
+    let terrain_texture = TerrainTextureManager::new(
+        &asset_server,
+        &mut image_resources,
+        &[
+            "terrain/default-color.png".into(),
+            "terrain/dirt-color.png".into(),
+            "terrain/grass_top-color.png".into(),
+            "terrain/grass_side-color.png".into(),
+            "terrain/sand-color.png".into(),
+            "terrain/stone-color.png".into(),
+        ],
+    );
+
+    let terrain_material_handle =
+        terrain_material_assets.add(TerrainMaterial::new(&terrain_texture));
+    commands.insert_resource(TerrainMaterialHandle(terrain_material_handle));
+    commands.insert_resource(terrain_texture);
+
+    commands.spawn(chunk);
+}
+
+pub fn generate_chunk_mesh(
+    mut commands: Commands,
+    terrain_material: ResMut<TerrainMaterialHandle>,
+    chunks: Query<(Entity, &Chunk, Without<Handle<TerrainMaterial>>)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    for (entity, chunk, _without_material_handle) in chunks.iter() {
+        let chunk_mesh = chunk.build_mesh();
+
+        commands.entity(entity).insert(MaterialMeshBundle {
+            mesh: meshes.add(chunk_mesh),
+            material: terrain_material.0.clone(),
+            transform: Transform::from_xyz(0.0, 0.0, 0.0),
+            ..Default::default()
+        });
     }
 }

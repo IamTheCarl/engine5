@@ -95,23 +95,23 @@ impl From<BlockDirection> for BlockLocalCoordinate {
 }
 
 struct BlockFaces {
-    top: Handle<Image>,
-    bottom: Handle<Image>,
-    north: Handle<Image>,
-    south: Handle<Image>,
-    east: Handle<Image>,
-    west: Handle<Image>,
+    top: u16,
+    bottom: u16,
+    north: u16,
+    south: u16,
+    east: u16,
+    west: u16,
 }
 
 impl BlockFaces {
-    fn get_face_texture(&self, direction: BlockDirection) -> &Handle<Image> {
+    fn get_face_texture_index(&self, direction: BlockDirection) -> u16 {
         match direction {
-            BlockDirection::Up => &self.top,
-            BlockDirection::Down => &self.bottom,
-            BlockDirection::North => &self.north,
-            BlockDirection::South => &self.south,
-            BlockDirection::East => &self.east,
-            BlockDirection::West => &self.west,
+            BlockDirection::Up => self.top,
+            BlockDirection::Down => self.bottom,
+            BlockDirection::North => self.north,
+            BlockDirection::South => self.south,
+            BlockDirection::East => self.east,
+            BlockDirection::West => self.west,
         }
     }
 }
@@ -125,7 +125,7 @@ struct BlockNeighborSet {
     west: Option<Block>,
 }
 
-impl<'a> BlockNeighborSet {
+impl BlockNeighborSet {
     fn get(&self, direction: BlockDirection) -> Option<Block> {
         match direction {
             BlockDirection::Up => self.up,
@@ -141,7 +141,7 @@ impl<'a> BlockNeighborSet {
 pub struct BlockData {
     name: String,
     id: BlockID,
-    faces: Option<BlockFaces>,
+    faces: BlockFaces,
 }
 
 impl BlockData {
@@ -280,27 +280,48 @@ fn block_tag() {
     );
 }
 
+#[derive(Resource)]
 pub struct BlockRegistry {
     block_data: Vec<BlockData>,
     block_tags: HashMap<BlockTag<'static>, BlockID>,
 }
 
 impl BlockRegistry {
-    pub fn load() -> Result<Self, BlockTagError<'static>> {
-        // Self {
-        //     block_data: vec![BlockData {
-        //         name: String::from("Stone"),
-        //         faces: None,
-        //     }],
-        //     block_tags: HashMap::from([("core:stone".parse().unwrap(), 0)]),
-        // }
-
+    pub fn load(terrain_texture: &TerrainTextureManager) -> Result<Self, BlockTagError<'static>> {
         let mut registry = Self {
             block_data: Vec::new(),
             block_tags: HashMap::new(),
         };
 
-        registry.add_block("core:stone".try_into()?, "Stone", None)?;
+        // TODO load this data from a file.
+
+        let stone_index = terrain_texture.get_image_index("terrain/stone-color.png");
+        registry.add_block(
+            "core:stone".try_into()?,
+            "Stone",
+            BlockFaces {
+                top: stone_index,
+                bottom: stone_index,
+                north: stone_index,
+                south: stone_index,
+                east: stone_index,
+                west: stone_index,
+            },
+        )?;
+
+        let dirt_index = terrain_texture.get_image_index("terrain/dirt-color.png");
+        registry.add_block(
+            "core:dirt".try_into()?,
+            "Dirt",
+            BlockFaces {
+                top: dirt_index,
+                bottom: dirt_index,
+                north: dirt_index,
+                south: dirt_index,
+                east: dirt_index,
+                west: dirt_index,
+            },
+        )?;
 
         Ok(registry)
     }
@@ -309,7 +330,7 @@ impl BlockRegistry {
         &mut self,
         tag: BlockTag<'static>,
         name: impl Into<String>,
-        faces: Option<BlockFaces>,
+        faces: BlockFaces,
     ) -> Result<(), BlockTagError<'static>> {
         // We need to report an error if an insertion isn't done, so this will stay an error if an insertion doesn't happen.
         let mut result = Err(BlockTagError::AlreadyExists);
@@ -338,7 +359,7 @@ impl BlockRegistry {
     }
 
     pub fn get(&self, block: &Block) -> Option<&BlockData> {
-        self.block_data.get(block.id.get() as usize)
+        self.block_data.get(block.id.get() as usize - 1)
     }
 }
 
@@ -351,6 +372,7 @@ impl Block {
     fn insert_face(
         direction: BlockDirection,
         offset: Vector3<u8>,
+        texture_index: u16,
         vertex_buffer: &mut Vec<u32>,
         indices: &mut Vec<u32>,
     ) {
@@ -479,26 +501,10 @@ impl Block {
                     position,
                     normal,
                     uv,
-                    w: 0,
+                    w: texture_index,
                 }
                 .into()
             });
-
-        // let vertex_iter = source_vertices[range]
-        //     .iter()
-        //     .map(|vec| Vector3::from(*vec) + offset)
-        //     .map(|position| -> u32 {
-        //         TerrainVertex {
-        //             position,
-        //             normal: Vector3::new(0, 1, 0),
-        //             uv: Vector2::new(0, 0),
-        //         }
-        //         .into()
-        //     });
-
-        // if !matches!(direction, BlockDirection::Up) {
-        //     return;
-        // }
 
         vertex_buffer.extend(vertex_iter);
 
@@ -514,17 +520,23 @@ impl Block {
 
     fn add_to_mesh(
         &self,
+        block_registry: &BlockRegistry,
         neighbors: BlockNeighborSet,
         offset: Vector3<u8>,
         vertex_buffer: &mut Vec<u32>,
         indices: &mut Vec<u32>,
     ) {
+        let block_data = block_registry
+            .get(self)
+            .expect("Did not find self in registry.");
+
         for direction in BlockDirection::ALL {
             let neighbor = neighbors.get(direction);
 
             // We have to draw this face.
             if neighbor.is_none() {
-                Self::insert_face(direction, offset, vertex_buffer, indices);
+                let texture_index = block_data.faces.get_face_texture_index(direction);
+                Self::insert_face(direction, offset, texture_index, vertex_buffer, indices);
             }
         }
     }
@@ -674,7 +686,7 @@ impl Chunk {
         Ok(())
     }
 
-    pub fn build_mesh(&self) -> Mesh {
+    pub fn build_mesh(&self, block_registry: &BlockRegistry) -> Mesh {
         let mut vertex_buffer = Vec::new();
         let mut indices = Vec::new();
 
@@ -698,6 +710,7 @@ impl Chunk {
                         };
 
                         x.add_to_mesh(
+                            block_registry,
                             neighbors,
                             Vector3::new(x_offset as u8, y_offset as u8, z_offset as u8),
                             &mut vertex_buffer,
@@ -815,9 +828,14 @@ impl TerrainTextureManager {
     //     &&self.image_handle
     // }
 
-    pub fn get_image_index<'a>(&self, asset_path: impl Into<AssetPath<'a>>) -> Option<usize> {
+    pub fn get_image_index<'a>(&self, asset_path: impl Into<AssetPath<'a>>) -> u16 {
         let asset_path = asset_path.into();
-        self.image_paths.get(&asset_path).copied()
+        if let Some(index) = self.image_paths.get(&asset_path).map(|index| *index as u16) {
+            index
+        } else {
+            log::warn!("Request for terrain texture {:?} could not be satisfied. It has been replaced with a default.", asset_path);
+            0
+        }
     }
 }
 
@@ -927,10 +945,27 @@ pub fn terrain_setup(
     mut image_resources: ResMut<Assets<Image>>,
     mut terrain_material_assets: ResMut<Assets<TerrainMaterial>>,
 ) {
-    let block_registry = BlockRegistry::load().unwrap();
+    // For terrain rendering.
+    let terrain_texture = TerrainTextureManager::new(
+        &asset_server,
+        &mut image_resources,
+        &[
+            "terrain/default-color.png".into(),
+            "terrain/dirt-color.png".into(),
+            "terrain/grass_top-color.png".into(),
+            "terrain/grass_side-color.png".into(),
+            "terrain/sand-color.png".into(),
+            "terrain/stone-color.png".into(),
+        ],
+    );
+
+    let block_registry = BlockRegistry::load(&terrain_texture).unwrap();
     let stone_tag = BlockTag::try_from("core:stone").unwrap();
     let stone_data = block_registry.get_by_tag(&stone_tag).unwrap();
     let stone_block = stone_data.spawn();
+    let dirt_tag = BlockTag::try_from("core:dirt").unwrap();
+    let dirt_data = block_registry.get_by_tag(&dirt_tag).unwrap();
+    let dirt_block = dirt_data.spawn();
 
     let mut chunk = Chunk::new(Some(stone_block));
     for x in 0..Chunk::CHUNK_DIAMETER {
@@ -947,27 +982,21 @@ pub fn terrain_setup(
                     chunk
                         .set_block_local(BlockLocalCoordinate::new(x as i8, y as i8, z as i8), None)
                         .ok();
+                } else if (x % 2f32) == 0f32 {
+                    chunk
+                        .set_block_local(
+                            BlockLocalCoordinate::new(x as i8, y as i8, z as i8),
+                            Some(dirt_block),
+                        )
+                        .ok();
                 }
             }
         }
     }
 
-    // For terrain rendering.
-    let terrain_texture = TerrainTextureManager::new(
-        &asset_server,
-        &mut image_resources,
-        &[
-            "terrain/default-color.png".into(),
-            "terrain/dirt-color.png".into(),
-            "terrain/grass_top-color.png".into(),
-            "terrain/grass_side-color.png".into(),
-            "terrain/sand-color.png".into(),
-            "terrain/stone-color.png".into(),
-        ],
-    );
-
     let terrain_material_handle =
         terrain_material_assets.add(TerrainMaterial::new(&terrain_texture));
+    commands.insert_resource(block_registry);
     commands.insert_resource(TerrainMaterialHandle(terrain_material_handle));
     commands.insert_resource(terrain_texture);
 
@@ -976,17 +1005,19 @@ pub fn terrain_setup(
 
 pub fn generate_chunk_mesh(
     mut commands: Commands,
-    terrain_material: ResMut<TerrainMaterialHandle>,
+    terrain_material: Res<TerrainMaterialHandle>,
+    block_registry: Res<BlockRegistry>,
     chunks: Query<(Entity, &Chunk, Without<Handle<TerrainMaterial>>)>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
+    // TODO can meshes be generated in parallel? Is there even a perk to doing that?
     for (entity, chunk, _without_material_handle) in chunks.iter() {
-        let chunk_mesh = chunk.build_mesh();
+        let chunk_mesh = chunk.build_mesh(&block_registry);
 
         commands.entity(entity).insert(MaterialMeshBundle {
             mesh: meshes.add(chunk_mesh),
             material: terrain_material.0.clone(),
-            transform: Transform::from_xyz(0.0, 0.0, 0.0),
+            transform: Transform::from_xyz(0.0, 0.0, 0.0), // TODO let the chunk set that information itself.
             ..Default::default()
         });
     }

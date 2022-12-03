@@ -12,9 +12,14 @@
 // TODO define VERTEX_UVS
 
 @group(1) @binding(0)
-var terrain_texture: texture_2d_array<f32>;
+var color_texture: texture_2d_array<f32>;
 @group(1) @binding(1)
-var terrain_texture_sampler: sampler;
+var color_texture_sampler: sampler;
+@group(1) @binding(2)
+var normal_texture: texture_2d_array<f32>;
+@group(1) @binding(3)
+var normal_texture_sampler: sampler;
+
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -78,7 +83,8 @@ fn fragment(in: FragmentInput) -> @location(0) vec4<f32> {
     var pbr_input: PbrInput = pbr_input_new();
 
     // pbr_input.material.base_color = vec4<f32>(1.0, 0.0, 0.0, 1.0);
-    pbr_input.material.base_color = textureSample(terrain_texture, terrain_texture_sampler, in.uv, i32(in.layer));
+    pbr_input.material.base_color = textureSample(color_texture, color_texture_sampler, in.uv, i32(in.layer));
+    // pbr_input.material.base_color = textureSample(normal_texture, normal_texture_sampler, in.uv, i32(in.layer));
 
     pbr_input.frag_coord = in.frag_coord;
     pbr_input.world_position = in.world_position;

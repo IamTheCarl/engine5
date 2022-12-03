@@ -94,6 +94,20 @@ impl From<BlockDirection> for BlockLocalCoordinate {
     }
 }
 
+// Indexes used for shaders.
+impl From<BlockDirection> for u8 {
+    fn from(direction: BlockDirection) -> Self {
+        match direction {
+            BlockDirection::Up => 0,
+            BlockDirection::Down => 1,
+            BlockDirection::North => 2,
+            BlockDirection::South => 3,
+            BlockDirection::East => 4,
+            BlockDirection::West => 5,
+        }
+    }
+}
+
 struct BlockFaces {
     top: u16,
     bottom: u16,
@@ -295,7 +309,7 @@ impl BlockRegistry {
 
         // TODO load this data from a file.
 
-        let stone_index = terrain_texture.get_image_index("terrain/stone-color.png");
+        let stone_index = terrain_texture.get_image_index("stone");
         registry.add_block(
             "core:stone".try_into()?,
             "Stone",
@@ -309,7 +323,7 @@ impl BlockRegistry {
             },
         )?;
 
-        let dirt_index = terrain_texture.get_image_index("terrain/dirt-color.png");
+        let dirt_index = terrain_texture.get_image_index("dirt");
         registry.add_block(
             "core:dirt".try_into()?,
             "Dirt",
@@ -409,39 +423,6 @@ impl Block {
             [0, 0, 0],
         ];
 
-        let source_normals = &[
-            // Top
-            [0, 1, 0],
-            [0, 1, 0],
-            [0, 1, 0],
-            [0, 1, 0],
-            // Bottom
-            [0, -1, 0],
-            [0, -1, 0],
-            [0, -1, 0],
-            [0, -1, 0],
-            // East
-            [1, 0, 0],
-            [1, 0, 0],
-            [1, 0, 0],
-            [1, 0, 0],
-            // West
-            [-1, 0, 0],
-            [-1, 0, 0],
-            [-1, 0, 0],
-            [-1, 0, 0],
-            // North
-            [0, 0, 1],
-            [0, 0, 1],
-            [0, 0, 1],
-            [0, 0, 1],
-            // South
-            [0, 0, -1],
-            [0, 0, -1],
-            [0, 0, -1],
-            [0, 0, -1],
-        ];
-
         let source_uv = [
             // Top
             [0, 0],
@@ -490,16 +471,11 @@ impl Block {
         let vertex_iter = source_vertices[range.clone()]
             .iter()
             .map(|vec| Vector3::from(*vec) + offset)
-            .zip(
-                source_normals[range.clone()]
-                    .iter()
-                    .map(|normal| Vector3::from(*normal)),
-            )
             .zip(source_uv[range].iter().map(|uv| Vector2::from(*uv)))
-            .map(|((position, normal), uv)| -> u32 {
+            .map(|(position, uv)| -> u32 {
                 TerrainVertex {
                     position,
-                    normal,
+                    direction,
                     uv,
                     w: texture_index,
                 }
@@ -545,7 +521,7 @@ impl Block {
 #[derive(Debug)]
 struct TerrainVertex {
     position: Vector3<u8>,
-    normal: Vector3<i8>,
+    direction: BlockDirection,
     uv: Vector2<u8>,
     w: u16,
 }
@@ -565,14 +541,11 @@ impl From<TerrainVertex> for u32 {
         insert_vertex_bit(&mut value, vertex.position.y, 5, 5);
         insert_vertex_bit(&mut value, vertex.position.z, 5, 10);
 
-        insert_vertex_bit(&mut value, vertex.normal.x as u8, 2, 15);
-        insert_vertex_bit(&mut value, vertex.normal.y as u8, 2, 17);
-        insert_vertex_bit(&mut value, vertex.normal.z as u8, 2, 19);
+        insert_vertex_bit(&mut value, u8::from(vertex.direction), 3, 15);
 
-        insert_vertex_bit(&mut value, vertex.uv.x, 1, 21);
-        insert_vertex_bit(&mut value, vertex.uv.y, 1, 22);
-        insert_vertex_bit(&mut value, vertex.w, 9, 23);
-        // 32
+        insert_vertex_bit(&mut value, vertex.uv.x, 1, 18);
+        insert_vertex_bit(&mut value, vertex.uv.y, 1, 19);
+        insert_vertex_bit(&mut value, vertex.w, 9, 20);
 
         value
     }
@@ -582,7 +555,7 @@ impl From<TerrainVertex> for u32 {
 fn terrain_vertex_encode() {
     let value: u32 = TerrainVertex {
         position: nalgebra::Vector3::new(0xFF, 0xEE, 0xDD),
-        normal: nalgebra::Vector3::new(0, 1, -1),
+        direction: BlockDirection::North,
         uv: nalgebra::Vector2::new(0, 1),
         w: 348,
     }
@@ -593,34 +566,35 @@ fn terrain_vertex_encode() {
         (word >> offset) & (!0u32 >> (32u32 - width))
     }
 
-    fn extract_signed(word: u32, width: u32, offset: u32) -> i32 {
-        let unsigned = (word >> offset) & (!0u32 >> (32u32 - width));
-        let mask = 1u32 << (width - 1u32); // mask can be pre-computed if b is fixed
-        let signed = (unsigned ^ mask).wrapping_sub(mask);
+    // fn extract_signed(word: u32, width: u32, offset: u32) -> i32 {
+    //     let unsigned = (word >> offset) & (!0u32 >> (32u32 - width));
+    //     let mask = 1u32 << (width - 1u32); // mask can be pre-computed if b is fixed
+    //     let signed = (unsigned ^ mask).wrapping_sub(mask);
 
-        println!(
-            "{:08x} {:08x} {:08x} {:08x}",
-            mask,
-            (unsigned ^ mask),
-            unsigned,
-            signed
-        );
+    //     println!(
+    //         "{:08x} {:08x} {:08x} {:08x}",
+    //         mask,
+    //         (unsigned ^ mask),
+    //         unsigned,
+    //         signed
+    //     );
 
-        signed as i32
-    }
+    //     signed as i32
+    // }
 
     // println!("{:08x}", value);
     assert_eq!(extract_unsigned(value, 5, 0), 0x1F);
     assert_eq!(extract_unsigned(value, 5, 5), 0x0E);
     assert_eq!(extract_unsigned(value, 5, 10), 0x1D);
 
-    assert_eq!(extract_signed(value, 2, 15), 0);
-    assert_eq!(extract_signed(value, 2, 17), 1);
-    assert_eq!(extract_signed(value, 2, 19), -1);
+    assert_eq!(
+        extract_unsigned(value, 3, 15) as u8,
+        u8::from(BlockDirection::North)
+    );
 
-    assert_eq!(extract_unsigned(value, 1, 21), 0);
-    assert_eq!(extract_unsigned(value, 1, 22), 1);
-    assert_eq!(extract_unsigned(value, 9, 23), 348);
+    assert_eq!(extract_unsigned(value, 1, 18), 0);
+    assert_eq!(extract_unsigned(value, 1, 19), 1);
+    assert_eq!(extract_unsigned(value, 9, 20), 348);
 }
 
 #[derive(Component)]
@@ -768,9 +742,11 @@ impl Material for TerrainMaterial {
         _layout: &bevy::render::mesh::MeshVertexBufferLayout,
         _key: bevy::pbr::MaterialPipelineKey<Self>,
     ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
-        let defines = ["VERTEX_UVS", "STANDARDMATERIAL_NORMAL_MAP"];
-
-        // VERTEX_TANGENTS
+        let defines = [
+            "VERTEX_UVS",
+            "NONSTANDARDMATERIAL_NORMAL_MAP",
+            "VERTEX_TANGENTS",
+        ];
 
         descriptor
             .vertex

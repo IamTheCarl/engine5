@@ -761,6 +761,31 @@ impl Material for TerrainMaterial {
     fn fragment_shader() -> ShaderRef {
         "shaders/terrain.wgsl".into()
     }
+
+    fn specialize(
+        _pipeline: &bevy::pbr::MaterialPipeline<Self>,
+        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+        _layout: &bevy::render::mesh::MeshVertexBufferLayout,
+        _key: bevy::pbr::MaterialPipelineKey<Self>,
+    ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
+        let defines = ["VERTEX_UVS", "STANDARDMATERIAL_NORMAL_MAP"];
+
+        // VERTEX_TANGENTS
+
+        descriptor
+            .vertex
+            .shader_defs
+            .extend(defines.iter().map(|def| def.to_string()));
+        let fragment = descriptor
+            .fragment
+            .as_mut()
+            .expect("Fragment shader unavailable.");
+        fragment
+            .shader_defs
+            .extend(defines.iter().map(|def| def.to_string()));
+
+        Ok(())
+    }
 }
 
 struct LoadingSet {
@@ -783,6 +808,7 @@ pub struct TerrainTextureManager {
     loading_state: TerrainLoadingState,
     color_image_handle: Handle<Image>,
     normal_image_handle: Handle<Image>,
+    // TODO emissive color texture.
     image_paths: HashMap<String, usize>,
 }
 

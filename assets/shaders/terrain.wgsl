@@ -1,4 +1,3 @@
-
 #import bevy_pbr::mesh_view_bindings
 #import bevy_pbr::mesh_bindings
 #import bevy_pbr::mesh_functions
@@ -9,22 +8,18 @@
 #import bevy_pbr::pbr_types
 #import bevy_pbr::pbr_functions
 
-// TODO define VERTEX_UVS
-
 @group(1) @binding(0)
 var color_texture: texture_2d_array<f32>;
 @group(1) @binding(1)
 var color_texture_sampler: sampler;
 @group(1) @binding(2)
-var normal_texture: texture_2d_array<f32>;
+var normal_map_texture: texture_2d_array<f32>;
 @group(1) @binding(3)
-var normal_texture_sampler: sampler;
+var normal_map_texture_sampler: sampler;
 
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    // Is also defined within mesh_vertex_output but I can't get the VERTEX_UVS environment variable defined so I had to pull this jank.
-    @location(2) uv: vec2<f32>,
     @location(6) layer: u32,
     #import bevy_pbr::mesh_vertex_output
 };
@@ -63,7 +58,7 @@ fn vertex(@location(0) vertex: u32) -> VertexOutput {
     // out.world_position[3] = w;
     out.clip_position = mesh_position_world_to_clip(out.world_position);
     out.world_normal =  mesh_normal_local_to_world(vec3(f32(normal_x), f32(normal_y), f32(normal_z)));
-    out.uv = vec2(f32(u), f32(v));
+    out.uv = vec2(f32(u), f32(v)); // 968
     out.layer = w;
 
     return out;
@@ -72,8 +67,6 @@ fn vertex(@location(0) vertex: u32) -> VertexOutput {
 struct FragmentInput {
     @builtin(front_facing) is_front: bool,
     @builtin(position) frag_coord: vec4<f32>,
-    // Is also defined within mesh_vertex_output but I can't get the VERTEX_UVS environment variable defined so I had to pull this jank.
-    @location(2) uv: vec2<f32>,
     @location(6) layer: u32,
     #import bevy_pbr::mesh_vertex_output
 };
@@ -84,7 +77,7 @@ fn fragment(in: FragmentInput) -> @location(0) vec4<f32> {
 
     // pbr_input.material.base_color = vec4<f32>(1.0, 0.0, 0.0, 1.0);
     pbr_input.material.base_color = textureSample(color_texture, color_texture_sampler, in.uv, i32(in.layer));
-    // pbr_input.material.base_color = textureSample(normal_texture, normal_texture_sampler, in.uv, i32(in.layer));
+    // pbr_input.material.base_color = textureSample(normal_map_texture, normal_texture_sampler, in.uv, i32(in.layer));
 
     pbr_input.frag_coord = in.frag_coord;
     pbr_input.world_position = in.world_position;
@@ -99,6 +92,7 @@ fn fragment(in: FragmentInput) -> @location(0) vec4<f32> {
     pbr_input.N = apply_normal_mapping(
         pbr_input.material.flags,
         pbr_input.world_normal,
+        in.uv,
     );
     pbr_input.V = calculate_view(in.world_position, pbr_input.is_orthographic);
 

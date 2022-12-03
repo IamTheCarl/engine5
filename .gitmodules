@@ -1,0 +1,3 @@
+[submodule "crates/bevy"]
+	path = crates/bevy
+	url = git@github.com:IamTheCarl/bevy.git

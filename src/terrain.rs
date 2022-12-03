@@ -1,17 +1,22 @@
 use bevy::{
     asset::{AssetPath, LoadState},
+    pbr::{StandardMaterialFlags, StandardMaterialUniform},
     prelude::*,
     reflect::TypeUuid,
     render::{
         mesh::{Indices, MeshVertexAttribute, VertexAttributeValues},
-        render_resource::{AsBindGroup, Extent3d, PrimitiveTopology, ShaderRef, VertexFormat},
+        render_asset::RenderAssets,
+        render_resource::{
+            AsBindGroup, AsBindGroupShaderType, Extent3d, PrimitiveTopology, ShaderRef,
+            VertexFormat,
+        },
         texture::Volume,
     },
 };
 use nalgebra::{Vector2, Vector3};
 use std::{borrow::Cow, collections::HashMap, num::NonZeroU16, str::FromStr};
 use thiserror::Error;
-use wgpu::{TextureDimension, TextureFormat};
+use wgpu::{Face, TextureDimension, TextureFormat};
 
 type BlockID = NonZeroU16;
 pub type BlockCoordinate = nalgebra::Vector3<i64>;
@@ -706,23 +711,171 @@ impl Chunk {
     }
 }
 
-#[derive(Resource, AsBindGroup, TypeUuid, Debug, Clone)]
+#[derive(AsBindGroup, Reflect, FromReflect, Debug, Clone, TypeUuid)]
 #[uuid = "ab106dd3-3971-4655-a535-b3b47738c649"]
+#[uniform(0, StandardMaterialUniform)]
+#[reflect(Default, Debug)]
 pub struct TerrainMaterial {
-    #[texture(0, dimension = "2d_array")]
-    #[sampler(1)]
-    color_texture: Handle<Image>,
+    pub base_color: Color,
 
-    #[texture(2, dimension = "2d_array")]
-    #[sampler(3)]
-    normal_texture: Handle<Image>,
+    #[texture(1, dimension = "2d_array")]
+    #[sampler(2)]
+    pub base_color_texture: Option<Handle<Image>>,
+
+    pub emissive: Color,
+
+    #[texture(3, dimension = "2d_array")]
+    #[sampler(4)]
+    pub emissive_texture: Option<Handle<Image>>,
+    pub perceptual_roughness: f32,
+
+    pub metallic: f32,
+
+    #[texture(5, dimension = "2d_array")]
+    #[sampler(6)]
+    pub metallic_roughness_texture: Option<Handle<Image>>,
+    #[doc(alias = "specular_intensity")]
+    pub reflectance: f32,
+
+    #[texture(9, dimension = "2d_array")]
+    #[sampler(10)]
+    pub normal_map_texture: Option<Handle<Image>>,
+
+    pub flip_normal_map_y: bool,
+
+    #[texture(7, dimension = "2d_array")]
+    #[sampler(8)]
+    pub occlusion_texture: Option<Handle<Image>>,
+    pub double_sided: bool,
+    #[reflect(ignore)]
+    pub cull_mode: Option<Face>,
+    pub unlit: bool,
+    pub alpha_mode: AlphaMode,
+    pub depth_bias: f32,
 }
 
 impl TerrainMaterial {
     pub fn new(terrain_texture: &TerrainTextureManager) -> Self {
         Self {
-            color_texture: terrain_texture.color_image_handle.clone(),
-            normal_texture: terrain_texture.normal_image_handle.clone(),
+            base_color_texture: Some(terrain_texture.color_image_handle.clone()),
+            emissive_texture: Some(terrain_texture.emissive_image_handle.clone()),
+            metallic_roughness_texture: Some(terrain_texture.metallic_image_handle.clone()),
+            occlusion_texture: Some(terrain_texture.occlusion_image_handle.clone()),
+            normal_map_texture: Some(terrain_texture.normal_image_handle.clone()),
+            ..Default::default()
+        }
+    }
+}
+
+impl Default for TerrainMaterial {
+    fn default() -> Self {
+        let dimension = Extent3d {
+            width: 64,
+            height: 128,
+            depth_or_array_layers: 1,
+        };
+
+        let format = TextureFormat::Rgba8UnormSrgb;
+        let data_length = dimension.volume() * 4;
+
+        // We can't use the default because it's not an array. It'll cause a validation failure.
+        let mut fallback_image = Image::new(
+            dimension,
+            TextureDimension::D2,
+            vec![0u8; data_length],
+            format,
+        );
+        fallback_image.reinterpret_stacked_2d_as_array(2);
+
+        TerrainMaterial {
+            base_color: Color::rgb(1.0, 1.0, 1.0),
+            base_color_texture: None,
+            emissive: Color::BLACK,
+            emissive_texture: None,
+            // This is the minimum the roughness is clamped to in shader code
+            // See <https://google.github.io/filament/Filament.html#materialsystem/parameterization/>
+            // It's the minimum floating point value that won't be rounded down to 0 in the
+            // calculations used. Although technically for 32-bit floats, 0.045 could be
+            // used.
+            perceptual_roughness: 0.089,
+            // Few materials are purely dielectric or metallic
+            // This is just a default for mostly-dielectric
+            metallic: 0.01,
+            metallic_roughness_texture: None,
+            // Minimum real-world reflectance is 2%, most materials between 2-5%
+            // Expressed in a linear scale and equivalent to 4% reflectance see
+            // <https://google.github.io/filament/Material%20Properties.pdf>
+            reflectance: 0.5,
+            occlusion_texture: None,
+            normal_map_texture: None,
+            flip_normal_map_y: false,
+            double_sided: false,
+            cull_mode: Some(Face::Back),
+            unlit: false,
+            alpha_mode: AlphaMode::Opaque,
+            depth_bias: 0.0,
+        }
+    }
+}
+
+impl AsBindGroupShaderType<StandardMaterialUniform> for TerrainMaterial {
+    fn as_bind_group_shader_type(&self, images: &RenderAssets<Image>) -> StandardMaterialUniform {
+        let mut flags = StandardMaterialFlags::NONE;
+        if self.base_color_texture.is_some() {
+            flags |= StandardMaterialFlags::BASE_COLOR_TEXTURE;
+        }
+        if self.emissive_texture.is_some() {
+            flags |= StandardMaterialFlags::EMISSIVE_TEXTURE;
+        }
+        if self.metallic_roughness_texture.is_some() {
+            flags |= StandardMaterialFlags::METALLIC_ROUGHNESS_TEXTURE;
+        }
+        if self.occlusion_texture.is_some() {
+            flags |= StandardMaterialFlags::OCCLUSION_TEXTURE;
+        }
+        if self.double_sided {
+            flags |= StandardMaterialFlags::DOUBLE_SIDED;
+        }
+        if self.unlit {
+            flags |= StandardMaterialFlags::UNLIT;
+        }
+        let has_normal_map = self.normal_map_texture.is_some();
+        if has_normal_map {
+            if let Some(texture) = images.get(self.normal_map_texture.as_ref().unwrap()) {
+                match texture.texture_format {
+                    // All 2-component unorm formats
+                    TextureFormat::Rg8Unorm
+                    | TextureFormat::Rg16Unorm
+                    | TextureFormat::Bc5RgUnorm
+                    | TextureFormat::EacRg11Unorm => {
+                        flags |= StandardMaterialFlags::TWO_COMPONENT_NORMAL_MAP;
+                    }
+                    _ => {}
+                }
+            }
+            if self.flip_normal_map_y {
+                flags |= StandardMaterialFlags::FLIP_NORMAL_MAP_Y;
+            }
+        }
+        // NOTE: 0.5 is from the glTF default - do we want this?
+        let mut alpha_cutoff = 0.5;
+        match self.alpha_mode {
+            AlphaMode::Opaque => flags |= StandardMaterialFlags::ALPHA_MODE_OPAQUE,
+            AlphaMode::Mask(c) => {
+                alpha_cutoff = c;
+                flags |= StandardMaterialFlags::ALPHA_MODE_MASK;
+            }
+            AlphaMode::Blend => flags |= StandardMaterialFlags::ALPHA_MODE_BLEND,
+        };
+
+        StandardMaterialUniform {
+            base_color: self.base_color.as_linear_rgba_f32().into(),
+            emissive: self.emissive.into(),
+            roughness: self.perceptual_roughness,
+            metallic: self.metallic,
+            reflectance: self.reflectance,
+            flags: flags.bits(),
+            alpha_cutoff,
         }
     }
 }
@@ -733,7 +886,8 @@ impl Material for TerrainMaterial {
     }
 
     fn fragment_shader() -> ShaderRef {
-        "shaders/terrain.wgsl".into()
+        // "shaders/terrain.wgsl".into()
+        StandardMaterial::fragment_shader()
     }
 
     fn specialize(
@@ -744,37 +898,47 @@ impl Material for TerrainMaterial {
     ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
         let defines = [
             "VERTEX_UVS",
-            "NONSTANDARDMATERIAL_NORMAL_MAP",
+            "STANDARDMATERIAL_NORMAL_MAP",
             "VERTEX_TANGENTS",
+            "ARRAY_TEXTURES",
         ];
 
-        descriptor
-            .vertex
-            .shader_defs
-            .extend(defines.iter().map(|def| def.to_string()));
+        let defines_iter = defines.iter().map(|def| def.to_string());
+
+        descriptor.vertex.shader_defs.extend(defines_iter.clone());
         let fragment = descriptor
             .fragment
             .as_mut()
             .expect("Fragment shader unavailable.");
-        fragment
-            .shader_defs
-            .extend(defines.iter().map(|def| def.to_string()));
+        fragment.shader_defs.extend(defines_iter);
 
         Ok(())
     }
 }
 
+enum ImageSource {
+    Handle(Handle<Image>),
+    Blank,
+    Loaded,
+}
+
 struct LoadingSet {
-    color: Option<Handle<Image>>,
-    normal: Option<Handle<Image>>,
+    color: ImageSource,
+    emissive: ImageSource,
+    metallic: ImageSource,
+    occlusion: ImageSource,
+    normal: ImageSource,
 }
 
 enum TerrainLoadingState {
     Loading {
         image_handles: Vec<LoadingSet>,
-        size: Option<Extent3d>, // Will be set by the first image loaded.
-        final_color_image_data: Vec<u8>,
-        final_normal_image_data: Vec<u8>,
+        size: Extent3d,
+        color_image_data: Vec<u8>,
+        emissive_image_data: Vec<u8>,
+        metallic_image_data: Vec<u8>,
+        occlusion_image_data: Vec<u8>,
+        normal_image_data: Vec<u8>,
     },
     Loaded,
 }
@@ -783,30 +947,56 @@ enum TerrainLoadingState {
 pub struct TerrainTextureManager {
     loading_state: TerrainLoadingState,
     color_image_handle: Handle<Image>,
+    emissive_image_handle: Handle<Image>,
+    metallic_image_handle: Handle<Image>,
+    occlusion_image_handle: Handle<Image>,
     normal_image_handle: Handle<Image>,
-    // TODO emissive color texture.
     image_paths: HashMap<String, usize>,
 }
 
 impl TerrainTextureManager {
     pub fn new(
         asset_server: &Res<AssetServer>,
+        size: Extent3d,
         image_resources: &mut ResMut<Assets<Image>>,
-        images: impl Iterator<Item = (impl Into<String>, AssetPath<'static>, AssetPath<'static>)>,
+        images: impl Iterator<
+            Item = (
+                impl Into<String>,
+                Option<AssetPath<'static>>,
+                Option<AssetPath<'static>>,
+            ),
+        >,
     ) -> Self {
+        // format.pixel_size() // TODO validate pixel format of images.
         let mut image_handles = Vec::new();
         let mut image_paths = HashMap::new();
+
+        assert_eq!(
+            size.depth_or_array_layers, 1,
+            "Only load 1 dimensional images."
+        );
+
+        fn extract_path(asset_server: &Res<AssetServer>, path: Option<AssetPath>) -> ImageSource {
+            path.map_or(ImageSource::Blank, |path| {
+                ImageSource::Handle(asset_server.load(path))
+            })
+        }
 
         for (name, color_image_path, normal_image_path) in images {
             let name = name.into();
 
-            let color_image_handle: Handle<Image> = asset_server.load(color_image_path.clone());
-            let normal_image_handle: Handle<Image> = asset_server.load(normal_image_path.clone());
+            let color = extract_path(asset_server, color_image_path);
+            let normal = extract_path(asset_server, normal_image_path);
+
+            // let normal_image_handle: Handle<Image> = asset_server.load(normal_image_path.clone());
 
             image_paths.insert(name, image_handles.len());
             image_handles.push(LoadingSet {
-                color: Some(color_image_handle),
-                normal: Some(normal_image_handle),
+                color,
+                emissive: ImageSource::Blank,
+                metallic: ImageSource::Blank,
+                occlusion: ImageSource::Blank,
+                normal,
             });
         }
 
@@ -824,24 +1014,29 @@ impl TerrainTextureManager {
         let format = TextureFormat::Rgba8UnormSrgb;
         let data_length = dimension.volume() * 4;
 
-        let mut color_image = Image::new(
+        let mut placeholder_image = Image::new(
             dimension,
             TextureDimension::D2,
             vec![0u8; data_length],
             format,
         );
-        color_image.reinterpret_stacked_2d_as_array(2);
-        let normal_image = color_image.clone();
+        placeholder_image.reinterpret_stacked_2d_as_array(2);
 
         Self {
             loading_state: TerrainLoadingState::Loading {
                 image_handles,
-                size: None,
-                final_color_image_data: Vec::new(),
-                final_normal_image_data: Vec::new(),
+                size,
+                color_image_data: Vec::new(),
+                emissive_image_data: Vec::new(),
+                metallic_image_data: Vec::new(),
+                occlusion_image_data: Vec::new(),
+                normal_image_data: Vec::new(),
             },
-            color_image_handle: image_resources.add(color_image),
-            normal_image_handle: image_resources.add(normal_image),
+            color_image_handle: image_resources.add(placeholder_image.clone()),
+            emissive_image_handle: image_resources.add(placeholder_image.clone()),
+            metallic_image_handle: image_resources.add(placeholder_image.clone()),
+            occlusion_image_handle: image_resources.add(placeholder_image.clone()),
+            normal_image_handle: image_resources.add(placeholder_image),
             image_paths,
         }
     }
@@ -868,46 +1063,54 @@ pub fn terrain_texture_loading(
     mut terrain_material_assets: ResMut<Assets<TerrainMaterial>>,
 ) {
     fn process_image(
-        image_handle_container: &mut Option<Handle<Image>>,
+        image_handle_container: &mut ImageSource,
         final_image_data: &mut Vec<u8>,
-        size: &mut Option<Extent3d>,
+        size: &Extent3d,
         asset_server: &Res<AssetServer>,
         images: &mut ResMut<Assets<Image>>,
     ) -> bool {
-        if let Some(image_handle) = image_handle_container {
-            let load_state = asset_server.get_load_state(image_handle.clone());
+        match image_handle_container {
+            ImageSource::Handle(image_handle) => {
+                let load_state = asset_server.get_load_state(image_handle.clone());
 
-            match load_state {
-                LoadState::Loaded => {
-                    let image = images
-                        .remove(image_handle.clone())
-                        .expect("Image wasn't actually loaded."); // FIXME we need an error state in this game.
-                    *image_handle_container = None; // Mark that it's been transferred over.
+                match load_state {
+                    LoadState::Loaded => {
+                        let image = images
+                            .remove(image_handle.clone())
+                            .expect("Image wasn't actually loaded."); // FIXME we need an error state in this game.
+                        *image_handle_container = ImageSource::Loaded; // Mark that it's been transferred over.
 
-                    // We need all textures to be the same size. Make sure to enforce that.
-                    if let Some(size) = size {
+                        // We need all textures to be the same size. Make sure to enforce that.
                         if image.texture_descriptor.size != *size {
                             // FIXME this should switch us to an error state.
                             // TODO list the culprit.
                             panic!("All textures must be of the same size and format.");
                         }
-                    } else {
-                        *size = Some(image.texture_descriptor.size);
+
+                        final_image_data.extend(image.data);
+
+                        true
                     }
-
-                    final_image_data.extend(image.data);
-
-                    true
+                    LoadState::Failed => {
+                        // FIXME this should switch us to an error state.
+                        // TODO list the culprit.
+                        panic!("Failed to load a terrain texture.");
+                    }
+                    _ => false,
                 }
-                LoadState::Failed => {
-                    // FIXME this should switch us to an error state.
-                    // TODO list the culprit.
-                    panic!("Failed to load a terrain texture.");
-                }
-                _ => false,
             }
-        } else {
-            true
+            ImageSource::Blank => {
+                *image_handle_container = ImageSource::Loaded; // Mark that it's been transferred over.
+
+                final_image_data.extend(
+                    std::iter::repeat([0u8, 0u8, 0u8, 255u8]) // TODO should probably give this a way to configurable set this so that normal maps can have a sane default.
+                        .zip(0..size.volume())
+                        .flat_map(|(byte, _index)| byte),
+                );
+
+                true
+            }
+            ImageSource::Loaded => true,
         }
     }
 
@@ -917,9 +1120,8 @@ pub fn terrain_texture_loading(
         images: &mut ResMut<Assets<Image>>,
         final_image_handle: &Handle<Image>,
         final_image_data: Vec<u8>,
-        terrain_material_image_handle: &mut Handle<Image>,
+        terrain_material_image_handle: &mut Option<Handle<Image>>,
     ) {
-        // FIXME this should switch to an error state.
         let mut pre_size = true_size; // Copies.
         pre_size.height *= num_layers;
 
@@ -936,14 +1138,17 @@ pub fn terrain_texture_loading(
         );
         image.reinterpret_stacked_2d_as_array(num_layers);
 
-        *terrain_material_image_handle = final_image_handle.clone();
+        *terrain_material_image_handle = Some(final_image_handle.clone());
     }
 
     if let TerrainLoadingState::Loading {
         size,
         image_handles,
-        final_color_image_data,
-        final_normal_image_data,
+        color_image_data,
+        emissive_image_data,
+        metallic_image_data,
+        occlusion_image_data,
+        normal_image_data,
     } = &mut texture.as_mut().loading_state
     {
         // Check that all the images we depend on are loaded, otherwise, bail out.
@@ -952,18 +1157,44 @@ pub fn terrain_texture_loading(
         for image_set in image_handles.iter_mut() {
             ready &= process_image(
                 &mut image_set.color,
-                final_color_image_data,
+                color_image_data,
+                size,
+                &asset_server,
+                &mut images,
+            );
+            ready &= process_image(
+                &mut image_set.emissive,
+                emissive_image_data,
+                size,
+                &asset_server,
+                &mut images,
+            );
+            ready &= process_image(
+                &mut image_set.metallic,
+                metallic_image_data,
+                size,
+                &asset_server,
+                &mut images,
+            );
+            ready &= process_image(
+                &mut image_set.occlusion,
+                occlusion_image_data,
                 size,
                 &asset_server,
                 &mut images,
             );
             ready &= process_image(
                 &mut image_set.normal,
-                final_normal_image_data,
+                normal_image_data,
                 size,
                 &asset_server,
                 &mut images,
             );
+
+            // Bail out early so we can guarantee the loading order.
+            if !ready {
+                break;
+            }
         }
 
         if ready {
@@ -973,8 +1204,11 @@ pub fn terrain_texture_loading(
             if let TerrainLoadingState::Loading {
                 image_handles,
                 size,
-                final_color_image_data,
-                final_normal_image_data,
+                color_image_data: final_color_image_data,
+                emissive_image_data,
+                metallic_image_data,
+                occlusion_image_data,
+                normal_image_data: final_normal_image_data,
             } = swap_state
             {
                 let num_layers = image_handles.len() as u32;
@@ -983,15 +1217,40 @@ pub fn terrain_texture_loading(
                     .get_mut(&terrain_material.0)
                     .expect("Terrain material is not available.");
 
-                let size = size.expect("Texture size was never provided.");
-
                 finalize_image(
                     size,
                     num_layers,
                     &mut images,
                     &texture.color_image_handle,
                     final_color_image_data,
-                    &mut terrain_material.color_texture,
+                    &mut terrain_material.base_color_texture,
+                );
+
+                finalize_image(
+                    size,
+                    num_layers,
+                    &mut images,
+                    &texture.emissive_image_handle,
+                    emissive_image_data,
+                    &mut terrain_material.emissive_texture,
+                );
+
+                finalize_image(
+                    size,
+                    num_layers,
+                    &mut images,
+                    &texture.metallic_image_handle,
+                    metallic_image_data,
+                    &mut terrain_material.metallic_roughness_texture,
+                );
+
+                finalize_image(
+                    size,
+                    num_layers,
+                    &mut images,
+                    &texture.occlusion_image_handle,
+                    occlusion_image_data,
+                    &mut terrain_material.occlusion_texture,
                 );
 
                 finalize_image(
@@ -1000,7 +1259,7 @@ pub fn terrain_texture_loading(
                     &mut images,
                     &texture.normal_image_handle,
                     final_normal_image_data,
-                    &mut terrain_material.normal_texture,
+                    &mut terrain_material.normal_map_texture,
                 );
 
                 log::info!("Terrain data loaded and ready.");
@@ -1020,37 +1279,43 @@ pub fn terrain_setup(
     // For terrain rendering.
     let terrain_texture = TerrainTextureManager::new(
         &asset_server,
+        Extent3d {
+            // TODO make this user configurable.
+            width: 512,
+            height: 512,
+            depth_or_array_layers: 1,
+        },
         &mut image_resources,
         vec![
             (
                 "default",
-                "terrain/default-color.png".into(),
-                "terrain/default-normal.png".into(),
+                Some("terrain/default-color.png".into()),
+                Some("terrain/default-normal.png".into()),
             ),
             (
                 "dirt",
-                "terrain/dirt-color.png".into(),
-                "terrain/dirt-normal.png".into(),
+                Some("terrain/dirt-color.png".into()),
+                Some("terrain/dirt-normal.png".into()),
             ),
             (
                 "grass_top",
-                "terrain/grass_top-color.png".into(),
-                "terrain/grass_top-normal.png".into(),
+                Some("terrain/grass_top-color.png".into()),
+                Some("terrain/grass_top-normal.png".into()),
             ),
             (
                 "grass_side",
-                "terrain/grass_side-color.png".into(),
-                "terrain/grass_side-normal.png".into(),
+                Some("terrain/grass_side-color.png".into()),
+                Some("terrain/grass_side-normal.png".into()),
             ),
             (
                 "sand",
-                "terrain/sand-color.png".into(),
-                "terrain/sand-normal.png".into(),
+                Some("terrain/sand-color.png".into()),
+                Some("terrain/sand-normal.png".into()),
             ),
             (
                 "stone",
-                "terrain/stone-color.png".into(),
-                "terrain/stone-normal.png".into(),
+                Some("terrain/stone-color.png".into()),
+                Some("terrain/stone-normal.png".into()),
             ),
         ]
         .drain(..),

@@ -918,7 +918,7 @@ impl Material for TerrainMaterial {
 
 enum ImageSource {
     Handle(Handle<Image>),
-    Blank,
+    Blank([u8; 4]),
     Loaded,
 }
 
@@ -976,8 +976,12 @@ impl TerrainTextureManager {
             "Only load 1 dimensional images."
         );
 
-        fn extract_path(asset_server: &Res<AssetServer>, path: Option<AssetPath>) -> ImageSource {
-            path.map_or(ImageSource::Blank, |path| {
+        fn extract_path(
+            asset_server: &Res<AssetServer>,
+            default: [u8; 4],
+            path: Option<AssetPath>,
+        ) -> ImageSource {
+            path.map_or(ImageSource::Blank(default), |path| {
                 ImageSource::Handle(asset_server.load(path))
             })
         }
@@ -985,17 +989,15 @@ impl TerrainTextureManager {
         for (name, color_image_path, normal_image_path) in images {
             let name = name.into();
 
-            let color = extract_path(asset_server, color_image_path);
-            let normal = extract_path(asset_server, normal_image_path);
-
-            // let normal_image_handle: Handle<Image> = asset_server.load(normal_image_path.clone());
+            let color = extract_path(asset_server, [0, 0, 0, 0], color_image_path);
+            let normal = extract_path(asset_server, [0, 128, 0, 255], normal_image_path);
 
             image_paths.insert(name, image_handles.len());
             image_handles.push(LoadingSet {
                 color,
-                emissive: ImageSource::Blank,
-                metallic: ImageSource::Blank,
-                occlusion: ImageSource::Blank,
+                emissive: ImageSource::Blank([0, 0, 0, 255]),
+                metallic: ImageSource::Blank([255, 255, 255, 255]),
+                occlusion: ImageSource::Blank([255, 255, 255, 255]),
                 normal,
             });
         }
@@ -1099,11 +1101,12 @@ pub fn terrain_texture_loading(
                     _ => false,
                 }
             }
-            ImageSource::Blank => {
+            ImageSource::Blank(fill) => {
+                let fill = *fill;
                 *image_handle_container = ImageSource::Loaded; // Mark that it's been transferred over.
 
                 final_image_data.extend(
-                    std::iter::repeat([0u8, 0u8, 0u8, 255u8]) // TODO should probably give this a way to configurable set this so that normal maps can have a sane default.
+                    std::iter::repeat(fill)
                         .zip(0..size.volume())
                         .flat_map(|(byte, _index)| byte),
                 );
@@ -1356,8 +1359,10 @@ pub fn terrain_setup(
         }
     }
 
-    let terrain_material_handle =
-        terrain_material_assets.add(TerrainMaterial::new(&terrain_texture));
+    let mut terrain_material = TerrainMaterial::new(&terrain_texture);
+    terrain_material.reflectance = 0.0;
+
+    let terrain_material_handle = terrain_material_assets.add(terrain_material);
     commands.insert_resource(block_registry);
     commands.insert_resource(TerrainMaterialHandle(terrain_material_handle));
     commands.insert_resource(terrain_texture);

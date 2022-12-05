@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use bevy_flycam::PlayerPlugin;
 
+mod physics;
 mod terrain;
 
 fn main() {
@@ -23,10 +24,7 @@ impl Engine5 {
 impl Plugin for Engine5 {
     fn build(&self, app: &mut App) {
         // TODO should probably be part of a VoxelTerrain plugin.
-        app.add_plugin(MaterialPlugin::<terrain::TerrainMaterial>::default());
-        app.add_system(terrain::generate_chunk_mesh);
-        app.add_system(terrain::terrain_texture_loading);
-        app.add_startup_system(terrain::terrain_setup);
+        terrain::setup(app);
 
         app.add_startup_system(setup);
     }

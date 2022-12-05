@@ -715,7 +715,7 @@ impl Chunk {
 #[uuid = "ab106dd3-3971-4655-a535-b3b47738c649"]
 #[uniform(0, StandardMaterialUniform)]
 #[reflect(Default, Debug)]
-pub struct TerrainMaterial {
+struct TerrainMaterial {
     pub base_color: Color,
 
     #[texture(1, dimension = "2d_array")]
@@ -747,8 +747,8 @@ pub struct TerrainMaterial {
     #[sampler(8)]
     pub occlusion_texture: Option<Handle<Image>>,
     pub double_sided: bool,
-    #[reflect(ignore)]
-    pub cull_mode: Option<Face>,
+    // #[reflect(ignore)]
+    // pub cull_mode: Option<Face>,
     pub unlit: bool,
     pub alpha_mode: AlphaMode,
     pub depth_bias: f32,
@@ -810,7 +810,7 @@ impl Default for TerrainMaterial {
             normal_map_texture: None,
             flip_normal_map_y: false,
             double_sided: false,
-            cull_mode: Some(Face::Back),
+            // cull_mode: Some(Face::Back),
             unlit: false,
             alpha_mode: AlphaMode::Opaque,
             depth_bias: 0.0,
@@ -1057,7 +1057,7 @@ impl TerrainTextureManager {
 #[derive(Resource)]
 pub struct TerrainMaterialHandle(Handle<TerrainMaterial>);
 
-pub fn terrain_texture_loading(
+fn terrain_texture_loading(
     asset_server: Res<AssetServer>,
     mut texture: ResMut<TerrainTextureManager>,
     mut images: ResMut<Assets<Image>>,
@@ -1273,7 +1273,7 @@ pub fn terrain_texture_loading(
     }
 }
 
-pub fn terrain_setup(
+fn terrain_setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     mut image_resources: ResMut<Assets<Image>>,
@@ -1370,7 +1370,7 @@ pub fn terrain_setup(
     commands.spawn(chunk);
 }
 
-pub fn generate_chunk_mesh(
+fn generate_chunk_mesh(
     mut commands: Commands,
     terrain_material: Res<TerrainMaterialHandle>,
     block_registry: Res<BlockRegistry>,
@@ -1388,4 +1388,11 @@ pub fn generate_chunk_mesh(
             ..Default::default()
         });
     }
+}
+
+pub fn setup(app: &mut App) {
+    app.add_plugin(MaterialPlugin::<TerrainMaterial>::default());
+    app.add_system(generate_chunk_mesh);
+    app.add_system(terrain_texture_loading);
+    app.add_startup_system(terrain_setup);
 }

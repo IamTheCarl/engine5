@@ -345,15 +345,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bevy_flycam"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a032f6fc53b6ab0901c2b5d01034691a6b27f1ae49dd035ccf392705eec09b5f"
-dependencies = [
- "bevy",
-]
-
-[[package]]
 name = "bevy_gilrs"
 version = "0.9.1"
 dependencies = [
@@ -508,6 +499,15 @@ dependencies = [
  "bitflags",
  "bytemuck",
  "radsort",
+]
+
+[[package]]
+name = "bevy_prototype_debug_lines"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d9e933f5bf971fbc7e83b447db6758ed3b091faf4cd8e524a9406ae7acca096"
+dependencies = [
+ "bevy",
 ]
 
 [[package]]
@@ -1203,9 +1203,10 @@ name = "engine5"
 version = "0.1.0"
 dependencies = [
  "bevy",
- "bevy_flycam",
+ "bevy_prototype_debug_lines",
  "log",
  "nalgebra",
+ "ordered-float",
  "serde",
  "thiserror",
  "wgpu",
@@ -2214,6 +2215,15 @@ name = "once_cell"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "86f0b0d4bf799edbc74508c1e8bf170ff5f41238e5f8225603ca7caaae2b7860"
+
+[[package]]
+name = "ordered-float"
+version = "3.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d84eb1409416d254e4a9c8fa56cc24701755025b458f0fcd8e59e1f5f40c23bf"
+dependencies = [
+ "num-traits",
+]
 
 [[package]]
 name = "overload"

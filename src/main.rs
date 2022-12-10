@@ -1,15 +1,15 @@
 use bevy::prelude::*;
-use bevy_flycam::PlayerPlugin;
+use bevy_prototype_debug_lines::DebugLinesPlugin;
+// use bevy_flycam::PlayerPlugin;
 
 mod physics;
+mod player;
 mod terrain;
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugin(Engine5::new())
-        .add_plugin(PlayerPlugin) // TODO remove when you implement your own player.
-        // TODO enable DBand dithering once you have control of the camera.
         .run();
 }
 
@@ -23,8 +23,13 @@ impl Engine5 {
 
 impl Plugin for Engine5 {
     fn build(&self, app: &mut App) {
-        // TODO should probably be part of a VoxelTerrain plugin.
+        // TODO should probably make these proper plugins.
         terrain::setup(app);
+        physics::setup(app);
+
+        app.add_plugin(player::PlayerPlugin);
+        app.add_plugin(DebugLinesPlugin::default());
+        // TODO enable DBand dithering once you have control of the camera.
 
         app.add_startup_system(setup);
     }

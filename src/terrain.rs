@@ -16,7 +16,7 @@ use bevy::{
 use nalgebra::{Vector2, Vector3};
 use std::{borrow::Cow, collections::HashMap, num::NonZeroU16, str::FromStr};
 use thiserror::Error;
-use wgpu::{Face, TextureDimension, TextureFormat};
+use wgpu::{TextureDimension, TextureFormat};
 
 type BlockID = NonZeroU16;
 pub type BlockCoordinate = nalgebra::Vector3<i64>;
@@ -158,7 +158,7 @@ impl BlockNeighborSet {
 }
 
 pub struct BlockData {
-    name: String,
+    _name: String,
     id: BlockID,
     faces: BlockFaces,
 }
@@ -356,11 +356,11 @@ impl BlockRegistry {
         self.block_tags.entry(tag).or_insert_with(|| {
             result = Ok(()); // We inserted! That means we can return Ok.
 
-            let name = name.into();
+            let _name = name.into();
 
             let id = self.block_data.len() as u16;
             let id = BlockID::new(id + 1).expect("Block ID miscalculated.");
-            self.block_data.push(BlockData { name, id, faces });
+            self.block_data.push(BlockData { _name, id, faces });
             id
         });
 

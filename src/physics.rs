@@ -204,43 +204,51 @@ fn compute_cylinder_to_cylinder_intersections(
 ) {
     // TODO use events to pass all intersections to the next system.
 
-    for (entity_a, _spatial_hash_a, position_a, cylinder_a) in entities.iter() {
+    // We don't want to compare a set of entities more than once, so make sure we only get a set of unique comparisons.
+    let mut to_compare = HashSet::new();
+
+    for (entity_a, _spatial_hash_a, position_a, _cylinder_a) in entities.iter() {
         spatial_object_tracker.get_ballpark(position_a.translation, |entity_b| {
-            // FIXME I'm pretty sure we're double iterating some objects.
-
             if entity_a != *entity_b {
-                // If this fails, it probably wasn't a cylinder.
-                // That or it's a piece of garbage that got left behind.
-                if let Ok((_entity_b, _spatial_hash_b, position_b, cylinder_b)) =
-                    entities.get(*entity_b)
-                {
-                    let a_bottom = position_a.translation.y;
-                    let a_top = a_bottom + *cylinder_a.height;
+                let mut comparison_set = [entity_a, *entity_b];
+                comparison_set.sort_unstable();
 
-                    let b_bottom = position_b.translation.y;
-                    let b_top = b_bottom + *cylinder_b.height;
-
-                    let intersecting_y = (a_bottom >= b_bottom && a_bottom <= b_top)
-                        || (b_bottom >= a_bottom && b_bottom <= a_top);
-
-                    // Okay, our y axis are overlapping. Let's see if we're close enough to contact.
-                    let difference = position_a.translation.xy() - position_b.translation.xy();
-                    let distance = difference.length() - *cylinder_a.radius - *cylinder_b.radius;
-
-                    let intersecting_xz = distance <= 0.0;
-                    let intersecting = intersecting_xz && intersecting_y;
-
-                    dbg!(intersecting);
-                }
+                to_compare.insert(comparison_set);
             }
         })
     }
 
-    // let iter = cylinders.iter();
+    for comparison_set in to_compare.drain() {
+        let entity_a = comparison_set[0];
+        let entity_b = comparison_set[1];
 
-    // while let Some(cylinder_a) = iter.next() {
-    //     let b_iter = iter.clone();
-    // }
+        // We should have proven all of these cylinders in the previous loop.
+        let (_entity_a, _spatial_hash_a, position_a, cylinder_a) = entities
+            .get(entity_a)
+            .expect("Cylinder is no longer a cylinder.");
+
+        // If this fails, it probably wasn't a cylinder.
+        // That or it's a piece of garbage that got left behind.
+        if let Ok((_entity_b, _spatial_hash_b, position_b, cylinder_b)) = entities.get(entity_b) {
+            let a_bottom = position_a.translation.y;
+            let a_top = a_bottom + *cylinder_a.height;
+
+            let b_bottom = position_b.translation.y;
+            let b_top = b_bottom + *cylinder_b.height;
+
+            let intersecting_y = (a_bottom >= b_bottom && a_bottom <= b_top)
+                || (b_bottom >= a_bottom && b_bottom <= a_top);
+
+            // Okay, our y axis are overlapping. Let's see if we're close enough to contact.
+            let difference = position_a.translation.xy() - position_b.translation.xy();
+            let distance = difference.length() - *cylinder_a.radius - *cylinder_b.radius;
+
+            let intersecting_xz = distance <= 0.0;
+            let intersecting = intersecting_xz && intersecting_y;
+
+            dbg!(intersecting);
+        }
+    }
 }
 
 fn handle_removed_spatial_hash_entities(

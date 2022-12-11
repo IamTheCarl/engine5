@@ -77,6 +77,13 @@ pub struct Position {
     pub rotation: f32,
 }
 
+impl Position {
+    #[inline]
+    pub fn local_z(&self) -> Vec3 {
+        Vec3::new(f32::sin(self.rotation), 0.0, f32::cos(self.rotation))
+    }
+}
+
 #[derive(Component, Debug, Hash, PartialEq, Eq, Clone, Copy)]
 pub struct Cylinder {
     pub height: NotNan<f32>,
@@ -199,7 +206,7 @@ impl SpatialHash {
 }
 
 fn compute_cylinder_to_cylinder_intersections(
-    entities: Query<(Entity, &SpatialHash, &Position, &Cylinder)>,
+    entities: Query<(Entity, With<SpatialHash>, &Position, &Cylinder)>,
     spatial_object_tracker: Res<SpatialObjectTracker>,
 ) {
     // TODO use events to pass all intersections to the next system.
@@ -246,8 +253,21 @@ fn compute_cylinder_to_cylinder_intersections(
             let intersecting_xz = distance <= 0.0;
             let intersecting = intersecting_xz && intersecting_y;
 
-            dbg!(intersecting);
+            // dbg!(intersecting);
         }
+    }
+}
+
+fn compute_cylinder_to_Terrain_intersections(
+    cylinders: Query<(Entity, &SpatialHash, &Position, &Cylinder)>,
+    terrain: Query<(Entity, &SpatialHash, &Position, &Chunk)>,
+    spatial_object_tracker: Res<SpatialObjectTracker>,
+) {
+    for (terrain_entity, terrain_spatial_hash, terrain_position, terrain) in terrain.iter() {
+        spatial_object_tracker
+            .get_ballpark(terrain_position.translation, |maybe_cylinder_entity| {});
+
+        // (cylinder_entity, cylinder_spatial_hash, cylinder_position, cylinder_terrain)
     }
 }
 
@@ -344,9 +364,11 @@ fn update_movement(mut entities: Query<(&mut Position, &Velocity)>) {
     }
 }
 
+/// Updates transforms to match the physics information. Useful for rendering.
 fn update_transforms(mut entities: Query<(&Position, &mut Transform)>) {
     for (position, mut transform) in entities.iter_mut() {
         transform.translation = position.translation;
+        transform.rotation = Quat::from_axis_angle(Vec3::Y, position.rotation);
     }
 }
 
@@ -379,10 +401,12 @@ pub fn setup(app: &mut App) {
     );
 
     app.add_system(update_transforms);
+
     app.add_system(update_movement);
     app.add_system(add_debug_mesh_cylinders);
     app.add_system(remove_debug_mesh_cylinders);
     app.add_system(compute_cylinder_to_cylinder_intersections);
+    app.add_system(compute_cylinder_to_Terrain_intersections);
 
     app.add_system(add_spatial_hash_entities);
     app.add_system(update_spatial_hash_entities);

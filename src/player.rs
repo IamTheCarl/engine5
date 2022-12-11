@@ -33,9 +33,8 @@ impl Default for MovementSettings {
     }
 }
 
-/// A marker component used in queries when you want flycams and not other cameras
 #[derive(Component)]
-pub struct FlyCam;
+pub struct MovementControl;
 
 /// Grabs/ungrabs mouse cursor
 fn toggle_grab_cursor(window: &mut Window) {
@@ -62,21 +61,29 @@ fn initial_grab_cursor(mut windows: ResMut<Windows>) {
 
 /// Spawns the `Camera3dBundle` to be controlled
 fn setup_player(mut commands: Commands) {
-    commands.spawn((
-        Camera3dBundle {
-            ..Default::default()
-        },
-        FlyCam,
-        Cylinder {
-            height: NotNan::new(3.0).unwrap(),
-            radius: NotNan::new(0.5).unwrap(),
-        },
-        Position {
-            translation: Vec3::new(-2.0, 5.0, 5.0),
-            rotation: 0.0,
-        },
-        SpatialHash::default(),
-    ));
+    commands
+        .spawn((
+            Cylinder {
+                height: NotNan::new(3.0).unwrap(),
+                radius: NotNan::new(0.5).unwrap(),
+            },
+            Position {
+                translation: Vec3::new(-2.0, 5.0, 5.0),
+                rotation: 0.0,
+            },
+            Transform::default(),
+            SpatialHash::default(),
+            MovementControl,
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Camera3dBundle {
+                    transform: Transform::from_translation(Vec3::new(0.0, 2.0, 0.0)),
+                    ..Default::default()
+                },
+                MovementControl,
+            ));
+        });
 }
 
 /// Handles keyboard input and movement
@@ -85,12 +92,12 @@ fn player_move(
     time: Res<Time>,
     windows: Res<Windows>,
     settings: Res<MovementSettings>,
-    mut query: Query<(&mut Position, &Transform), With<FlyCam>>,
+    mut query: Query<&mut Position, With<MovementControl>>,
 ) {
     if let Some(window) = windows.get_primary() {
-        for (mut position, transform) in query.iter_mut() {
+        for mut position in query.iter_mut() {
             let mut velocity = Vec3::ZERO;
-            let local_z = transform.local_z();
+            let local_z = position.local_z();
             let forward = -Vec3::new(local_z.x, 0., local_z.z);
             let right = Vec3::new(local_z.z, 0., -local_z.x);
 
@@ -111,46 +118,63 @@ fn player_move(
 
             velocity = velocity.normalize_or_zero();
 
-            position.translation += velocity * time.delta_seconds() * settings.speed
+            position.translation += velocity * time.delta_seconds() * settings.speed;
         }
     } else {
         warn!("Primary window not found for `player_move`!");
     }
 }
 
-/// Handles looking around if cursor is locked
-fn player_look(
+fn update_input_state(
     settings: Res<MovementSettings>,
     windows: Res<Windows>,
     mut state: ResMut<InputState>,
     motion: Res<Events<MouseMotion>>,
-    mut query: Query<&mut Transform, With<FlyCam>>,
 ) {
     if let Some(window) = windows.get_primary() {
         let mut delta_state = state.as_mut();
-        for mut transform in query.iter_mut() {
-            for ev in delta_state.reader_motion.iter(&motion) {
-                match window.cursor_grab_mode() {
-                    CursorGrabMode::None => (),
-                    _ => {
-                        // Using smallest of height or width ensures equal vertical and horizontal sensitivity
-                        let window_scale = window.height().min(window.width());
-                        delta_state.pitch -=
-                            (settings.sensitivity * ev.delta.y * window_scale).to_radians();
-                        delta_state.yaw -=
-                            (settings.sensitivity * ev.delta.x * window_scale).to_radians();
-                    }
+
+        for ev in delta_state.reader_motion.iter(&motion) {
+            match window.cursor_grab_mode() {
+                CursorGrabMode::None => (),
+                _ => {
+                    // Using smallest of height or width ensures equal vertical and horizontal sensitivity
+                    let window_scale = window.height().min(window.width());
+                    delta_state.pitch -=
+                        (settings.sensitivity * ev.delta.y * window_scale).to_radians();
+                    delta_state.yaw -=
+                        (settings.sensitivity * ev.delta.x * window_scale).to_radians();
                 }
-
-                delta_state.pitch = delta_state.pitch.clamp(-1.54, 1.54);
-
-                // Order is important to prevent unintended roll
-                transform.rotation = Quat::from_axis_angle(Vec3::Y, delta_state.yaw)
-                    * Quat::from_axis_angle(Vec3::X, delta_state.pitch);
             }
+
+            delta_state.pitch = delta_state.pitch.clamp(-1.54, 1.54);
         }
     } else {
         warn!("Primary window not found for `player_look`!");
+    }
+}
+// TODO system to update player's position.
+// TODO system to update player's transform.
+/// Handles looking around if cursor is locked
+fn player_look(
+    state: Res<InputState>,
+    mut query: Query<(&mut Transform, With<MovementControl>), Without<Position>>,
+) {
+    let delta_state = state.as_ref();
+    for (mut transform, _) in query.iter_mut() {
+        // Order is important to prevent unintended roll
+        // transform.rotation = Quat::from_axis_angle(Vec3::Y, delta_state.yaw)
+        //     * Quat::from_axis_angle(Vec3::X, delta_state.pitch);
+
+        transform.rotation = Quat::from_axis_angle(Vec3::X, delta_state.pitch);
+    }
+}
+
+fn player_turn(state: Res<InputState>, mut query: Query<(&mut Position, With<MovementControl>)>) {
+    let delta_state = state.as_ref();
+    for (mut position, _) in query.iter_mut() {
+        // Order is important to prevent unintended roll
+        position.rotation = delta_state.yaw;
     }
 }
 
@@ -172,8 +196,10 @@ impl Plugin for PlayerPlugin {
             .init_resource::<MovementSettings>()
             .add_startup_system(setup_player)
             .add_startup_system(initial_grab_cursor)
-            .add_system(player_move)
             .add_system(player_look)
+            .add_system(player_turn)
+            .add_system(player_move)
+            .add_system(update_input_state)
             .add_system(cursor_grab);
     }
 }

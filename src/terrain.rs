@@ -18,6 +18,8 @@ use std::{borrow::Cow, collections::HashMap, num::NonZeroU16, str::FromStr};
 use thiserror::Error;
 use wgpu::{TextureDimension, TextureFormat};
 
+use crate::physics::Position;
+
 type BlockID = NonZeroU16;
 pub type BlockCoordinate = nalgebra::Vector3<i64>;
 pub type BlockLocalCoordinate = nalgebra::Vector3<i8>;
@@ -602,7 +604,7 @@ fn terrain_vertex_encode() {
     assert_eq!(extract_unsigned(value, 9, 20), 348);
 }
 
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub struct Chunk {
     blocks: [[[Option<Block>; Self::CHUNK_DIAMETER]; Self::CHUNK_DIAMETER]; Self::CHUNK_DIAMETER],
 }
@@ -1367,7 +1369,21 @@ fn terrain_setup(
     commands.insert_resource(TerrainMaterialHandle(terrain_material_handle));
     commands.insert_resource(terrain_texture);
 
-    commands.spawn(chunk);
+    commands.spawn((
+        chunk.clone(),
+        Position {
+            translation: Vec3::new(0.0, 0.0, 0.0),
+            rotation: 0.0,
+        },
+    ));
+
+    commands.spawn((
+        chunk,
+        Position {
+            translation: Vec3::new(32.0, 0.0, 0.0),
+            rotation: std::f64::consts::FRAC_PI_4 as f32,
+        },
+    ));
 }
 
 fn generate_chunk_mesh(
@@ -1384,7 +1400,6 @@ fn generate_chunk_mesh(
         commands.entity(entity).insert(MaterialMeshBundle {
             mesh: meshes.add(chunk_mesh),
             material: terrain_material.0.clone(),
-            transform: Transform::from_xyz(0.0, 0.0, 0.0), // TODO let the chunk set that information itself.
             ..Default::default()
         });
     }

@@ -1,4 +1,4 @@
-use crate::terrain::Chunk;
+use crate::terrain::{to_local_block_coordinate, Chunk};
 use bevy::{math::Vec3Swizzles, prelude::*};
 use ordered_float::NotNan;
 use std::collections::{HashMap, HashSet};
@@ -82,6 +82,11 @@ impl Position {
     pub fn local_z(&self) -> Vec3 {
         Vec3::new(f32::sin(self.rotation), 0.0, f32::cos(self.rotation))
     }
+
+    #[inline]
+    pub fn quat(&self) -> Quat {
+        Quat::from_rotation_y(-self.rotation)
+    }
 }
 
 #[derive(Component, Debug, Hash, PartialEq, Eq, Clone, Copy)]
@@ -121,51 +126,120 @@ impl SpatialObjectTracker {
         self.0.get(spatial_hash)
     }
 
-    fn calculate_axis_ballpark(axis: f32) -> (i16, i16) {
-        let axis_a = axis as i16;
-
-        let axis_b = if axis.fract() > 0.5 {
-            axis_a + 1
-        } else {
-            axis_a - 1
-        };
-
-        (axis_a, axis_b)
-    }
-
-    fn calculate_ballpark(position: Vec3) -> [SpatialHash; 8] {
+    fn calculate_ballpark(position: Vec3) -> [SpatialHash; 27] {
         let cell_position = position / Chunk::CHUNK_DIAMETER as f32;
 
-        let (x, x_alt) = Self::calculate_axis_ballpark(cell_position.x);
-        let (y, y_alt) = Self::calculate_axis_ballpark(cell_position.y);
-        let (z, z_alt) = Self::calculate_axis_ballpark(cell_position.z);
+        let x = cell_position.x as i16;
+        let y = cell_position.y as i16;
+        let z = cell_position.z as i16;
 
-        // FIXME we're just grabbing the 2x2 space but this may actually be too small if our largest object will actually be a chunk.
-        // Maybe we should take object size into account?
         [
             SpatialHash { x, y, z },
-            SpatialHash { x, y, z: z_alt },
-            SpatialHash { x, y: y_alt, z },
+            SpatialHash { x, y, z: z + 1 },
+            SpatialHash { x, y, z: z - 1 },
+            SpatialHash { x, y: y + 1, z },
             SpatialHash {
                 x,
-                y: y_alt,
-                z: z_alt,
+                y: y + 1,
+                z: z + 1,
             },
-            SpatialHash { x: x_alt, y, z },
             SpatialHash {
-                x: x_alt,
+                x,
+                y: y + 1,
+                z: z - 1,
+            },
+            SpatialHash { x, y: y - 1, z },
+            SpatialHash {
+                x,
+                y: y - 1,
+                z: z + 1,
+            },
+            SpatialHash {
+                x,
+                y: y - 1,
+                z: z - 1,
+            },
+            SpatialHash { x: x + 1, y, z },
+            SpatialHash {
+                x: x + 1,
                 y,
-                z: z_alt,
+                z: z + 1,
             },
             SpatialHash {
-                x: x_alt,
-                y: y_alt,
+                x: x + 1,
+                y,
+                z: z - 1,
+            },
+            SpatialHash {
+                x: x + 1,
+                y: y + 1,
                 z,
             },
             SpatialHash {
-                x: x_alt,
-                y: y_alt,
-                z: z_alt,
+                x: x + 1,
+                y: y + 1,
+                z: z + 1,
+            },
+            SpatialHash {
+                x: x + 1,
+                y: y + 1,
+                z: z - 1,
+            },
+            SpatialHash {
+                x: x + 1,
+                y: y - 1,
+                z,
+            },
+            SpatialHash {
+                x: x + 1,
+                y: y - 1,
+                z: z + 1,
+            },
+            SpatialHash {
+                x: x + 1,
+                y: y - 1,
+                z: z - 1,
+            },
+            SpatialHash { x: x - 1, y, z },
+            SpatialHash {
+                x: x - 1,
+                y,
+                z: z + 1,
+            },
+            SpatialHash {
+                x: x - 1,
+                y,
+                z: z - 1,
+            },
+            SpatialHash {
+                x: x - 1,
+                y: y + 1,
+                z,
+            },
+            SpatialHash {
+                x: x - 1,
+                y: y + 1,
+                z: z + 1,
+            },
+            SpatialHash {
+                x: x - 1,
+                y: y + 1,
+                z: z - 1,
+            },
+            SpatialHash {
+                x: x - 1,
+                y: y - 1,
+                z,
+            },
+            SpatialHash {
+                x: x - 1,
+                y: y - 1,
+                z: z + 1,
+            },
+            SpatialHash {
+                x: x - 1,
+                y: y - 1,
+                z: z - 1,
             },
         ]
     }
@@ -181,13 +255,7 @@ impl SpatialObjectTracker {
     }
 }
 
-#[test]
-fn spatial_ballpark_calculation() {
-    assert_eq!(SpatialObjectTracker::calculate_axis_ballpark(0.0), (0, -1));
-    assert_eq!(SpatialObjectTracker::calculate_axis_ballpark(0.5), (0, -1)); // Is arbitrary. (0, 1) would be fine too.
-    assert_eq!(SpatialObjectTracker::calculate_axis_ballpark(0.6), (0, 1));
-}
-
+// TODO I should probably automate the addition and removal of this to entities.
 #[derive(Component, Debug, PartialEq, Eq, Hash, Default, Clone, Copy)]
 pub struct SpatialHash {
     x: i16,
@@ -253,21 +321,46 @@ fn compute_cylinder_to_cylinder_intersections(
             let intersecting_xz = distance <= 0.0;
             let intersecting = intersecting_xz && intersecting_y;
 
-            // dbg!(intersecting);
+            if intersecting {
+                dbg!(entity_a, entity_b);
+            }
         }
     }
 }
 
-fn compute_cylinder_to_Terrain_intersections(
-    cylinders: Query<(Entity, &SpatialHash, &Position, &Cylinder)>,
-    terrain: Query<(Entity, &SpatialHash, &Position, &Chunk)>,
+fn compute_cylinder_to_terrain_intersections(
+    cylinders: Query<(Entity, With<SpatialHash>, &Position, &Cylinder)>,
+    terrain: Query<(Entity, With<SpatialHash>, &Position, &Chunk)>,
     spatial_object_tracker: Res<SpatialObjectTracker>,
 ) {
-    for (terrain_entity, terrain_spatial_hash, terrain_position, terrain) in terrain.iter() {
-        spatial_object_tracker
-            .get_ballpark(terrain_position.translation, |maybe_cylinder_entity| {});
+    for (terrain_entity, _terrain_spatial_hash, terrain_position, terrain) in terrain.iter() {
+        let terrain_quat = terrain_position.quat();
 
-        // (cylinder_entity, cylinder_spatial_hash, cylinder_position, cylinder_terrain)
+        spatial_object_tracker.get_ballpark(
+            terrain_position.translation,
+            |maybe_cylinder_entity| {
+                // Need to make sure it's actually a cylinder.
+                if let Ok((cylinder_entity, _cylinder_spatial_hash, cylinder_position, cylinder)) =
+                    cylinders.get(*maybe_cylinder_entity)
+                {
+                    // Translate cylinder space into chunk local space.
+                    let localized_cylinder_position =
+                        cylinder_position.translation - terrain_position.translation;
+
+                    // Rotate cylinder space into chunk local space.
+                    let localized_cylinder_position = terrain_quat * localized_cylinder_position;
+
+                    if terrain
+                        .get_block_local(to_local_block_coordinate(&localized_cylinder_position))
+                        .is_some()
+                    {
+                        dbg!(terrain_entity, cylinder_entity);
+                    } else {
+                        dbg!();
+                    }
+                }
+            },
+        );
     }
 }
 
@@ -375,19 +468,19 @@ fn update_transforms(mut entities: Query<(&Position, &mut Transform)>) {
 pub fn setup(app: &mut App) {
     app.add_startup_system(
         |mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>| {
-            commands.spawn((
-                Cylinder {
-                    height: NotNan::new(1.0).unwrap(),
-                    radius: NotNan::new(0.5).unwrap(),
-                },
-                Velocity::default(),
-                Transform::default(),
-                Position {
-                    translation: Vec3::new(0.0, 5.0, 0.0),
-                    rotation: 0.0,
-                },
-                SpatialHash::default(),
-            ));
+            // commands.spawn((
+            //     Cylinder {
+            //         height: NotNan::new(1.0).unwrap(),
+            //         radius: NotNan::new(0.5).unwrap(),
+            //     },
+            //     Velocity::default(),
+            //     Transform::default(),
+            //     Position {
+            //         translation: Vec3::new(-5.0, 5.0, -5.0),
+            //         rotation: 0.0,
+            //     },
+            //     SpatialHash::default(),
+            // ));
 
             // TODO make this accessible from a menu or terminal.
             commands.insert_resource(DebugRenderSettings { enabled: true });
@@ -406,7 +499,7 @@ pub fn setup(app: &mut App) {
     app.add_system(add_debug_mesh_cylinders);
     app.add_system(remove_debug_mesh_cylinders);
     app.add_system(compute_cylinder_to_cylinder_intersections);
-    app.add_system(compute_cylinder_to_Terrain_intersections);
+    app.add_system(compute_cylinder_to_terrain_intersections);
 
     app.add_system(add_spatial_hash_entities);
     app.add_system(update_spatial_hash_entities);

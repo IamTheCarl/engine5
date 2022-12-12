@@ -72,6 +72,7 @@ fn setup_player(mut commands: Commands) {
                 rotation: 0.0,
             },
             Transform::default(),
+            GlobalTransform::default(),
             SpatialHash::default(),
             MovementControl,
         ))

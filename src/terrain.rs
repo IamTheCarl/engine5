@@ -18,11 +18,23 @@ use std::{borrow::Cow, collections::HashMap, num::NonZeroU16, str::FromStr};
 use thiserror::Error;
 use wgpu::{TextureDimension, TextureFormat};
 
-use crate::physics::Position;
+use crate::physics::{Position, SpatialHash};
 
 type BlockID = NonZeroU16;
 pub type BlockCoordinate = nalgebra::Vector3<i64>;
 pub type BlockLocalCoordinate = nalgebra::Vector3<i8>;
+
+pub fn to_local_block_coordinate(coordinate: &Vec3) -> BlockLocalCoordinate {
+    BlockLocalCoordinate::new(coordinate.x as i8, coordinate.y as i8, coordinate.z as i8)
+}
+
+pub fn to_block_coordinate(coordinate: &Vec3) -> BlockCoordinate {
+    BlockCoordinate::new(
+        coordinate.x as i64,
+        coordinate.y as i64,
+        coordinate.z as i64,
+    )
+}
 
 #[derive(Error, Debug)]
 pub enum BlockIndexError {
@@ -341,6 +353,20 @@ impl BlockRegistry {
                 south: dirt_index,
                 east: dirt_index,
                 west: dirt_index,
+            },
+        )?;
+
+        let default_index = terrain_texture.get_image_index("default");
+        registry.add_block(
+            "core:default".try_into()?,
+            "Default",
+            BlockFaces {
+                top: default_index,
+                bottom: default_index,
+                north: default_index,
+                south: default_index,
+                east: default_index,
+                west: default_index,
             },
         )?;
 
@@ -1327,14 +1353,17 @@ fn terrain_setup(
     );
 
     let block_registry = BlockRegistry::load(&terrain_texture).unwrap();
-    let stone_tag = BlockTag::try_from("core:stone").unwrap();
-    let stone_data = block_registry.get_by_tag(&stone_tag).unwrap();
-    let stone_block = stone_data.spawn();
-    let dirt_tag = BlockTag::try_from("core:dirt").unwrap();
-    let dirt_data = block_registry.get_by_tag(&dirt_tag).unwrap();
-    let dirt_block = dirt_data.spawn();
+    // let stone_tag = BlockTag::try_from("core:stone").unwrap();
+    // let stone_data = block_registry.get_by_tag(&stone_tag).unwrap();
+    // let stone_block = stone_data.spawn();
+    // let dirt_tag = BlockTag::try_from("core:dirt").unwrap();
+    // let dirt_data = block_registry.get_by_tag(&dirt_tag).unwrap();
+    // let dirt_block = dirt_data.spawn();
+    let default_tag = BlockTag::try_from("core:default").unwrap();
+    let default_data = block_registry.get_by_tag(&default_tag).unwrap();
+    let default_block = default_data.spawn();
 
-    let mut chunk = Chunk::new(Some(stone_block));
+    let mut chunk = Chunk::new(Some(default_block));
     for x in 0..Chunk::CHUNK_DIAMETER {
         for y in 0..Chunk::CHUNK_DIAMETER {
             for z in 0..Chunk::CHUNK_DIAMETER {
@@ -1349,14 +1378,15 @@ fn terrain_setup(
                     chunk
                         .set_block_local(BlockLocalCoordinate::new(x as i8, y as i8, z as i8), None)
                         .ok();
-                } else if (x % 2f32) == 0f32 {
-                    chunk
-                        .set_block_local(
-                            BlockLocalCoordinate::new(x as i8, y as i8, z as i8),
-                            Some(dirt_block),
-                        )
-                        .ok();
                 }
+                //  else if (x % 2f32) == 0f32 {
+                //     chunk
+                //         .set_block_local(
+                //             BlockLocalCoordinate::new(x as i8, y as i8, z as i8),
+                //             Some(dirt_block),
+                //         )
+                //         .ok();
+                // }
             }
         }
     }
@@ -1372,17 +1402,19 @@ fn terrain_setup(
     commands.spawn((
         chunk.clone(),
         Position {
-            translation: Vec3::new(0.0, 0.0, 0.0),
+            translation: Vec3::new(5.0, 0.0, 5.0),
             rotation: 0.0,
         },
+        SpatialHash::default(),
     ));
 
     commands.spawn((
         chunk,
         Position {
-            translation: Vec3::new(32.0, 0.0, 0.0),
+            translation: Vec3::new(16.0, 0.0, 0.0),
             rotation: std::f64::consts::FRAC_PI_4 as f32,
         },
+        SpatialHash::default(),
     ));
 }
 

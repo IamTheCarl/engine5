@@ -1,5 +1,6 @@
 use crate::terrain::{to_local_block_coordinate, Chunk};
 use bevy::{math::Vec3Swizzles, prelude::*};
+use bevy_prototype_debug_lines::DebugLines;
 use ordered_float::NotNan;
 use std::collections::{HashMap, HashSet};
 use wgpu::PrimitiveTopology;
@@ -86,6 +87,11 @@ impl Position {
     #[inline]
     pub fn quat(&self) -> Quat {
         Quat::from_rotation_y(-self.rotation)
+    }
+
+    #[inline]
+    pub fn inverse_quat(&self) -> Quat {
+        Quat::from_rotation_y(self.rotation)
     }
 }
 
@@ -255,9 +261,8 @@ impl SpatialObjectTracker {
     }
 }
 
-// TODO I should probably automate the addition and removal of this to entities.
 #[derive(Component, Debug, PartialEq, Eq, Hash, Default, Clone, Copy)]
-pub struct SpatialHash {
+struct SpatialHash {
     x: i16,
     y: i16,
     z: i16,
@@ -271,6 +276,16 @@ impl SpatialHash {
         self.y = translation.y as i16;
         self.z = translation.z as i16;
     }
+}
+
+fn insert_spatial_hash(
+    mut commands: Commands,
+    entities: Query<(Entity, With<Position>, Without<SpatialHash>)>,
+) {
+    for (entity, _, _) in entities.iter() {
+        commands.entity(entity).insert(SpatialHash::default());
+    }
+    // SpatialHash::default(),
 }
 
 fn compute_cylinder_to_cylinder_intersections(
@@ -332,9 +347,12 @@ fn compute_cylinder_to_terrain_intersections(
     cylinders: Query<(Entity, With<SpatialHash>, &Position, &Cylinder)>,
     terrain: Query<(Entity, With<SpatialHash>, &Position, &Chunk)>,
     spatial_object_tracker: Res<SpatialObjectTracker>,
+    mut lines: ResMut<DebugLines>,
 ) {
     for (terrain_entity, _terrain_spatial_hash, terrain_position, terrain) in terrain.iter() {
         let terrain_quat = terrain_position.quat();
+
+        let mut block_scan_set = HashSet::new();
 
         spatial_object_tracker.get_ballpark(
             terrain_position.translation,
@@ -349,15 +367,72 @@ fn compute_cylinder_to_terrain_intersections(
 
                     // Rotate cylinder space into chunk local space.
                     let localized_cylinder_position = terrain_quat * localized_cylinder_position;
+                    let block_localized_cylinder_position = localized_cylinder_position.floor();
 
-                    if terrain
-                        .get_block_local(to_local_block_coordinate(&localized_cylinder_position))
-                        .is_some()
-                    {
-                        dbg!(terrain_entity, cylinder_entity);
-                    } else {
-                        dbg!();
+                    let scan_x_radius = cylinder.radius.ceil() as i8;
+
+                    dbg!();
+
+                    // TODO cache this as an asset?
+                    for x in -scan_x_radius..=scan_x_radius {
+                        let scan_z_radius = (1.0 - (x as f32).powi(2)).sqrt().ceil() as i8;
+
+                        for z in -scan_z_radius..=scan_z_radius {
+                            block_scan_set.insert((
+                                NotNan::new(x as f32).unwrap(),
+                                NotNan::new(z as f32).unwrap(),
+                            ));
+                        }
                     }
+
+                    let rounded_height = cylinder.height.ceil() as i8;
+
+                    for layer in 0..=rounded_height {
+                        let y = layer as f32;
+                        for (x, z) in block_scan_set.iter() {
+                            let block_index =
+                                Vec3::new(**x, y, **z) + block_localized_cylinder_position;
+
+                            let closest_point = localized_cylinder_position
+                                .clamp(block_index, block_index + Vec3::ONE);
+
+                            {
+                                let point = (terrain_position.inverse_quat() * closest_point)
+                                    + terrain_position.translation;
+                                lines.line_colored(
+                                    point,
+                                    point + Vec3::Y,
+                                    0.0,
+                                    Color::rgb_linear(
+                                        terrain_position.translation.x,
+                                        terrain_position.translation.y,
+                                        terrain_position.translation.z,
+                                    ),
+                                );
+                            }
+
+                            // We're in the box! Are we contacting?
+                            if (closest_point - localized_cylinder_position).length()
+                                <= *cylinder.radius
+                            {
+                                // We don't need to worry about an integer overflow here because the broadphase won't let us compare
+                                // to terrain that far away from a cylinder.
+                                let block_index = to_local_block_coordinate(&block_index);
+
+                                if terrain.get_block_local(block_index).is_some() {
+                                    dbg!(
+                                        block_index,
+                                        block_localized_cylinder_position,
+                                        terrain_entity,
+                                        cylinder_entity
+                                    );
+                                }
+                            }
+                        }
+                    }
+
+                    // We're going to reuse that buffer.
+                    block_scan_set.clear();
                 }
             },
         );
@@ -377,7 +452,7 @@ fn handle_removed_spatial_hash_entities(
     }
 }
 
-fn add_spatial_hash_entities(
+fn add_spatial_hash_entities_to_tracker(
     spatial_objects: Query<(Entity, &SpatialHash), Added<SpatialHash>>,
     mut spatial_object_tracker: ResMut<SpatialObjectTracker>,
 ) {
@@ -501,7 +576,8 @@ pub fn setup(app: &mut App) {
     app.add_system(compute_cylinder_to_cylinder_intersections);
     app.add_system(compute_cylinder_to_terrain_intersections);
 
-    app.add_system(add_spatial_hash_entities);
+    app.add_system(insert_spatial_hash);
+    app.add_system(add_spatial_hash_entities_to_tracker);
     app.add_system(update_spatial_hash_entities);
     app.add_system(handle_removed_spatial_hash_entities); // MUST come after `update_spatial_hash_entities`.
 }

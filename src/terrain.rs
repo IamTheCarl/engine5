@@ -18,7 +18,7 @@ use std::{borrow::Cow, collections::HashMap, num::NonZeroU16, str::FromStr};
 use thiserror::Error;
 use wgpu::{TextureDimension, TextureFormat};
 
-use crate::physics::{Position, SpatialHash};
+use crate::physics::Position;
 
 type BlockID = NonZeroU16;
 pub type BlockCoordinate = nalgebra::Vector3<i64>;
@@ -28,13 +28,13 @@ pub fn to_local_block_coordinate(coordinate: &Vec3) -> BlockLocalCoordinate {
     BlockLocalCoordinate::new(coordinate.x as i8, coordinate.y as i8, coordinate.z as i8)
 }
 
-pub fn to_block_coordinate(coordinate: &Vec3) -> BlockCoordinate {
-    BlockCoordinate::new(
-        coordinate.x as i64,
-        coordinate.y as i64,
-        coordinate.z as i64,
-    )
-}
+// pub fn to_block_coordinate(coordinate: &Vec3) -> BlockCoordinate {
+//     BlockCoordinate::new(
+//         coordinate.x as i64,
+//         coordinate.y as i64,
+//         coordinate.z as i64,
+//     )
+// }
 
 #[derive(Error, Debug)]
 pub enum BlockIndexError {
@@ -1405,7 +1405,6 @@ fn terrain_setup(
             translation: Vec3::new(5.0, 0.0, 5.0),
             rotation: 0.0,
         },
-        SpatialHash::default(),
     ));
 
     commands.spawn((
@@ -1414,7 +1413,6 @@ fn terrain_setup(
             translation: Vec3::new(16.0, 0.0, 0.0),
             rotation: std::f64::consts::FRAC_PI_4 as f32,
         },
-        SpatialHash::default(),
     ));
 }
 

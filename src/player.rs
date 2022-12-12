@@ -6,7 +6,7 @@ use ordered_float::NotNan;
 
 /// Currently just a modified version of https://crates.io/crates/bevy_flycam.
 ///
-use crate::physics::{Cylinder, Position, SpatialHash};
+use crate::physics::{Cylinder, Position};
 
 /// Keeps track of mouse motion events, pitch, and yaw
 #[derive(Resource, Default)]
@@ -28,7 +28,7 @@ impl Default for MovementSettings {
     fn default() -> Self {
         Self {
             sensitivity: 0.00012,
-            speed: 12.,
+            speed: 6.,
         }
     }
 }
@@ -73,7 +73,6 @@ fn setup_player(mut commands: Commands) {
             },
             Transform::default(),
             GlobalTransform::default(),
-            SpatialHash::default(),
             MovementControl,
         ))
         .with_children(|parent| {

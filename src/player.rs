@@ -6,7 +6,7 @@ use ordered_float::NotNan;
 
 /// Currently just a modified version of https://crates.io/crates/bevy_flycam.
 ///
-use crate::physics::{Cylinder, Position};
+use crate::physics::{Cylinder, Position, Velocity};
 
 /// Keeps track of mouse motion events, pitch, and yaw
 #[derive(Resource, Default)]
@@ -65,12 +65,13 @@ fn setup_player(mut commands: Commands) {
         .spawn((
             Cylinder {
                 height: NotNan::new(3.0).unwrap(),
-                radius: NotNan::new(0.5).unwrap(),
+                radius: NotNan::new(2.0).unwrap(),
             },
             Position {
                 translation: Vec3::new(-2.0, 5.0, 5.0),
                 rotation: 0.0,
             },
+            Velocity::default(),
             Transform::default(),
             GlobalTransform::default(),
             MovementControl,
@@ -78,7 +79,7 @@ fn setup_player(mut commands: Commands) {
         .with_children(|parent| {
             parent.spawn((
                 Camera3dBundle {
-                    transform: Transform::from_translation(Vec3::new(0.0, 2.0, 0.0)),
+                    transform: Transform::from_translation(Vec3::new(0.0, 2.0 + 4.0, 10.0)),
                     ..Default::default()
                 },
                 MovementControl,
@@ -89,14 +90,13 @@ fn setup_player(mut commands: Commands) {
 /// Handles keyboard input and movement
 fn player_move(
     keys: Res<Input<KeyCode>>,
-    time: Res<Time>,
     windows: Res<Windows>,
     settings: Res<MovementSettings>,
-    mut query: Query<&mut Position, With<MovementControl>>,
+    mut query: Query<(&Position, &mut Velocity), With<MovementControl>>,
 ) {
     if let Some(window) = windows.get_primary() {
-        for mut position in query.iter_mut() {
-            let mut velocity = Vec3::ZERO;
+        for (position, mut velocity) in query.iter_mut() {
+            velocity.translation = Vec3::ZERO;
             let local_z = position.local_z();
             let forward = -Vec3::new(local_z.x, 0., local_z.z);
             let right = Vec3::new(local_z.z, 0., -local_z.x);
@@ -105,20 +105,20 @@ fn player_move(
                 match window.cursor_grab_mode() {
                     CursorGrabMode::None => (),
                     _ => match key {
-                        KeyCode::E => velocity += forward,
-                        KeyCode::D => velocity -= forward,
-                        KeyCode::S => velocity -= right,
-                        KeyCode::F => velocity += right,
-                        KeyCode::Space => velocity += Vec3::Y,
-                        KeyCode::A => velocity -= Vec3::Y,
+                        KeyCode::E => velocity.translation += forward,
+                        KeyCode::D => velocity.translation -= forward,
+                        KeyCode::S => velocity.translation -= right,
+                        KeyCode::F => velocity.translation += right,
+                        KeyCode::Space => velocity.translation += Vec3::Y,
+                        KeyCode::A => velocity.translation -= Vec3::Y,
                         _ => (),
                     },
                 }
             }
 
-            velocity = velocity.normalize_or_zero();
+            velocity.translation = velocity.translation.normalize_or_zero() * settings.speed;
 
-            position.translation += velocity * time.delta_seconds() * settings.speed;
+            // position.translation += velocity * time.delta_seconds() * settings.speed;
         }
     } else {
         warn!("Primary window not found for `player_move`!");

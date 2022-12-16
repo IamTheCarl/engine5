@@ -68,7 +68,7 @@ struct DebugShaderMaterial(Handle<StandardMaterial>);
 
 #[derive(Component, Default, Debug)]
 pub struct Velocity {
-    pub axial: Vec3,
+    pub translation: Vec3,
     pub rotational: f32,
 }
 
@@ -344,12 +344,13 @@ fn compute_cylinder_to_cylinder_intersections(
 }
 
 fn compute_cylinder_to_terrain_intersections(
-    cylinders: Query<(Entity, With<SpatialHash>, &Position, &Cylinder)>,
-    terrain: Query<(Entity, With<SpatialHash>, &Position, &Chunk)>,
+    mut cylinders: Query<(With<SpatialHash>, &mut Position, &Cylinder)>,
+    terrain: Query<(With<SpatialHash>, &Position, &Chunk, Without<Cylinder>)>,
     spatial_object_tracker: Res<SpatialObjectTracker>,
+    debug_render_settings: Res<DebugRenderSettings>,
     mut lines: ResMut<DebugLines>,
 ) {
-    for (terrain_entity, _terrain_spatial_hash, terrain_position, terrain) in terrain.iter() {
+    for (_terrain_spatial_hash, terrain_position, terrain, _) in terrain.iter() {
         let terrain_quat = terrain_position.quat();
 
         let mut block_scan_set = HashSet::new();
@@ -358,8 +359,8 @@ fn compute_cylinder_to_terrain_intersections(
             terrain_position.translation,
             |maybe_cylinder_entity| {
                 // Need to make sure it's actually a cylinder.
-                if let Ok((cylinder_entity, _cylinder_spatial_hash, cylinder_position, cylinder)) =
-                    cylinders.get(*maybe_cylinder_entity)
+                if let Ok((_cylinder_spatial_hash, mut cylinder_position, cylinder)) =
+                    cylinders.get_mut(*maybe_cylinder_entity)
                 {
                     // Translate cylinder space into chunk local space.
                     let localized_cylinder_position =
@@ -370,12 +371,12 @@ fn compute_cylinder_to_terrain_intersections(
                     let block_localized_cylinder_position = localized_cylinder_position.floor();
 
                     let scan_x_radius = cylinder.radius.ceil() as i8;
+                    let z_range_squared = ((scan_x_radius + 1) as f32).powi(2);
 
-                    dbg!();
-
-                    // TODO cache this as an asset?
+                    // TODO cache this as an asset? Can we make it not require the hashset instead?
                     for x in -scan_x_radius..=scan_x_radius {
-                        let scan_z_radius = (1.0 - (x as f32).powi(2)).sqrt().ceil() as i8;
+                        let scan_z_radius =
+                            (z_range_squared - (x as f32).powi(2)).sqrt().ceil() as i8;
 
                         for z in -scan_z_radius..=scan_z_radius {
                             block_scan_set.insert((
@@ -385,54 +386,103 @@ fn compute_cylinder_to_terrain_intersections(
                         }
                     }
 
+                    let mut max_normal = Vec3::ZERO;
+                    let mut min_normal = Vec3::ZERO;
+
                     let rounded_height = cylinder.height.ceil() as i8;
 
                     for layer in 0..=rounded_height {
                         let y = layer as f32;
                         for (x, z) in block_scan_set.iter() {
-                            let block_index =
+                            let block_index_unrounded =
                                 Vec3::new(**x, y, **z) + block_localized_cylinder_position;
 
                             let closest_point = localized_cylinder_position
-                                .clamp(block_index, block_index + Vec3::ONE);
+                                .clamp(block_index_unrounded, block_index_unrounded + Vec3::ONE);
 
-                            {
+                            let terrain_color = Color::rgb_linear(
+                                terrain_position.translation.x,
+                                terrain_position.translation.y,
+                                terrain_position.translation.z,
+                            );
+
+                            if debug_render_settings.enabled {
                                 let point = (terrain_position.inverse_quat() * closest_point)
                                     + terrain_position.translation;
+                                lines.line_colored(point, point + Vec3::Y, 0.0, terrain_color);
+                            }
+
+                            let mut collision_normal = localized_cylinder_position - closest_point;
+                            collision_normal.y = 0.0; // This collision check is 2D.
+
+                            if debug_render_settings.enabled {
+                                let point = (terrain_position.inverse_quat() * closest_point)
+                                    + terrain_position.translation;
+                                let collision_normal =
+                                    terrain_position.inverse_quat() * collision_normal;
+
                                 lines.line_colored(
                                     point,
-                                    point + Vec3::Y,
+                                    point + collision_normal,
                                     0.0,
-                                    Color::rgb_linear(
-                                        terrain_position.translation.x,
-                                        terrain_position.translation.y,
-                                        terrain_position.translation.z,
-                                    ),
+                                    terrain_color,
                                 );
                             }
 
-                            // We're in the box! Are we contacting?
-                            if (closest_point - localized_cylinder_position).length()
-                                <= *cylinder.radius
-                            {
+                            let collision_depth = collision_normal.length();
+                            if collision_depth <= *cylinder.radius {
                                 // We don't need to worry about an integer overflow here because the broadphase won't let us compare
                                 // to terrain that far away from a cylinder.
-                                let block_index = to_local_block_coordinate(&block_index);
+                                let block_index = to_local_block_coordinate(&block_index_unrounded);
 
-                                if terrain.get_block_local(block_index).is_some() {
-                                    dbg!(
-                                        block_index,
-                                        block_localized_cylinder_position,
-                                        terrain_entity,
-                                        cylinder_entity
-                                    );
+                                if terrain.get_block_local(block_index).is_some()
+                                    && collision_depth > 0.0
+                                {
+                                    let normal = collision_normal.normalize() * *cylinder.radius
+                                        - collision_normal;
+
+                                    max_normal = max_normal.max(normal);
+                                    min_normal = min_normal.min(normal);
+
+                                    debug_assert!(!cylinder_position.translation.is_nan());
                                 }
                             }
                         }
                     }
 
-                    // We're going to reuse that buffer.
+                    // Apply our collisions.
+                    let true_normal = {
+                        let max_normal_abs = max_normal.abs();
+                        let min_normal_abs = min_normal.abs();
+
+                        let x = if min_normal_abs.x > max_normal_abs.x {
+                            min_normal.x
+                        } else {
+                            max_normal.x
+                        };
+
+                        let y = if min_normal_abs.y > max_normal_abs.y {
+                            min_normal.y
+                        } else {
+                            max_normal.y
+                        };
+
+                        let z = if min_normal_abs.z > max_normal_abs.z {
+                            min_normal.z
+                        } else {
+                            max_normal.z
+                        };
+
+                        Vec3::new(x, y, z)
+                    };
+
+                    let true_normal = terrain_position.inverse_quat() * true_normal; // Rotate back into global space.
+
+                    cylinder_position.translation += true_normal;
+
+                    // We're going to reuse these buffers.
                     block_scan_set.clear();
+                    // collision_normals.clear();
                 }
             },
         );
@@ -465,7 +515,7 @@ fn update_spatial_hash_entities(
     mut spatial_objects: Query<(Entity, &Position, &mut SpatialHash)>,
     mut spatial_object_tracker: ResMut<SpatialObjectTracker>,
 ) {
-    // TODO only update the hash for entities that have a velocity.
+    // TODO only update the hash for entities that have a velocity?
 
     for (entity, position, mut spatial_hash) in spatial_objects.iter_mut() {
         let old_hash = *spatial_hash;
@@ -522,13 +572,13 @@ fn remove_debug_mesh_cylinders(
     }
 }
 
-fn update_movement(mut entities: Query<(&mut Position, &Velocity)>) {
+fn update_movement(time: Res<Time>, mut entities: Query<(&mut Position, &Velocity)>) {
     // FIXME we need the timestep here.
     // TODO Remove velocity from objects that are no longer moving.
 
     for (mut position, velocity) in entities.iter_mut() {
-        position.translation += velocity.axial;
-        position.rotation += velocity.rotational;
+        position.translation += velocity.translation * time.delta_seconds();
+        position.rotation += velocity.rotational * time.delta_seconds();
     }
 }
 
@@ -543,19 +593,19 @@ fn update_transforms(mut entities: Query<(&Position, &mut Transform)>) {
 pub fn setup(app: &mut App) {
     app.add_startup_system(
         |mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>| {
-            // commands.spawn((
-            //     Cylinder {
-            //         height: NotNan::new(1.0).unwrap(),
-            //         radius: NotNan::new(0.5).unwrap(),
-            //     },
-            //     Velocity::default(),
-            //     Transform::default(),
-            //     Position {
-            //         translation: Vec3::new(-5.0, 5.0, -5.0),
-            //         rotation: 0.0,
-            //     },
-            //     SpatialHash::default(),
-            // ));
+            commands.spawn((
+                Cylinder {
+                    height: NotNan::new(1.0).unwrap(),
+                    radius: NotNan::new(0.5).unwrap(),
+                },
+                Velocity::default(),
+                Transform::default(),
+                Position {
+                    translation: Vec3::new(-5.0, 5.0, -5.0),
+                    rotation: 0.0,
+                },
+                SpatialHash::default(),
+            ));
 
             // TODO make this accessible from a menu or terminal.
             commands.insert_resource(DebugRenderSettings { enabled: true });
@@ -568,16 +618,22 @@ pub fn setup(app: &mut App) {
         },
     );
 
-    app.add_system(update_transforms);
-
     app.add_system(update_movement);
+
     app.add_system(add_debug_mesh_cylinders);
     app.add_system(remove_debug_mesh_cylinders);
-    app.add_system(compute_cylinder_to_cylinder_intersections);
-    app.add_system(compute_cylinder_to_terrain_intersections);
 
-    app.add_system(insert_spatial_hash);
-    app.add_system(add_spatial_hash_entities_to_tracker);
-    app.add_system(update_spatial_hash_entities);
-    app.add_system(handle_removed_spatial_hash_entities); // MUST come after `update_spatial_hash_entities`.
+    app.add_system(compute_cylinder_to_cylinder_intersections.after(update_movement));
+    app.add_system(compute_cylinder_to_terrain_intersections.after(update_movement));
+
+    app.add_system(
+        update_transforms
+            .after(compute_cylinder_to_terrain_intersections) // TODO before physics tests.
+            .after(compute_cylinder_to_cylinder_intersections),
+    );
+
+    app.add_system(insert_spatial_hash); // TODO before physics tests.
+    app.add_system(add_spatial_hash_entities_to_tracker); // TODO before physics tests.
+    app.add_system(update_spatial_hash_entities); // TODO before physics tests.
+    app.add_system(handle_removed_spatial_hash_entities.after(update_spatial_hash_entities));
 }

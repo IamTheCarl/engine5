@@ -623,17 +623,27 @@ pub fn setup(app: &mut App) {
     app.add_system(add_debug_mesh_cylinders);
     app.add_system(remove_debug_mesh_cylinders);
 
-    app.add_system(compute_cylinder_to_cylinder_intersections.after(update_movement));
-    app.add_system(compute_cylinder_to_terrain_intersections.after(update_movement));
+    let collision_checks = "collision_checks";
+    let spatial_hashing = "spatial_hashing";
 
-    app.add_system(
-        update_transforms
-            .after(compute_cylinder_to_terrain_intersections) // TODO before physics tests.
-            .after(compute_cylinder_to_cylinder_intersections),
+    app.add_system_set(
+        SystemSet::new()
+            .label(collision_checks)
+            .with_system(compute_cylinder_to_cylinder_intersections)
+            .with_system(compute_cylinder_to_terrain_intersections)
+            .after(update_movement),
     );
 
-    app.add_system(insert_spatial_hash); // TODO before physics tests.
-    app.add_system(add_spatial_hash_entities_to_tracker); // TODO before physics tests.
-    app.add_system(update_spatial_hash_entities); // TODO before physics tests.
-    app.add_system(handle_removed_spatial_hash_entities.after(update_spatial_hash_entities));
+    app.add_system(update_transforms.after(collision_checks));
+
+    app.add_system_set(
+        SystemSet::new()
+            .label(spatial_hashing)
+            .with_system(insert_spatial_hash)
+            .with_system(add_spatial_hash_entities_to_tracker)
+            .with_system(update_spatial_hash_entities)
+            .with_system(handle_removed_spatial_hash_entities.after(update_spatial_hash_entities))
+            .before(collision_checks)
+            .after(update_movement),
+    );
 }

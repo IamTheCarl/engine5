@@ -103,7 +103,8 @@ pub struct Cylinder {
 
 #[derive(Resource)]
 pub struct DebugRenderSettings {
-    enabled: bool,
+    cylinder_terrain_checks: bool,
+    hashing_center_point: bool,
 }
 
 #[derive(Resource)]
@@ -132,126 +133,45 @@ impl SpatialObjectTracker {
         self.0.get(spatial_hash)
     }
 
-    fn calculate_ballpark(position: Vec3) -> [SpatialHash; 27] {
-        let cell_position = position / Chunk::CHUNK_DIAMETER as f32;
-
-        let x = cell_position.x as i16;
-        let y = cell_position.y as i16;
-        let z = cell_position.z as i16;
+    #[rustfmt::skip]
+    fn calculate_ballpark(spatial_hash: &SpatialHash) -> [SpatialHash; 27] {
+        let x = spatial_hash.x;
+        let y = spatial_hash.y;
+        let z = spatial_hash.z;
 
         [
-            SpatialHash { x, y, z },
-            SpatialHash { x, y, z: z + 1 },
-            SpatialHash { x, y, z: z - 1 },
-            SpatialHash { x, y: y + 1, z },
-            SpatialHash {
-                x,
-                y: y + 1,
-                z: z + 1,
-            },
-            SpatialHash {
-                x,
-                y: y + 1,
-                z: z - 1,
-            },
-            SpatialHash { x, y: y - 1, z },
-            SpatialHash {
-                x,
-                y: y - 1,
-                z: z + 1,
-            },
-            SpatialHash {
-                x,
-                y: y - 1,
-                z: z - 1,
-            },
-            SpatialHash { x: x + 1, y, z },
-            SpatialHash {
-                x: x + 1,
-                y,
-                z: z + 1,
-            },
-            SpatialHash {
-                x: x + 1,
-                y,
-                z: z - 1,
-            },
-            SpatialHash {
-                x: x + 1,
-                y: y + 1,
-                z,
-            },
-            SpatialHash {
-                x: x + 1,
-                y: y + 1,
-                z: z + 1,
-            },
-            SpatialHash {
-                x: x + 1,
-                y: y + 1,
-                z: z - 1,
-            },
-            SpatialHash {
-                x: x + 1,
-                y: y - 1,
-                z,
-            },
-            SpatialHash {
-                x: x + 1,
-                y: y - 1,
-                z: z + 1,
-            },
-            SpatialHash {
-                x: x + 1,
-                y: y - 1,
-                z: z - 1,
-            },
-            SpatialHash { x: x - 1, y, z },
-            SpatialHash {
-                x: x - 1,
-                y,
-                z: z + 1,
-            },
-            SpatialHash {
-                x: x - 1,
-                y,
-                z: z - 1,
-            },
-            SpatialHash {
-                x: x - 1,
-                y: y + 1,
-                z,
-            },
-            SpatialHash {
-                x: x - 1,
-                y: y + 1,
-                z: z + 1,
-            },
-            SpatialHash {
-                x: x - 1,
-                y: y + 1,
-                z: z - 1,
-            },
-            SpatialHash {
-                x: x - 1,
-                y: y - 1,
-                z,
-            },
-            SpatialHash {
-                x: x - 1,
-                y: y - 1,
-                z: z + 1,
-            },
-            SpatialHash {
-                x: x - 1,
-                y: y - 1,
-                z: z - 1,
-            },
+            SpatialHash { x,        y,        z        },
+            SpatialHash { x,        y,        z: z + 1 },
+            SpatialHash { x,        y,        z: z - 1 },
+            SpatialHash { x,        y: y + 1, z        },
+            SpatialHash { x,        y: y + 1, z: z + 1 },
+            SpatialHash { x,        y: y + 1, z: z - 1 },
+            SpatialHash { x,        y: y - 1, z        },
+            SpatialHash { x,        y: y - 1, z: z + 1 },
+            SpatialHash { x,        y: y - 1, z: z - 1 },
+            SpatialHash { x: x + 1, y,        z        },
+            SpatialHash { x: x + 1, y,        z: z + 1 },
+            SpatialHash { x: x + 1, y,        z: z - 1 },
+            SpatialHash { x: x + 1, y: y + 1, z        },
+            SpatialHash { x: x + 1, y: y + 1, z: z + 1 },
+            SpatialHash { x: x + 1, y: y + 1, z: z - 1 },
+            SpatialHash { x: x + 1, y: y - 1, z        },
+            SpatialHash { x: x + 1, y: y - 1, z: z + 1 },
+            SpatialHash { x: x + 1, y: y - 1, z: z - 1 },
+            SpatialHash { x: x - 1, y,        z        },
+            SpatialHash { x: x - 1, y,        z: z + 1 },
+            SpatialHash { x: x - 1, y,        z: z - 1 },
+            SpatialHash { x: x - 1, y: y + 1, z        },
+            SpatialHash { x: x - 1, y: y + 1, z: z + 1 },
+            SpatialHash { x: x - 1, y: y + 1, z: z - 1 },
+            SpatialHash { x: x - 1, y: y - 1, z        },
+            SpatialHash { x: x - 1, y: y - 1, z: z + 1 },
+            SpatialHash { x: x - 1, y: y - 1, z: z - 1 },
         ]
     }
 
-    fn get_ballpark(&self, position: Vec3, mut processor: impl FnMut(&Entity)) {
-        for spatial_hash in Self::calculate_ballpark(position) {
+    fn get_ballpark(&self, spatial_hash: &SpatialHash, mut processor: impl FnMut(&Entity)) {
+        for spatial_hash in Self::calculate_ballpark(spatial_hash) {
             if let Some(cell) = self.get_cell_entities(&spatial_hash) {
                 for entity in cell.iter() {
                     processor(entity);
@@ -268,14 +188,9 @@ struct SpatialHash {
     z: i16,
 }
 
-impl SpatialHash {
-    fn update_from_position(&mut self, position: &Position) {
-        let translation = position.translation / Chunk::CHUNK_DIAMETER as f32;
-
-        self.x = translation.x as i16;
-        self.y = translation.y as i16;
-        self.z = translation.z as i16;
-    }
+#[derive(Component, Debug)]
+pub struct SpatialHashOffset {
+    pub translation: Vec3,
 }
 
 fn insert_spatial_hash(
@@ -285,11 +200,10 @@ fn insert_spatial_hash(
     for (entity, _, _) in entities.iter() {
         commands.entity(entity).insert(SpatialHash::default());
     }
-    // SpatialHash::default(),
 }
 
 fn compute_cylinder_to_cylinder_intersections(
-    entities: Query<(Entity, With<SpatialHash>, &Position, &Cylinder)>,
+    entities: Query<(Entity, &SpatialHash, &Position, &Cylinder)>,
     spatial_object_tracker: Res<SpatialObjectTracker>,
 ) {
     // TODO use events to pass all intersections to the next system.
@@ -297,8 +211,8 @@ fn compute_cylinder_to_cylinder_intersections(
     // We don't want to compare a set of entities more than once, so make sure we only get a set of unique comparisons.
     let mut to_compare = HashSet::new();
 
-    for (entity_a, _spatial_hash_a, position_a, _cylinder_a) in entities.iter() {
-        spatial_object_tracker.get_ballpark(position_a.translation, |entity_b| {
+    for (entity_a, spatial_hash_a, _position_a, _cylinder_a) in entities.iter() {
+        spatial_object_tracker.get_ballpark(spatial_hash_a, |entity_b| {
             if entity_a != *entity_b {
                 let mut comparison_set = [entity_a, *entity_b];
                 comparison_set.sort_unstable();
@@ -345,147 +259,139 @@ fn compute_cylinder_to_cylinder_intersections(
 
 fn compute_cylinder_to_terrain_intersections(
     mut cylinders: Query<(With<SpatialHash>, &mut Position, &Cylinder)>,
-    terrain: Query<(With<SpatialHash>, &Position, &Chunk, Without<Cylinder>)>,
+    terrain: Query<(&SpatialHash, &Position, &Chunk, Without<Cylinder>)>,
     spatial_object_tracker: Res<SpatialObjectTracker>,
     debug_render_settings: Res<DebugRenderSettings>,
     mut lines: ResMut<DebugLines>,
 ) {
-    for (_terrain_spatial_hash, terrain_position, terrain, _) in terrain.iter() {
+    for (terrain_spatial_hash, terrain_position, terrain, _) in terrain.iter() {
         let terrain_quat = terrain_position.quat();
 
         let mut block_scan_set = HashSet::new();
 
-        spatial_object_tracker.get_ballpark(
-            terrain_position.translation,
-            |maybe_cylinder_entity| {
-                // Need to make sure it's actually a cylinder.
-                if let Ok((_cylinder_spatial_hash, mut cylinder_position, cylinder)) =
-                    cylinders.get_mut(*maybe_cylinder_entity)
-                {
-                    // Translate cylinder space into chunk local space.
-                    let localized_cylinder_position =
-                        cylinder_position.translation - terrain_position.translation;
+        spatial_object_tracker.get_ballpark(terrain_spatial_hash, |maybe_cylinder_entity| {
+            // Need to make sure it's actually a cylinder.
+            if let Ok((_cylinder_spatial_hash, mut cylinder_position, cylinder)) =
+                cylinders.get_mut(*maybe_cylinder_entity)
+            {
+                // Translate cylinder space into chunk local space.
+                let localized_cylinder_position =
+                    cylinder_position.translation - terrain_position.translation;
 
-                    // Rotate cylinder space into chunk local space.
-                    let localized_cylinder_position = terrain_quat * localized_cylinder_position;
-                    let block_localized_cylinder_position = localized_cylinder_position.floor();
+                // Rotate cylinder space into chunk local space.
+                let localized_cylinder_position = terrain_quat * localized_cylinder_position;
+                let block_localized_cylinder_position = localized_cylinder_position.floor();
 
-                    let scan_x_radius = cylinder.radius.ceil() as i8;
-                    let z_range_squared = ((scan_x_radius + 1) as f32).powi(2);
+                let scan_x_radius = cylinder.radius.ceil() as i8 + 1;
+                let z_range_squared = ((scan_x_radius) as f32).powi(2);
 
-                    // TODO cache this as an asset? Can we make it not require the hashset instead?
-                    for x in -scan_x_radius..=scan_x_radius {
-                        let scan_z_radius =
-                            (z_range_squared - (x as f32).powi(2)).sqrt().ceil() as i8;
+                // TODO cache this as an asset? Can we make it not require the hashset instead?
+                for x in -scan_x_radius..=scan_x_radius {
+                    let scan_z_radius = (z_range_squared - (x as f32).powi(2)).sqrt().floor() as i8;
 
-                        for z in -scan_z_radius..=scan_z_radius {
-                            block_scan_set.insert((
-                                NotNan::new(x as f32).unwrap(),
-                                NotNan::new(z as f32).unwrap(),
-                            ));
-                        }
+                    for z in -scan_z_radius..=scan_z_radius {
+                        block_scan_set.insert((
+                            NotNan::new(x as f32).unwrap(),
+                            NotNan::new(z as f32).unwrap(),
+                        ));
+                    }
+                }
+
+                let mut max_normal = Vec3::ZERO;
+                let mut min_normal = Vec3::ZERO;
+
+                let rounded_height = cylinder.height.ceil() as i8;
+
+                for (x, z) in block_scan_set.iter() {
+                    let block_index_unrounded =
+                        Vec3::new(**x, 0.0, **z) + block_localized_cylinder_position;
+
+                    let closest_point = localized_cylinder_position
+                        .clamp(block_index_unrounded, block_index_unrounded + Vec3::ONE);
+
+                    let terrain_color = Color::rgb_linear(
+                        terrain_position.translation.x,
+                        terrain_position.translation.y,
+                        terrain_position.translation.z,
+                    );
+
+                    if debug_render_settings.cylinder_terrain_checks {
+                        let point = (terrain_position.inverse_quat() * closest_point)
+                            + terrain_position.translation;
+                        lines.line_colored(point, point + Vec3::Y, 0.0, terrain_color);
                     }
 
-                    let mut max_normal = Vec3::ZERO;
-                    let mut min_normal = Vec3::ZERO;
+                    let mut collision_normal = localized_cylinder_position - closest_point;
+                    collision_normal.y = 0.0; // This collision check is 2D.
 
-                    let rounded_height = cylinder.height.ceil() as i8;
+                    if debug_render_settings.cylinder_terrain_checks {
+                        let point = (terrain_position.inverse_quat() * closest_point)
+                            + terrain_position.translation;
+                        let collision_normal = terrain_position.inverse_quat() * collision_normal;
 
-                    for layer in 0..=rounded_height {
-                        let y = layer as f32;
-                        for (x, z) in block_scan_set.iter() {
-                            let block_index_unrounded =
-                                Vec3::new(**x, y, **z) + block_localized_cylinder_position;
+                        lines.line_colored(point, point + collision_normal, 0.0, terrain_color);
+                    }
 
-                            let closest_point = localized_cylinder_position
-                                .clamp(block_index_unrounded, block_index_unrounded + Vec3::ONE);
+                    let collision_depth = collision_normal.length();
 
-                            let terrain_color = Color::rgb_linear(
-                                terrain_position.translation.x,
-                                terrain_position.translation.y,
-                                terrain_position.translation.z,
-                            );
+                    // It's possible for this block column to have collisions.
+                    if collision_depth <= *cylinder.radius {
+                        for layer in 0..=rounded_height {
+                            // We don't need to worry about an integer overflow here because the broadphase won't let us compare
+                            // to terrain that far away from a cylinder.
+                            let block_index = to_local_block_coordinate(&block_index_unrounded)
+                                + nalgebra::Vector3::new(0, layer, 0);
 
-                            if debug_render_settings.enabled {
-                                let point = (terrain_position.inverse_quat() * closest_point)
-                                    + terrain_position.translation;
-                                lines.line_colored(point, point + Vec3::Y, 0.0, terrain_color);
-                            }
+                            if terrain.get_block_local(block_index).is_some()
+                                && collision_depth > 0.0
+                            {
+                                let normal = collision_normal.normalize() * *cylinder.radius
+                                    - collision_normal;
 
-                            let mut collision_normal = localized_cylinder_position - closest_point;
-                            collision_normal.y = 0.0; // This collision check is 2D.
+                                max_normal = max_normal.max(normal);
+                                min_normal = min_normal.min(normal);
 
-                            if debug_render_settings.enabled {
-                                let point = (terrain_position.inverse_quat() * closest_point)
-                                    + terrain_position.translation;
-                                let collision_normal =
-                                    terrain_position.inverse_quat() * collision_normal;
-
-                                lines.line_colored(
-                                    point,
-                                    point + collision_normal,
-                                    0.0,
-                                    terrain_color,
-                                );
-                            }
-
-                            let collision_depth = collision_normal.length();
-                            if collision_depth <= *cylinder.radius {
-                                // We don't need to worry about an integer overflow here because the broadphase won't let us compare
-                                // to terrain that far away from a cylinder.
-                                let block_index = to_local_block_coordinate(&block_index_unrounded);
-
-                                if terrain.get_block_local(block_index).is_some()
-                                    && collision_depth > 0.0
-                                {
-                                    let normal = collision_normal.normalize() * *cylinder.radius
-                                        - collision_normal;
-
-                                    max_normal = max_normal.max(normal);
-                                    min_normal = min_normal.min(normal);
-
-                                    debug_assert!(!cylinder_position.translation.is_nan());
-                                }
+                                debug_assert!(!cylinder_position.translation.is_nan());
                             }
                         }
                     }
+                }
 
-                    // Apply our collisions.
-                    let true_normal = {
-                        let max_normal_abs = max_normal.abs();
-                        let min_normal_abs = min_normal.abs();
+                // Apply our collisions.
+                let true_normal = {
+                    let max_normal_abs = max_normal.abs();
+                    let min_normal_abs = min_normal.abs();
 
-                        let x = if min_normal_abs.x > max_normal_abs.x {
-                            min_normal.x
-                        } else {
-                            max_normal.x
-                        };
-
-                        let y = if min_normal_abs.y > max_normal_abs.y {
-                            min_normal.y
-                        } else {
-                            max_normal.y
-                        };
-
-                        let z = if min_normal_abs.z > max_normal_abs.z {
-                            min_normal.z
-                        } else {
-                            max_normal.z
-                        };
-
-                        Vec3::new(x, y, z)
+                    let x = if min_normal_abs.x > max_normal_abs.x {
+                        min_normal.x
+                    } else {
+                        max_normal.x
                     };
 
-                    let true_normal = terrain_position.inverse_quat() * true_normal; // Rotate back into global space.
+                    let y = if min_normal_abs.y > max_normal_abs.y {
+                        min_normal.y
+                    } else {
+                        max_normal.y
+                    };
 
-                    cylinder_position.translation += true_normal;
+                    let z = if min_normal_abs.z > max_normal_abs.z {
+                        min_normal.z
+                    } else {
+                        max_normal.z
+                    };
 
-                    // We're going to reuse these buffers.
-                    block_scan_set.clear();
-                    // collision_normals.clear();
-                }
-            },
-        );
+                    Vec3::new(x, y, z)
+                };
+
+                let true_normal = terrain_position.inverse_quat() * true_normal; // Rotate back into global space.
+
+                cylinder_position.translation += true_normal;
+
+                // We're going to reuse these buffers.
+                block_scan_set.clear();
+                // collision_normals.clear();
+            }
+        });
     }
 }
 
@@ -502,25 +408,82 @@ fn handle_removed_spatial_hash_entities(
     }
 }
 
-fn add_spatial_hash_entities_to_tracker(
-    spatial_objects: Query<(Entity, &SpatialHash), Added<SpatialHash>>,
-    mut spatial_object_tracker: ResMut<SpatialObjectTracker>,
-) {
-    for (entity, spatial_hash) in spatial_objects.iter() {
-        spatial_object_tracker.add_entity(*spatial_hash, entity);
-    }
-}
-
 fn update_spatial_hash_entities(
-    mut spatial_objects: Query<(Entity, &Position, &mut SpatialHash)>,
+    mut spatial_objects: Query<(Entity, &Position, &mut SpatialHash), Without<SpatialHashOffset>>,
     mut spatial_object_tracker: ResMut<SpatialObjectTracker>,
+    debug_render_settings: Res<DebugRenderSettings>,
+    mut lines: ResMut<DebugLines>,
 ) {
     // TODO only update the hash for entities that have a velocity?
 
     for (entity, position, mut spatial_hash) in spatial_objects.iter_mut() {
         let old_hash = *spatial_hash;
 
-        spatial_hash.update_from_position(position);
+        let translation = (position.translation / Chunk::CHUNK_DIAMETER as f32).floor();
+
+        spatial_hash.x = translation.x as i16;
+        spatial_hash.y = translation.y as i16;
+        spatial_hash.z = translation.z as i16;
+
+        if debug_render_settings.hashing_center_point {
+            lines.line_colored(
+                position.translation,
+                position.translation + Vec3::Y,
+                0.0,
+                Color::GREEN,
+            );
+
+            lines.line_colored(
+                position.translation,
+                translation * Chunk::CHUNK_DIAMETER as f32,
+                0.0,
+                Color::BLUE,
+            );
+        }
+
+        // An update is actually needed.
+        if old_hash != *spatial_hash {
+            spatial_object_tracker.remove_entity(old_hash, entity);
+            spatial_object_tracker.add_entity(*spatial_hash, entity);
+        }
+    }
+}
+
+fn update_spatial_hash_entities_with_offset(
+    mut spatial_objects: Query<(Entity, &Position, &SpatialHashOffset, &mut SpatialHash)>,
+    mut spatial_object_tracker: ResMut<SpatialObjectTracker>,
+    debug_render_settings: Res<DebugRenderSettings>,
+    mut lines: ResMut<DebugLines>,
+) {
+    // TODO only update the hash for entities that have a velocity?
+
+    for (entity, position, spatial_offset, mut spatial_hash) in spatial_objects.iter_mut() {
+        let old_hash = *spatial_hash;
+
+        let offset_translation =
+            position.translation + position.inverse_quat() * spatial_offset.translation;
+
+        let translation = (offset_translation / Chunk::CHUNK_DIAMETER as f32).floor();
+
+        spatial_hash.x = translation.x as i16;
+        spatial_hash.y = translation.y as i16;
+        spatial_hash.z = translation.z as i16;
+
+        if debug_render_settings.hashing_center_point {
+            lines.line_colored(
+                offset_translation,
+                offset_translation + Vec3::Y,
+                0.0,
+                Color::GREEN,
+            );
+
+            lines.line_colored(
+                offset_translation,
+                translation * Chunk::CHUNK_DIAMETER as f32,
+                0.0,
+                Color::BLUE,
+            );
+        }
 
         // An update is actually needed.
         if old_hash != *spatial_hash {
@@ -538,7 +501,7 @@ fn add_debug_mesh_cylinders(
     mut mesh_collections: ResMut<MeshCollection>,
     cylinders: Query<(Entity, &Cylinder, Without<Handle<Mesh>>)>,
 ) {
-    if settings.enabled {
+    if settings.cylinder_terrain_checks {
         let material = &debug_shader_material.0;
 
         for (entity, cylinder, _) in cylinders.iter() {
@@ -559,7 +522,7 @@ fn remove_debug_mesh_cylinders(
     settings: Res<DebugRenderSettings>,
     cylinders: Query<(Entity, &Cylinder, &Handle<Mesh>)>,
 ) {
-    if !settings.enabled {
+    if !settings.cylinder_terrain_checks {
         for (entity, _, _) in cylinders.iter() {
             commands
                 .entity(entity)
@@ -573,8 +536,7 @@ fn remove_debug_mesh_cylinders(
 }
 
 fn update_movement(time: Res<Time>, mut entities: Query<(&mut Position, &Velocity)>) {
-    // FIXME we need the timestep here.
-    // TODO Remove velocity from objects that are no longer moving.
+    // TODO Remove velocity from objects that are no longer moving?
 
     for (mut position, velocity) in entities.iter_mut() {
         position.translation += velocity.translation * time.delta_seconds();
@@ -608,7 +570,10 @@ pub fn setup(app: &mut App) {
             ));
 
             // TODO make this accessible from a menu or terminal.
-            commands.insert_resource(DebugRenderSettings { enabled: true });
+            commands.insert_resource(DebugRenderSettings {
+                cylinder_terrain_checks: true,
+                hashing_center_point: true,
+            });
             commands.insert_resource(MeshCollection::new());
 
             let debug_shader_material = materials.add(Color::RED.into());
@@ -640,9 +605,14 @@ pub fn setup(app: &mut App) {
         SystemSet::new()
             .label(spatial_hashing)
             .with_system(insert_spatial_hash)
-            .with_system(add_spatial_hash_entities_to_tracker)
+            // .with_system(add_spatial_hash_entities_to_tracker)
             .with_system(update_spatial_hash_entities)
-            .with_system(handle_removed_spatial_hash_entities.after(update_spatial_hash_entities))
+            .with_system(update_spatial_hash_entities_with_offset)
+            .with_system(
+                handle_removed_spatial_hash_entities
+                    .after(update_spatial_hash_entities)
+                    .after(update_spatial_hash_entities_with_offset),
+            )
             .before(collision_checks)
             .after(update_movement),
     );

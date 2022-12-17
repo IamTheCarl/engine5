@@ -18,7 +18,7 @@ use std::{borrow::Cow, collections::HashMap, num::NonZeroU16, str::FromStr};
 use thiserror::Error;
 use wgpu::{TextureDimension, TextureFormat};
 
-use crate::physics::Position;
+use crate::physics::{Position, SpatialHashOffset};
 
 type BlockID = NonZeroU16;
 pub type BlockCoordinate = nalgebra::Vector3<i64>;
@@ -1402,16 +1402,44 @@ fn terrain_setup(
     commands.spawn((
         chunk.clone(),
         Position {
-            translation: Vec3::new(5.0, 0.0, 5.0),
+            translation: Vec3::new(0.0, 0.0, 0.0),
             rotation: 0.0,
+        },
+        SpatialHashOffset {
+            translation: Vec3::new(8.0, 0.0, 8.0),
+        },
+    ));
+    commands.spawn((
+        chunk.clone(),
+        Position {
+            translation: Vec3::new(0.0, 0.0, 16.0),
+            rotation: 0.0,
+        },
+        SpatialHashOffset {
+            translation: Vec3::new(8.0, 0.0, 8.0),
         },
     ));
 
     commands.spawn((
-        chunk,
+        chunk.clone(),
         Position {
             translation: Vec3::new(16.0, 0.0, 0.0),
             rotation: std::f64::consts::FRAC_PI_4 as f32,
+        },
+        SpatialHashOffset {
+            translation: Vec3::new(8.0, 0.0, 8.0),
+        },
+    ));
+    commands.spawn((
+        chunk,
+        Position {
+            translation: Vec3::new(16.0, 0.0, 0.0)
+                + Quat::from_rotation_y(std::f64::consts::FRAC_PI_4 as f32)
+                    * Vec3::new(16.0, 0.0, 0.0),
+            rotation: std::f64::consts::FRAC_PI_4 as f32,
+        },
+        SpatialHashOffset {
+            translation: Vec3::new(8.0, 0.0, 8.0),
         },
     ));
 }
@@ -1423,7 +1451,6 @@ fn generate_chunk_mesh(
     chunks: Query<(Entity, &Chunk, Without<Handle<TerrainMaterial>>)>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    // TODO can meshes be generated in parallel? Is there even a perk to doing that?
     for (entity, chunk, _without_material_handle) in chunks.iter() {
         let chunk_mesh = chunk.build_mesh(&block_registry);
 

@@ -309,11 +309,12 @@ fn compute_cylinder_to_terrain_intersections(
                     let closest_point = localized_cylinder_position
                         .clamp(block_index_unrounded, block_index_unrounded + Vec3::ONE);
 
-                    let terrain_color = Color::rgb_linear(
-                        terrain_position.translation.x,
-                        terrain_position.translation.y,
-                        terrain_position.translation.z,
-                    );
+                    let terrain_color = Color::Hsla {
+                        hue: terrain_position.rotation.to_degrees(),
+                        saturation: 1.0,
+                        lightness: 0.5,
+                        alpha: 1.0,
+                    };
 
                     if debug_render_settings.cylinder_terrain_checks {
                         let point = (terrain_position.inverse_quat() * closest_point)
@@ -322,9 +323,9 @@ fn compute_cylinder_to_terrain_intersections(
                     }
 
                     let mut collision_normal = localized_cylinder_position - closest_point;
-                    collision_normal.y = 0.0; // This collision check is 2D.
 
                     if debug_render_settings.cylinder_terrain_checks {
+                        collision_normal.y = 0.0; // This collision check is 2D, but keep that 3rd dimension just for easy debug rendering.
                         let point = (terrain_position.inverse_quat() * closest_point)
                             + terrain_position.translation;
                         let collision_normal = terrain_position.inverse_quat() * collision_normal;
@@ -332,21 +333,44 @@ fn compute_cylinder_to_terrain_intersections(
                         lines.line_colored(point, point + collision_normal, 0.0, terrain_color);
                     }
 
+                    // Okay actually make it 2D now.
+                    let collision_normal = collision_normal.xz();
                     let collision_depth = collision_normal.length();
 
                     // It's possible for this block column to have collisions.
                     if collision_depth <= *cylinder.radius {
                         for layer in 0..=rounded_height {
+                            let block_index_unrounded =
+                                block_index_unrounded + Vec3::new(0.0, layer as f32, 0.0);
+
                             // We don't need to worry about an integer overflow here because the broadphase won't let us compare
                             // to terrain that far away from a cylinder.
-                            let block_index = to_local_block_coordinate(&block_index_unrounded)
-                                + nalgebra::Vector3::new(0, layer, 0);
+                            let block_index = to_local_block_coordinate(&block_index_unrounded);
 
                             if terrain.get_block_local(block_index).is_some()
                                 && collision_depth > 0.0
                             {
                                 let normal = collision_normal.normalize() * *cylinder.radius
                                     - collision_normal;
+
+                                // Add in Y component.
+                                let normal = {
+                                    let y_collision_depth = if localized_cylinder_position.y
+                                        > block_index.y as f32
+                                    {
+                                        1.0 - (localized_cylinder_position.y - block_index.y as f32)
+                                    } else {
+                                        -(*cylinder.height
+                                            - (block_index.y as f32
+                                                - localized_cylinder_position.y))
+                                    };
+
+                                    if y_collision_depth.abs() < normal.length() {
+                                        Vec3::new(0.0, y_collision_depth, 0.0)
+                                    } else {
+                                        Vec3::new(normal.x, 0.0, normal.y)
+                                    }
+                                };
 
                                 max_normal = max_normal.max(normal);
                                 min_normal = min_normal.min(normal);

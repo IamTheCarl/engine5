@@ -77,13 +77,18 @@ fn setup_player(mut commands: Commands) {
             MovementControl,
         ))
         .with_children(|parent| {
-            parent.spawn((
-                Camera3dBundle {
-                    transform: Transform::from_translation(Vec3::new(0.0, 2.0 + 4.0, 10.0)),
-                    ..Default::default()
-                },
-                MovementControl,
-            ));
+            parent
+                .spawn((
+                    Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
+                    GlobalTransform::default(),
+                    MovementControl,
+                ))
+                .with_children(|parent| {
+                    parent.spawn((Camera3dBundle {
+                        transform: Transform::from_translation(Vec3::new(0.0, 2.0, 0.0 + 10.0)),
+                        ..Default::default()
+                    },));
+                });
         });
 }
 

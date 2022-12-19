@@ -367,8 +367,10 @@ fn compute_cylinder_to_terrain_intersections(
 
                                     if y_collision_depth.abs() < normal.length() {
                                         Vec3::new(0.0, y_collision_depth, 0.0)
+                                    } else if normal.x.abs() > normal.y.abs() {
+                                        Vec3::new(normal.x, 0.0, 0.0)
                                     } else {
-                                        Vec3::new(normal.x, 0.0, normal.y)
+                                        Vec3::new(0.0, 0.0, normal.y)
                                     }
                                 };
 

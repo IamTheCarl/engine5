@@ -1477,7 +1477,7 @@ fn terrain_setup(
         },
         Velocity {
             translation: Vec3::ZERO,
-            rotational: 0.1,
+            rotational: 0.5,
         },
     ));
 }

@@ -206,8 +206,6 @@ fn compute_cylinder_to_cylinder_intersections(
     entities: Query<(Entity, &SpatialHash, &Position, &Cylinder)>,
     spatial_object_tracker: Res<SpatialObjectTracker>,
 ) {
-    // TODO use events to pass all intersections to the next system.
-
     // We don't want to compare a set of entities more than once, so make sure we only get a set of unique comparisons.
     let mut to_compare = HashSet::new();
 
@@ -316,16 +314,9 @@ fn compute_cylinder_to_terrain_intersections(
                         alpha: 1.0,
                     };
 
-                    if debug_render_settings.cylinder_terrain_checks {
-                        let point = (terrain_position.inverse_quat() * closest_point)
-                            + terrain_position.translation;
-                        lines.line_colored(point, point + Vec3::Y, 0.0, terrain_color);
-                    }
-
-                    let mut collision_normal = localized_cylinder_position - closest_point;
+                    let collision_normal = localized_cylinder_position - closest_point;
 
                     if debug_render_settings.cylinder_terrain_checks {
-                        collision_normal.y = 0.0; // This collision check is 2D, but keep that 3rd dimension just for easy debug rendering.
                         let point = (terrain_position.inverse_quat() * closest_point)
                             + terrain_position.translation;
                         let collision_normal = terrain_position.inverse_quat() * collision_normal;
@@ -364,6 +355,33 @@ fn compute_cylinder_to_terrain_intersections(
                                             - (block_index.y as f32
                                                 - localized_cylinder_position.y))
                                     };
+
+                                    if debug_render_settings.cylinder_terrain_checks {
+                                        let point = (terrain_position.inverse_quat()
+                                            * closest_point)
+                                            + terrain_position.translation;
+
+                                        let color = if y_collision_depth.abs() < normal.length() {
+                                            Color::PURPLE
+                                        } else {
+                                            Color::CYAN
+                                        };
+
+                                        lines.line_colored(
+                                            point,
+                                            point
+                                                + Vec3::new(normal.x, y_collision_depth, normal.y),
+                                            0.0,
+                                            color,
+                                        );
+
+                                        let point = (terrain_position.inverse_quat()
+                                            * block_index_unrounded.floor()
+                                            + Vec3::new(0.5, 0.0, 0.5))
+                                            + terrain_position.translation;
+
+                                        lines.line_colored(point, point + Vec3::Y, 0.0, color);
+                                    }
 
                                     if y_collision_depth.abs() < normal.length() {
                                         Vec3::new(0.0, y_collision_depth, 0.0)

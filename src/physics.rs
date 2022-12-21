@@ -105,6 +105,7 @@ pub struct Cylinder {
 pub struct DebugRenderSettings {
     cylinder_terrain_checks: bool,
     hashing_center_point: bool,
+    cylinder_cylinder_checks: bool,
 }
 
 #[derive(Resource)]
@@ -203,13 +204,15 @@ fn insert_spatial_hash(
 }
 
 fn compute_cylinder_to_cylinder_intersections(
-    entities: Query<(Entity, &SpatialHash, &Position, &Cylinder)>,
+    mut cylinders: Query<(Entity, &SpatialHash, &mut Position, &Cylinder)>,
     spatial_object_tracker: Res<SpatialObjectTracker>,
+    debug_render_settings: Res<DebugRenderSettings>,
+    mut lines: ResMut<DebugLines>,
 ) {
     // We don't want to compare a set of entities more than once, so make sure we only get a set of unique comparisons.
     let mut to_compare = HashSet::new();
 
-    for (entity_a, spatial_hash_a, _position_a, _cylinder_a) in entities.iter() {
+    for (entity_a, spatial_hash_a, _position_a, _cylinder_a) in cylinders.iter() {
         spatial_object_tracker.get_ballpark(spatial_hash_a, |entity_b| {
             if entity_a != *entity_b {
                 let mut comparison_set = [entity_a, *entity_b];
@@ -221,17 +224,12 @@ fn compute_cylinder_to_cylinder_intersections(
     }
 
     for comparison_set in to_compare.drain() {
-        let entity_a = comparison_set[0];
-        let entity_b = comparison_set[1];
+        // Everything from the previous loop should still exist.
+        // If this fails, it's because one of the entities wasn't a cylinder.
+        if let Ok(mut entities) = cylinders.get_many_mut(comparison_set) {
+            let (_entity_a, _spatial_hash_a, position_a, cylinder_a) = &entities[0];
+            let (_entity_b, _spatial_hash_b, position_b, cylinder_b) = &entities[1];
 
-        // We should have proven all of these cylinders in the previous loop.
-        let (_entity_a, _spatial_hash_a, position_a, cylinder_a) = entities
-            .get(entity_a)
-            .expect("Cylinder is no longer a cylinder.");
-
-        // If this fails, it probably wasn't a cylinder.
-        // That or it's a piece of garbage that got left behind.
-        if let Ok((_entity_b, _spatial_hash_b, position_b, cylinder_b)) = entities.get(entity_b) {
             let a_bottom = position_a.translation.y;
             let a_top = a_bottom + *cylinder_a.height;
 
@@ -242,14 +240,50 @@ fn compute_cylinder_to_cylinder_intersections(
                 || (b_bottom >= a_bottom && b_bottom <= a_top);
 
             // Okay, our y axis are overlapping. Let's see if we're close enough to contact.
-            let difference = position_a.translation.xy() - position_b.translation.xy();
+            let difference = position_a.translation.xz() - position_b.translation.xz();
+            let normal = difference.normalize();
             let distance = difference.length() - *cylinder_a.radius - *cylinder_b.radius;
 
             let intersecting_xz = distance <= 0.0;
             let intersecting = intersecting_xz && intersecting_y;
+            let distance = -distance;
 
             if intersecting {
-                dbg!(entity_a, entity_b);
+                if debug_render_settings.cylinder_cylinder_checks {
+                    lines.line_colored(
+                        position_a.translation,
+                        position_a.translation + Vec3::new(normal.x, 0.0, normal.y) * distance,
+                        0.0,
+                        Color::YELLOW,
+                    );
+
+                    lines.line_colored(
+                        position_b.translation,
+                        position_b.translation - Vec3::new(normal.x, 0.0, normal.y) * distance,
+                        0.0,
+                        Color::CYAN,
+                    );
+                }
+
+                let y_collision_depth = if position_a.translation.y > position_b.translation.y {
+                    *cylinder_b.height - (position_a.translation.y - position_b.translation.y)
+                } else {
+                    -(*cylinder_a.height - (position_b.translation.y - position_a.translation.y))
+                };
+
+                if y_collision_depth.abs() > distance {
+                    let (_entity_a, _spatial_hash_a, position_a, _cylinder_a) = &mut entities[0];
+                    position_a.translation += Vec3::new(normal.x, 0.0, normal.y) * distance;
+
+                    let (_entity_b, _spatial_hash_b, position_b, _cylinder_b) = &mut entities[1];
+                    position_b.translation -= Vec3::new(normal.x, 0.0, normal.y) * distance;
+                } else {
+                    let (_entity_a, _spatial_hash_a, position_a, _cylinder_a) = &mut entities[0];
+                    position_a.translation.y += y_collision_depth;
+
+                    let (_entity_b, _spatial_hash_b, position_b, _cylinder_b) = &mut entities[1];
+                    position_b.translation.y -= y_collision_depth;
+                }
             }
         }
     }
@@ -682,6 +716,7 @@ pub fn setup(app: &mut App) {
             commands.insert_resource(DebugRenderSettings {
                 cylinder_terrain_checks: true,
                 hashing_center_point: true,
+                cylinder_cylinder_checks: true,
             });
             commands.insert_resource(MeshCollection::new());
 

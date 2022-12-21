@@ -1,4 +1,4 @@
-use crate::terrain::{to_local_block_coordinate, Chunk};
+use crate::terrain::{to_local_block_coordinate, BlockLocalCoordinate, Chunk};
 use bevy::{math::Vec3Swizzles, prelude::*};
 use bevy_prototype_debug_lines::DebugLines;
 use ordered_float::NotNan;
@@ -344,18 +344,49 @@ fn compute_cylinder_to_terrain_intersections(
                                 let normal = collision_normal.normalize() * *cylinder.radius
                                     - collision_normal;
 
+                                let block_side_direction = normal.normalize();
+                                let block_side_direction = if block_side_direction.x.abs()
+                                    > block_side_direction.y.abs()
+                                {
+                                    BlockLocalCoordinate::new(
+                                        block_side_direction.x.signum() as i8,
+                                        0,
+                                        0,
+                                    )
+                                } else {
+                                    BlockLocalCoordinate::new(
+                                        0,
+                                        0,
+                                        block_side_direction.y.signum() as i8,
+                                    )
+                                };
+
+                                let y_collision_depth = if localized_cylinder_position.y
+                                    > block_index.y as f32
+                                {
+                                    1.0 - (localized_cylinder_position.y - block_index.y as f32)
+                                } else {
+                                    -(*cylinder.height
+                                        - (block_index.y as f32 - localized_cylinder_position.y))
+                                };
+
+                                let is_block_to_side = terrain
+                                    .get_block_local(block_index + block_side_direction)
+                                    .is_some();
+
+                                let is_block_to_top_or_bottom = terrain
+                                    .get_block_local(
+                                        block_index
+                                            + BlockLocalCoordinate::new(
+                                                0,
+                                                y_collision_depth.signum() as i8,
+                                                0,
+                                            ),
+                                    )
+                                    .is_some();
+
                                 // Add in Y component.
                                 let normal = {
-                                    let y_collision_depth = if localized_cylinder_position.y
-                                        > block_index.y as f32
-                                    {
-                                        1.0 - (localized_cylinder_position.y - block_index.y as f32)
-                                    } else {
-                                        -(*cylinder.height
-                                            - (block_index.y as f32
-                                                - localized_cylinder_position.y))
-                                    };
-
                                     if debug_render_settings.cylinder_terrain_checks {
                                         let point = (terrain_position.inverse_quat()
                                             * closest_point)
@@ -376,14 +407,48 @@ fn compute_cylinder_to_terrain_intersections(
                                         );
 
                                         let point = (terrain_position.inverse_quat()
-                                            * block_index_unrounded.floor()
-                                            + Vec3::new(0.5, 0.0, 0.5))
+                                            * (block_index_unrounded.floor()
+                                                + Vec3::new(0.5, 0.0, 0.5)))
                                             + terrain_position.translation;
 
                                         lines.line_colored(point, point + Vec3::Y, 0.0, color);
+
+                                        lines.line_colored(
+                                            point,
+                                            point
+                                                + terrain_position.inverse_quat()
+                                                    * Vec3::new(
+                                                        block_side_direction.x as f32,
+                                                        block_side_direction.y as f32,
+                                                        block_side_direction.z as f32,
+                                                    ),
+                                            0.0,
+                                            Color::PINK,
+                                        );
+
+                                        let point = (terrain_position.inverse_quat()
+                                            * (block_index_unrounded.floor()
+                                                + Vec3::new(0.5, 0.5, 0.5)))
+                                            + terrain_position.translation;
+
+                                        lines.line_colored(
+                                            point,
+                                            point
+                                                + terrain_position.inverse_quat()
+                                                    * Vec3::new(
+                                                        0.0,
+                                                        y_collision_depth.signum(),
+                                                        0.0,
+                                                    ),
+                                            0.0,
+                                            Color::CRIMSON,
+                                        );
                                     }
 
-                                    if y_collision_depth.abs() < normal.length() {
+                                    if (y_collision_depth.abs() < normal.length()
+                                        || (is_block_to_side && y_collision_depth.abs() < 0.1))
+                                        && !is_block_to_top_or_bottom
+                                    {
                                         Vec3::new(0.0, y_collision_depth, 0.0)
                                     } else if normal.x.abs() > normal.y.abs() {
                                         Vec3::new(normal.x, 0.0, 0.0)

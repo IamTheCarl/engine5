@@ -571,46 +571,36 @@ fn compute_terrain_to_terrain_intersections(
             let (_entity_a, _spatial_hash_a, position_a, chunk_a) = &mut entity_a[0];
             let (_entity_b, _spatial_hash_b, position_b, chunk_b) = &mut entity_b[0];
 
-            // for (coordinate_a, block_a) in chunk_a.iter() {
-            //     for (coordinate_b, block_b) in chunk_b.iter() {
-            //         // let coordinate_b = coordinate_b
-            //     }
-            // }
+            for (coordinate_a, block_a) in chunk_a.iter() {
+                let coordinate_a_global_space = position_a.inverse_quat()
+                    * (coordinate_a.as_vec3() + Vec3::new(0.5, 0.0, 0.5))
+                    + position_a.translation;
 
-            // let scale_x = position_a.local_x().dot(position_b.local_x());
-            // // let scale_x = position_a.local_x().xz() * scale_x;
+                let coordinate_b =
+                    position_b.quat() * (coordinate_a_global_space - position_b.translation);
 
-            // let scale_z = position_a.local_z().dot(position_b.local_z());
-            // // let scale_z = position_a.local_z().xz() * scale_z;
+                let coordinate_b = coordinate_b.as_ivec3();
 
-            // let scale = Vec2::new(scale_x, scale_z);
+                let block_b = chunk_b.get_block_local(coordinate_b);
 
-            // if debug_render_settings.terrain_terrain_checks {
-            //     let point = position_a.translation;
-            //     lines.line_colored(
-            //         point,
-            //         point + Vec3::new(scale.x, 0.0, 0.0),
-            //         0.0,
-            //         Color::Hsla {
-            //             hue: position_b.rotation,
-            //             saturation: 0.5,
-            //             lightness: 0.5,
-            //             alpha: 1.0,
-            //         },
-            //     );
-
-            //     lines.line_colored(
-            //         point,
-            //         point + Vec3::new(0.0, 0.0, scale.y),
-            //         0.0,
-            //         Color::Hsla {
-            //             hue: position_b.rotation,
-            //             saturation: 0.5,
-            //             lightness: 0.5,
-            //             alpha: 1.0,
-            //         },
-            //     );
-            // }
+                if debug_render_settings.terrain_terrain_checks
+                    && block_b.is_some()
+                    && block_a.is_some()
+                {
+                    let point = coordinate_a_global_space;
+                    lines.line_colored(
+                        point,
+                        point + Vec3::Y,
+                        0.0,
+                        Color::Hsla {
+                            hue: position_a.rotation + position_b.rotation,
+                            saturation: 0.5,
+                            lightness: 0.5,
+                            alpha: 1.0,
+                        },
+                    );
+                }
+            }
         }
     }
 }
@@ -796,7 +786,7 @@ impl Plugin for PhysicsPlugin {
                 commands.insert_resource(DebugRenderSettings {
                     cylinders: true,
                     cylinder_terrain_checks: false,
-                    hashing_center_point: false,
+                    hashing_center_point: true,
                     cylinder_cylinder_checks: false,
                     terrain_terrain_checks: true,
                 });

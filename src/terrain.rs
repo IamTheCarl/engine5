@@ -661,14 +661,13 @@ impl Chunk {
         let y: usize = position.y.try_into().ok()?;
         let z: usize = position.z.try_into().ok()?;
 
-        self.blocks.get(z)?.get(y)?.get(x).and_then(|block| *block)
+        self.blocks.get(y)?.get(z)?.get(x).and_then(|block| *block)
     }
 
-    pub fn set_block_local(
+    pub fn get_block_local_mut(
         &mut self,
         position: BlockLocalCoordinate,
-        block: Option<Block>,
-    ) -> Result<(), BlockIndexError> {
+    ) -> Result<&mut Option<Block>, BlockIndexError> {
         let x: usize = position
             .x
             .try_into()
@@ -682,16 +681,41 @@ impl Chunk {
             .try_into()
             .map_err(|_error| BlockIndexError::OutOfRange)?;
 
-        *self
-            .blocks
-            .get_mut(z)
-            .ok_or(BlockIndexError::OutOfRange)?
+        self.blocks
             .get_mut(y)
             .ok_or(BlockIndexError::OutOfRange)?
+            .get_mut(z)
+            .ok_or(BlockIndexError::OutOfRange)?
             .get_mut(x)
-            .ok_or(BlockIndexError::OutOfRange)? = block;
+            .ok_or(BlockIndexError::OutOfRange)
+    }
 
-        Ok(())
+    pub fn iter(&self) -> impl Iterator<Item = (BlockLocalCoordinate, Option<Block>)> + '_ {
+        self.blocks.iter().enumerate().flat_map(|(y, z_slices)| {
+            z_slices.iter().enumerate().flat_map(move |(z, x_slices)| {
+                x_slices.iter().enumerate().map(move |(x, block)| {
+                    (BlockLocalCoordinate::new(x as i8, y as i8, z as i8), *block)
+                })
+            })
+        })
+    }
+
+    pub fn iter_mut(
+        &mut self,
+    ) -> impl Iterator<Item = (BlockLocalCoordinate, &mut Option<Block>)> + '_ {
+        self.blocks
+            .iter_mut()
+            .enumerate()
+            .flat_map(|(y, z_slices)| {
+                z_slices
+                    .iter_mut()
+                    .enumerate()
+                    .flat_map(move |(z, x_slices)| {
+                        x_slices.iter_mut().enumerate().map(move |(x, block)| {
+                            (BlockLocalCoordinate::new(x as i8, y as i8, z as i8), block)
+                        })
+                    })
+            })
     }
 
     pub fn build_mesh(&self, block_registry: &BlockRegistry) -> Mesh {
@@ -719,37 +743,6 @@ impl Chunk {
             }
         }
 
-        // for (z_offset, z) in self.blocks.iter().enumerate() {
-        //     for (y_offset, y) in z.iter().enumerate() {
-        //         for (x_offset, x) in y.iter().enumerate() {
-        //             if let Some(x) = x {
-        //                 let position = BlockLocalCoordinate::new(
-        //                     x_offset as i8,
-        //                     y_offset as i8,
-        //                     z_offset as i8,
-        //                 );
-
-        //                 let neighbors = BlockNeighborSet {
-        //                     up: self.get_neighbor(position, BlockDirection::Up),
-        //                     down: self.get_neighbor(position, BlockDirection::Down),
-        //                     north: self.get_neighbor(position, BlockDirection::North),
-        //                     south: self.get_neighbor(position, BlockDirection::South),
-        //                     east: self.get_neighbor(position, BlockDirection::East),
-        //                     west: self.get_neighbor(position, BlockDirection::West),
-        //                 };
-
-        //                 x.add_to_mesh(
-        //                     block_registry,
-        //                     neighbors,
-        //                     Vector3::new(x_offset as u8, y_offset as u8, z_offset as u8),
-        //                     &mut vertex_buffer,
-        //                     &mut indices,
-        //                 );
-        //             }
-        //         }
-        //     }
-        // }
-
         let mut mesh = Mesh::new(PrimitiveTopology::TriangleList);
         mesh.insert_attribute(
             MeshVertexAttribute::new("vertex", 0, VertexFormat::Uint32),
@@ -758,34 +751,6 @@ impl Chunk {
         mesh.set_indices(Some(Indices::U32(indices)));
 
         mesh
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (BlockLocalCoordinate, Option<Block>)> + '_ {
-        self.blocks.iter().enumerate().flat_map(|(z, y_slices)| {
-            y_slices.iter().enumerate().flat_map(move |(y, x_slices)| {
-                x_slices.iter().enumerate().map(move |(x, block)| {
-                    (BlockLocalCoordinate::new(x as i8, y as i8, z as i8), *block)
-                })
-            })
-        })
-    }
-
-    pub fn iter_mut(
-        &mut self,
-    ) -> impl Iterator<Item = (BlockLocalCoordinate, &mut Option<Block>)> + '_ {
-        self.blocks
-            .iter_mut()
-            .enumerate()
-            .flat_map(|(z, y_slices)| {
-                y_slices
-                    .iter_mut()
-                    .enumerate()
-                    .flat_map(move |(y, x_slices)| {
-                        x_slices.iter_mut().enumerate().map(move |(x, block)| {
-                            (BlockLocalCoordinate::new(x as i8, y as i8, z as i8), block)
-                        })
-                    })
-            })
     }
 }
 

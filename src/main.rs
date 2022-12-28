@@ -23,10 +23,8 @@ impl Engine5 {
 
 impl Plugin for Engine5 {
     fn build(&self, app: &mut App) {
-        // TODO should probably make these proper plugins.
-        terrain::setup(app);
-        physics::setup(app);
-
+        app.add_plugin(terrain::TerrainPlugin);
+        app.add_plugin(physics::PhysicsPlugin);
         app.add_plugin(player::PlayerPlugin);
         app.add_plugin(DebugLinesPlugin::default());
         // TODO enable DBand dithering once you have control of the camera.

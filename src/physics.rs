@@ -85,6 +85,11 @@ impl Position {
     }
 
     #[inline]
+    pub fn local_x(&self) -> Vec3 {
+        Vec3::new(f32::cos(self.rotation), 0.0, f32::sin(self.rotation))
+    }
+
+    #[inline]
     pub fn quat(&self) -> Quat {
         Quat::from_rotation_y(-self.rotation)
     }
@@ -103,11 +108,14 @@ pub struct Cylinder {
 
 #[derive(Resource)]
 pub struct DebugRenderSettings {
+    cylinders: bool,
     cylinder_terrain_checks: bool,
     hashing_center_point: bool,
     cylinder_cylinder_checks: bool,
+    terrain_terrain_checks: bool,
 }
 
+// TODO experiment with storing entities by archtype.
 #[derive(Resource)]
 struct SpatialObjectTracker(HashMap<SpatialHash, HashSet<Entity>>);
 
@@ -227,8 +235,10 @@ fn compute_cylinder_to_cylinder_intersections(
         // Everything from the previous loop should still exist.
         // If this fails, it's because one of the entities wasn't a cylinder.
         if let Ok(mut entities) = cylinders.get_many_mut(comparison_set) {
-            let (_entity_a, _spatial_hash_a, position_a, cylinder_a) = &entities[0];
-            let (_entity_b, _spatial_hash_b, position_b, cylinder_b) = &entities[1];
+            let (entity_a, entity_b) = entities.split_at_mut(1);
+
+            let (_entity_a, _spatial_hash_a, position_a, cylinder_a) = &mut entity_a[0];
+            let (_entity_b, _spatial_hash_b, position_b, cylinder_b) = &mut entity_b[0];
 
             let a_bottom = position_a.translation.y;
             let a_top = a_bottom + *cylinder_a.height;
@@ -272,16 +282,10 @@ fn compute_cylinder_to_cylinder_intersections(
                 };
 
                 if y_collision_depth.abs() > distance {
-                    let (_entity_a, _spatial_hash_a, position_a, _cylinder_a) = &mut entities[0];
                     position_a.translation += Vec3::new(normal.x, 0.0, normal.y) * distance;
-
-                    let (_entity_b, _spatial_hash_b, position_b, _cylinder_b) = &mut entities[1];
                     position_b.translation -= Vec3::new(normal.x, 0.0, normal.y) * distance;
                 } else {
-                    let (_entity_a, _spatial_hash_a, position_a, _cylinder_a) = &mut entities[0];
                     position_a.translation.y += y_collision_depth;
-
-                    let (_entity_b, _spatial_hash_b, position_b, _cylinder_b) = &mut entities[1];
                     position_b.translation.y -= y_collision_depth;
                 }
             }
@@ -538,6 +542,73 @@ fn compute_cylinder_to_terrain_intersections(
     }
 }
 
+fn compute_terrain_to_terrain_intersections(
+    mut terrain: Query<(Entity, &SpatialHash, &mut Position, &Chunk)>,
+    spatial_object_tracker: Res<SpatialObjectTracker>,
+    debug_render_settings: Res<DebugRenderSettings>,
+    mut lines: ResMut<DebugLines>,
+) {
+    // We don't want to compare a set of entities more than once, so make sure we only get a set of unique comparisons.
+    let mut to_compare = HashSet::new();
+
+    for (entity_a, spatial_hash_a, _position_a, _chunk_a) in terrain.iter() {
+        spatial_object_tracker.get_ballpark(spatial_hash_a, |entity_b| {
+            if entity_a != *entity_b {
+                let mut comparison_set = [entity_a, *entity_b];
+                comparison_set.sort_unstable();
+
+                to_compare.insert(comparison_set);
+            }
+        })
+    }
+
+    for comparison_set in to_compare.drain() {
+        // Everything from the previous loop should still exist.
+        // If this fails, it's because one of the entities wasn't terrain.
+        if let Ok(mut entities) = terrain.get_many_mut(comparison_set) {
+            let (entity_a, entity_b) = entities.split_at_mut(1);
+
+            let (_entity_a, _spatial_hash_a, position_a, chunk_a) = &mut entity_a[0];
+            let (_entity_b, _spatial_hash_b, position_b, chunk_b) = &mut entity_b[0];
+
+            // let scale_x = position_a.local_x().dot(position_b.local_x());
+            // // let scale_x = position_a.local_x().xz() * scale_x;
+
+            // let scale_z = position_a.local_z().dot(position_b.local_z());
+            // // let scale_z = position_a.local_z().xz() * scale_z;
+
+            // let scale = Vec2::new(scale_x, scale_z);
+
+            // if debug_render_settings.terrain_terrain_checks {
+            //     let point = position_a.translation;
+            //     lines.line_colored(
+            //         point,
+            //         point + Vec3::new(scale.x, 0.0, 0.0),
+            //         0.0,
+            //         Color::Hsla {
+            //             hue: position_b.rotation,
+            //             saturation: 0.5,
+            //             lightness: 0.5,
+            //             alpha: 1.0,
+            //         },
+            //     );
+
+            //     lines.line_colored(
+            //         point,
+            //         point + Vec3::new(0.0, 0.0, scale.y),
+            //         0.0,
+            //         Color::Hsla {
+            //             hue: position_b.rotation,
+            //             saturation: 0.5,
+            //             lightness: 0.5,
+            //             alpha: 1.0,
+            //         },
+            //     );
+            // }
+        }
+    }
+}
+
 fn handle_removed_spatial_hash_entities(
     removals: RemovedComponents<SpatialHash>,
     spatial_objects: Query<&SpatialHash>,
@@ -644,7 +715,7 @@ fn add_debug_mesh_cylinders(
     mut mesh_collections: ResMut<MeshCollection>,
     cylinders: Query<(Entity, &Cylinder, Without<Handle<Mesh>>)>,
 ) {
-    if settings.cylinder_terrain_checks {
+    if settings.cylinders {
         let material = &debug_shader_material.0;
 
         for (entity, cylinder, _) in cylinders.iter() {
@@ -665,7 +736,7 @@ fn remove_debug_mesh_cylinders(
     settings: Res<DebugRenderSettings>,
     cylinders: Query<(Entity, &Cylinder, &Handle<Mesh>)>,
 ) {
-    if !settings.cylinder_terrain_checks {
+    if !settings.cylinders {
         for (entity, _, _) in cylinders.iter() {
             commands
                 .entity(entity)
@@ -695,69 +766,76 @@ fn update_transforms(mut entities: Query<(&Position, &mut Transform)>) {
     }
 }
 
-pub fn setup(app: &mut App) {
-    app.add_startup_system(
-        |mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>| {
-            commands.spawn((
-                Cylinder {
-                    height: NotNan::new(1.0).unwrap(),
-                    radius: NotNan::new(0.5).unwrap(),
-                },
-                Velocity::default(),
-                Transform::default(),
-                Position {
-                    translation: Vec3::new(-5.0, 5.0, -5.0),
-                    rotation: 0.0,
-                },
-                SpatialHash::default(),
-            ));
+pub struct PhysicsPlugin;
 
-            // TODO make this accessible from a menu or terminal.
-            commands.insert_resource(DebugRenderSettings {
-                cylinder_terrain_checks: true,
-                hashing_center_point: true,
-                cylinder_cylinder_checks: true,
-            });
-            commands.insert_resource(MeshCollection::new());
+impl Plugin for PhysicsPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_startup_system(
+            |mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>| {
+                commands.spawn((
+                    Cylinder {
+                        height: NotNan::new(1.0).unwrap(),
+                        radius: NotNan::new(0.5).unwrap(),
+                    },
+                    Velocity::default(),
+                    Transform::default(),
+                    Position {
+                        translation: Vec3::new(-5.0, 5.0, -5.0),
+                        rotation: 0.0,
+                    },
+                    SpatialHash::default(),
+                ));
 
-            let debug_shader_material = materials.add(Color::RED.into());
-            commands.insert_resource(DebugShaderMaterial(debug_shader_material));
+                // TODO make this accessible from a menu or terminal.
+                commands.insert_resource(DebugRenderSettings {
+                    cylinders: true,
+                    cylinder_terrain_checks: false,
+                    hashing_center_point: false,
+                    cylinder_cylinder_checks: false,
+                    terrain_terrain_checks: true,
+                });
+                commands.insert_resource(MeshCollection::new());
 
-            commands.insert_resource(SpatialObjectTracker(HashMap::new()));
-        },
-    );
+                let debug_shader_material = materials.add(Color::RED.into());
+                commands.insert_resource(DebugShaderMaterial(debug_shader_material));
 
-    app.add_system(update_movement);
+                commands.insert_resource(SpatialObjectTracker(HashMap::new()));
+            },
+        );
 
-    app.add_system(add_debug_mesh_cylinders);
-    app.add_system(remove_debug_mesh_cylinders);
+        app.add_system(update_movement);
 
-    let collision_checks = "collision_checks";
-    let spatial_hashing = "spatial_hashing";
+        app.add_system(add_debug_mesh_cylinders);
+        app.add_system(remove_debug_mesh_cylinders);
 
-    app.add_system_set(
-        SystemSet::new()
-            .label(collision_checks)
-            .with_system(compute_cylinder_to_cylinder_intersections)
-            .with_system(compute_cylinder_to_terrain_intersections)
-            .after(update_movement),
-    );
+        let collision_checks = "collision_checks";
+        let spatial_hashing = "spatial_hashing";
 
-    app.add_system(update_transforms.after(collision_checks));
+        app.add_system_set(
+            SystemSet::new()
+                .label(collision_checks)
+                .with_system(compute_cylinder_to_cylinder_intersections)
+                .with_system(compute_cylinder_to_terrain_intersections)
+                .with_system(compute_terrain_to_terrain_intersections)
+                .after(update_movement),
+        );
 
-    app.add_system_set(
-        SystemSet::new()
-            .label(spatial_hashing)
-            .with_system(insert_spatial_hash)
-            // .with_system(add_spatial_hash_entities_to_tracker)
-            .with_system(update_spatial_hash_entities)
-            .with_system(update_spatial_hash_entities_with_offset)
-            .with_system(
-                handle_removed_spatial_hash_entities
-                    .after(update_spatial_hash_entities)
-                    .after(update_spatial_hash_entities_with_offset),
-            )
-            .before(collision_checks)
-            .after(update_movement),
-    );
+        app.add_system(update_transforms.after(collision_checks));
+
+        app.add_system_set(
+            SystemSet::new()
+                .label(spatial_hashing)
+                .with_system(insert_spatial_hash)
+                // .with_system(add_spatial_hash_entities_to_tracker)
+                .with_system(update_spatial_hash_entities)
+                .with_system(update_spatial_hash_entities_with_offset)
+                .with_system(
+                    handle_removed_spatial_hash_entities
+                        .after(update_spatial_hash_entities)
+                        .after(update_spatial_hash_entities_with_offset),
+                )
+                .before(collision_checks)
+                .after(update_movement),
+        );
+    }
 }

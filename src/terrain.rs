@@ -632,6 +632,7 @@ fn terrain_vertex_encode() {
 
 #[derive(Component, Clone)]
 pub struct Chunk {
+    // FIXME the corrent convention is z, y, x, for performance, it should be y, z, x.
     blocks: [[[Option<Block>; Self::CHUNK_DIAMETER]; Self::CHUNK_DIAMETER]; Self::CHUNK_DIAMETER],
 }
 
@@ -697,36 +698,57 @@ impl Chunk {
         let mut vertex_buffer = Vec::new();
         let mut indices = Vec::new();
 
-        for (z_offset, z) in self.blocks.iter().enumerate() {
-            for (y_offset, y) in z.iter().enumerate() {
-                for (x_offset, x) in y.iter().enumerate() {
-                    if let Some(x) = x {
-                        let position = BlockLocalCoordinate::new(
-                            x_offset as i8,
-                            y_offset as i8,
-                            z_offset as i8,
-                        );
+        for (position, block) in self.iter() {
+            if let Some(block) = block {
+                let neighbors = BlockNeighborSet {
+                    up: self.get_neighbor(position, BlockDirection::Up),
+                    down: self.get_neighbor(position, BlockDirection::Down),
+                    north: self.get_neighbor(position, BlockDirection::North),
+                    south: self.get_neighbor(position, BlockDirection::South),
+                    east: self.get_neighbor(position, BlockDirection::East),
+                    west: self.get_neighbor(position, BlockDirection::West),
+                };
 
-                        let neighbors = BlockNeighborSet {
-                            up: self.get_neighbor(position, BlockDirection::Up),
-                            down: self.get_neighbor(position, BlockDirection::Down),
-                            north: self.get_neighbor(position, BlockDirection::North),
-                            south: self.get_neighbor(position, BlockDirection::South),
-                            east: self.get_neighbor(position, BlockDirection::East),
-                            west: self.get_neighbor(position, BlockDirection::West),
-                        };
-
-                        x.add_to_mesh(
-                            block_registry,
-                            neighbors,
-                            Vector3::new(x_offset as u8, y_offset as u8, z_offset as u8),
-                            &mut vertex_buffer,
-                            &mut indices,
-                        );
-                    }
-                }
+                block.add_to_mesh(
+                    block_registry,
+                    neighbors,
+                    position.try_cast::<u8>().expect("Position went negative."),
+                    &mut vertex_buffer,
+                    &mut indices,
+                );
             }
         }
+
+        // for (z_offset, z) in self.blocks.iter().enumerate() {
+        //     for (y_offset, y) in z.iter().enumerate() {
+        //         for (x_offset, x) in y.iter().enumerate() {
+        //             if let Some(x) = x {
+        //                 let position = BlockLocalCoordinate::new(
+        //                     x_offset as i8,
+        //                     y_offset as i8,
+        //                     z_offset as i8,
+        //                 );
+
+        //                 let neighbors = BlockNeighborSet {
+        //                     up: self.get_neighbor(position, BlockDirection::Up),
+        //                     down: self.get_neighbor(position, BlockDirection::Down),
+        //                     north: self.get_neighbor(position, BlockDirection::North),
+        //                     south: self.get_neighbor(position, BlockDirection::South),
+        //                     east: self.get_neighbor(position, BlockDirection::East),
+        //                     west: self.get_neighbor(position, BlockDirection::West),
+        //                 };
+
+        //                 x.add_to_mesh(
+        //                     block_registry,
+        //                     neighbors,
+        //                     Vector3::new(x_offset as u8, y_offset as u8, z_offset as u8),
+        //                     &mut vertex_buffer,
+        //                     &mut indices,
+        //                 );
+        //             }
+        //         }
+        //     }
+        // }
 
         let mut mesh = Mesh::new(PrimitiveTopology::TriangleList);
         mesh.insert_attribute(
@@ -736,6 +758,34 @@ impl Chunk {
         mesh.set_indices(Some(Indices::U32(indices)));
 
         mesh
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (BlockLocalCoordinate, Option<Block>)> + '_ {
+        self.blocks.iter().enumerate().flat_map(|(z, y_slices)| {
+            y_slices.iter().enumerate().flat_map(move |(y, x_slices)| {
+                x_slices.iter().enumerate().map(move |(x, block)| {
+                    (BlockLocalCoordinate::new(x as i8, y as i8, z as i8), *block)
+                })
+            })
+        })
+    }
+
+    pub fn iter_mut(
+        &mut self,
+    ) -> impl Iterator<Item = (BlockLocalCoordinate, &mut Option<Block>)> + '_ {
+        self.blocks
+            .iter_mut()
+            .enumerate()
+            .flat_map(|(z, y_slices)| {
+                y_slices
+                    .iter_mut()
+                    .enumerate()
+                    .flat_map(move |(y, x_slices)| {
+                        x_slices.iter_mut().enumerate().map(move |(x, block)| {
+                            (BlockLocalCoordinate::new(x as i8, y as i8, z as i8), block)
+                        })
+                    })
+            })
     }
 }
 
@@ -1364,31 +1414,23 @@ fn terrain_setup(
     let default_block = default_data.spawn();
 
     let mut hump_chunk = Chunk::new(Some(default_block));
-    for x in 0..Chunk::CHUNK_DIAMETER {
-        for y in 0..Chunk::CHUNK_DIAMETER {
-            for z in 0..Chunk::CHUNK_DIAMETER {
-                let x = x as f32;
-                let y = y as f32;
-                let z = z as f32;
+    for (position, block) in hump_chunk.iter_mut() {
+        let position = position.cast::<f32>();
 
-                let height = ((x / 16.0) * std::f64::consts::PI as f32).sin()
-                    * ((z / 16.0) * std::f64::consts::PI as f32).sin()
-                    * 16.0;
-                if y > height {
-                    hump_chunk
-                        .set_block_local(BlockLocalCoordinate::new(x as i8, y as i8, z as i8), None)
-                        .ok();
-                }
-                //  else if (x % 2f32) == 0f32 {
-                //     chunk
-                //         .set_block_local(
-                //             BlockLocalCoordinate::new(x as i8, y as i8, z as i8),
-                //             Some(dirt_block),
-                //         )
-                //         .ok();
-                // }
-            }
+        let height = ((position.x / 16.0) * std::f64::consts::PI as f32).sin()
+            * ((position.z / 16.0) * std::f64::consts::PI as f32).sin()
+            * 16.0;
+        if position.y > height {
+            *block = None;
         }
+        //  else if (position.x % 2f32) == 0f32 {
+        //     chunk
+        //         .set_block_local(
+        //             BlockLocalCoordinate::new(x as i8, y as i8, z as i8),
+        //             Some(dirt_block),
+        //         )
+        //         .ok();
+        // }
     }
 
     let box_chunk = Chunk::new(Some(default_block));
@@ -1500,9 +1542,17 @@ fn generate_chunk_mesh(
     }
 }
 
-pub fn setup(app: &mut App) {
-    app.add_plugin(MaterialPlugin::<TerrainMaterial>::default());
-    app.add_system(generate_chunk_mesh);
-    app.add_system(terrain_texture_loading);
-    app.add_startup_system(terrain_setup);
+#[derive(StageLabel)]
+pub struct TerrainPlugin;
+
+impl Plugin for TerrainPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugin(MaterialPlugin::<TerrainMaterial>::default());
+
+        app.add_startup_stage(TerrainPlugin, SystemStage::parallel());
+        app.add_startup_system_to_stage(TerrainPlugin, terrain_setup);
+
+        app.add_system(generate_chunk_mesh);
+        app.add_system(terrain_texture_loading);
+    }
 }

@@ -13,7 +13,6 @@ use bevy::{
         texture::Volume,
     },
 };
-use nalgebra::{Vector2, Vector3};
 use std::{borrow::Cow, collections::HashMap, num::NonZeroU16, str::FromStr};
 use thiserror::Error;
 use wgpu::{TextureDimension, TextureFormat};
@@ -21,20 +20,8 @@ use wgpu::{TextureDimension, TextureFormat};
 use crate::physics::{Position, SpatialHashOffset, Velocity};
 
 type BlockID = NonZeroU16;
-pub type BlockCoordinate = nalgebra::Vector3<i64>;
-pub type BlockLocalCoordinate = nalgebra::Vector3<i8>;
-
-pub fn to_local_block_coordinate(coordinate: &Vec3) -> BlockLocalCoordinate {
-    BlockLocalCoordinate::new(coordinate.x as i8, coordinate.y as i8, coordinate.z as i8)
-}
-
-// pub fn to_block_coordinate(coordinate: &Vec3) -> BlockCoordinate {
-//     BlockCoordinate::new(
-//         coordinate.x as i64,
-//         coordinate.y as i64,
-//         coordinate.z as i64,
-//     )
-// }
+pub type BlockCoordinate = IVec3;
+pub type BlockLocalCoordinate = IVec3;
 
 #[derive(Error, Debug)]
 pub enum BlockIndexError {
@@ -87,28 +74,15 @@ impl From<BlockDirection> for Vec3 {
     }
 }
 
-impl From<BlockDirection> for BlockCoordinate {
+impl From<BlockDirection> for IVec3 {
     fn from(direction: BlockDirection) -> Self {
         match direction {
-            BlockDirection::Up => Self::y(),
-            BlockDirection::Down => Self::zeros() - Self::y(),
-            BlockDirection::North => Self::z(),
-            BlockDirection::South => Self::zeros() - Self::z(),
-            BlockDirection::East => Self::x(),
-            BlockDirection::West => Self::zeros() - Self::x(),
-        }
-    }
-}
-
-impl From<BlockDirection> for BlockLocalCoordinate {
-    fn from(direction: BlockDirection) -> Self {
-        match direction {
-            BlockDirection::Up => Self::y(),
-            BlockDirection::Down => Self::zeros() - Self::y(),
-            BlockDirection::North => Self::z(),
-            BlockDirection::South => Self::zeros() - Self::z(),
-            BlockDirection::East => Self::x(),
-            BlockDirection::West => Self::zeros() - Self::x(),
+            BlockDirection::Up => IVec3::Y,
+            BlockDirection::Down => IVec3::NEG_Y,
+            BlockDirection::North => IVec3::Z,
+            BlockDirection::South => IVec3::NEG_Z,
+            BlockDirection::East => IVec3::X,
+            BlockDirection::West => IVec3::NEG_X,
         }
     }
 }
@@ -418,7 +392,7 @@ pub struct Block {
 impl Block {
     fn insert_face(
         direction: BlockDirection,
-        offset: Vector3<u8>,
+        offset: UVec3,
         texture_index: u16,
         vertex_buffer: &mut Vec<u32>,
         indices: &mut Vec<u32>,
@@ -503,8 +477,8 @@ impl Block {
 
         let vertex_iter = source_vertices[range.clone()]
             .iter()
-            .map(|vec| Vector3::from(*vec) + offset)
-            .zip(source_uv[range].iter().map(|uv| Vector2::from(*uv)))
+            .map(|vec| UVec3::from(*vec) + offset)
+            .zip(source_uv[range].iter().map(|uv| UVec2::from(*uv)))
             .map(|(position, uv)| -> u32 {
                 TerrainVertex {
                     position,
@@ -531,7 +505,7 @@ impl Block {
         &self,
         block_registry: &BlockRegistry,
         neighbors: BlockNeighborSet,
-        offset: Vector3<u8>,
+        offset: UVec3,
         vertex_buffer: &mut Vec<u32>,
         indices: &mut Vec<u32>,
     ) {
@@ -553,9 +527,9 @@ impl Block {
 
 #[derive(Debug)]
 struct TerrainVertex {
-    position: Vector3<u8>,
+    position: UVec3,
     direction: BlockDirection,
-    uv: Vector2<u8>,
+    uv: UVec2,
     w: u16,
 }
 
@@ -587,9 +561,9 @@ impl From<TerrainVertex> for u32 {
 #[test]
 fn terrain_vertex_encode() {
     let value: u32 = TerrainVertex {
-        position: nalgebra::Vector3::new(0xFF, 0xEE, 0xDD),
+        position: UVec3::new(0xFF, 0xEE, 0xDD),
         direction: BlockDirection::North,
-        uv: nalgebra::Vector2::new(0, 1),
+        uv: UVec2::new(0, 1),
         w: 348,
     }
     .into();
@@ -694,7 +668,10 @@ impl Chunk {
         self.blocks.iter().enumerate().flat_map(|(y, z_slices)| {
             z_slices.iter().enumerate().flat_map(move |(z, x_slices)| {
                 x_slices.iter().enumerate().map(move |(x, block)| {
-                    (BlockLocalCoordinate::new(x as i8, y as i8, z as i8), *block)
+                    (
+                        BlockLocalCoordinate::new(x as i32, y as i32, z as i32),
+                        *block,
+                    )
                 })
             })
         })
@@ -712,7 +689,10 @@ impl Chunk {
                     .enumerate()
                     .flat_map(move |(z, x_slices)| {
                         x_slices.iter_mut().enumerate().map(move |(x, block)| {
-                            (BlockLocalCoordinate::new(x as i8, y as i8, z as i8), block)
+                            (
+                                BlockLocalCoordinate::new(x as i32, y as i32, z as i32),
+                                block,
+                            )
                         })
                     })
             })
@@ -736,7 +716,7 @@ impl Chunk {
                 block.add_to_mesh(
                     block_registry,
                     neighbors,
-                    position.try_cast::<u8>().expect("Position went negative."),
+                    position.as_uvec3(),
                     &mut vertex_buffer,
                     &mut indices,
                 );
@@ -1380,7 +1360,7 @@ fn terrain_setup(
 
     let mut hump_chunk = Chunk::new(Some(default_block));
     for (position, block) in hump_chunk.iter_mut() {
-        let position = position.cast::<f32>();
+        let position = position.as_vec3();
 
         let height = ((position.x / 16.0) * std::f64::consts::PI as f32).sin()
             * ((position.z / 16.0) * std::f64::consts::PI as f32).sin()

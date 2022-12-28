@@ -1,4 +1,4 @@
-use crate::terrain::{to_local_block_coordinate, BlockLocalCoordinate, Chunk};
+use crate::terrain::{BlockLocalCoordinate, Chunk};
 use bevy::{math::Vec3Swizzles, prelude::*};
 use bevy_prototype_debug_lines::DebugLines;
 use ordered_float::NotNan;
@@ -374,7 +374,7 @@ fn compute_cylinder_to_terrain_intersections(
 
                             // We don't need to worry about an integer overflow here because the broadphase won't let us compare
                             // to terrain that far away from a cylinder.
-                            let block_index = to_local_block_coordinate(&block_index_unrounded);
+                            let block_index = block_index_unrounded.as_ivec3();
 
                             if terrain.get_block_local(block_index).is_some()
                                 && collision_depth > 0.0
@@ -387,7 +387,7 @@ fn compute_cylinder_to_terrain_intersections(
                                     > block_side_direction.y.abs()
                                 {
                                     BlockLocalCoordinate::new(
-                                        block_side_direction.x.signum() as i8,
+                                        block_side_direction.x.signum() as i32,
                                         0,
                                         0,
                                     )
@@ -395,7 +395,7 @@ fn compute_cylinder_to_terrain_intersections(
                                     BlockLocalCoordinate::new(
                                         0,
                                         0,
-                                        block_side_direction.y.signum() as i8,
+                                        block_side_direction.y.signum() as i32,
                                     )
                                 };
 
@@ -417,7 +417,7 @@ fn compute_cylinder_to_terrain_intersections(
                                         block_index
                                             + BlockLocalCoordinate::new(
                                                 0,
-                                                y_collision_depth.signum() as i8,
+                                                y_collision_depth.signum() as i32,
                                                 0,
                                             ),
                                     )
@@ -570,6 +570,12 @@ fn compute_terrain_to_terrain_intersections(
 
             let (_entity_a, _spatial_hash_a, position_a, chunk_a) = &mut entity_a[0];
             let (_entity_b, _spatial_hash_b, position_b, chunk_b) = &mut entity_b[0];
+
+            // for (coordinate_a, block_a) in chunk_a.iter() {
+            //     for (coordinate_b, block_b) in chunk_b.iter() {
+            //         // let coordinate_b = coordinate_b
+            //     }
+            // }
 
             // let scale_x = position_a.local_x().dot(position_b.local_x());
             // // let scale_x = position_a.local_x().xz() * scale_x;

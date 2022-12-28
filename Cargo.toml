@@ -12,7 +12,6 @@ bevy = { path = "crates/bevy" }
 bevy = { version = "0.9.1", features = ["dynamic"] }
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "1.0"
-nalgebra = "0.31"
 wgpu = "0.14"
 log = "0.4"
 bevy_prototype_debug_lines = { version = "0.9", features = ["3d"] }

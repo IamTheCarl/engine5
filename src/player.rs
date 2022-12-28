@@ -69,7 +69,7 @@ fn setup_player(mut commands: Commands, block_registry: Res<BlockRegistry>) {
     let mut hump_chunk = Chunk::new(Some(default_block));
 
     for (position, block) in hump_chunk.iter_mut() {
-        let position = position.cast::<f32>();
+        let position = position.as_vec3();
 
         let height = ((position.x / 16.0) * std::f64::consts::PI as f32).sin()
             * ((position.z / 16.0) * std::f64::consts::PI as f32).sin()

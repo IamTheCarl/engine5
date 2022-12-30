@@ -29,7 +29,7 @@ impl Default for MovementSettings {
     fn default() -> Self {
         Self {
             sensitivity: 0.00012,
-            speed: 12.,
+            speed: 6.,
         }
     }
 }
@@ -107,7 +107,11 @@ fn setup_player(mut commands: Commands, block_registry: Res<BlockRegistry>) {
                 ))
                 .with_children(|parent| {
                     parent.spawn((Camera3dBundle {
-                        transform: Transform::from_translation(Vec3::new(0.0, 2.0, 0.0 + 32.0)),
+                        transform: Transform::from_translation(Vec3::new(
+                            0.0 + 0.1,
+                            2.0,
+                            0.0 + 32.0,
+                        )),
                         ..Default::default()
                     },));
                 });

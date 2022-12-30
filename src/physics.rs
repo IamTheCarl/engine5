@@ -548,6 +548,51 @@ fn compute_terrain_to_terrain_intersections(
     debug_render_settings: Res<DebugRenderSettings>,
     mut lines: ResMut<DebugLines>,
 ) {
+    fn collision_check(
+        chunk_a: &Chunk,
+        position_a: &Position,
+        chunk_b: &Chunk,
+        position_b: &Position,
+        mut collision_handler: impl FnMut(Vec3),
+    ) {
+        // We have 8 corners to check. Since they are all only 1 unit from each other, they'll land in the block of potential collision.
+        // We just need to do 8 checks per block.
+        let corners = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 1.0, 1.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 1.0),
+            Vec3::new(1.0, 1.0, 0.0),
+            Vec3::new(1.0, 1.0, 1.0),
+        ];
+
+        let inverse_quat_a = position_a.inverse_quat();
+        let quat_b = position_b.quat();
+
+        // Check for collisions from chunk a to chunk b.
+        for (coordinate_a, block_a) in chunk_a.iter() {
+            if block_a.is_some() {
+                for corner_offset in corners.iter() {
+                    let coordinate_a_global_space = inverse_quat_a
+                        * (coordinate_a.as_vec3() + *corner_offset)
+                        + position_a.translation;
+
+                    let coordinate_a_in_b_space =
+                        quat_b * (coordinate_a_global_space - position_b.translation);
+
+                    let corner_coordinate = coordinate_a_in_b_space.floor().as_ivec3();
+                    let block_b = chunk_b.get_block_local(corner_coordinate);
+
+                    if block_b.is_some() {
+                        collision_handler(coordinate_a_in_b_space);
+                    }
+                }
+            }
+        }
+    }
+
     // We don't want to compare a set of entities more than once, so make sure we only get a set of unique comparisons.
     let mut to_compare = HashSet::new();
 
@@ -571,55 +616,55 @@ fn compute_terrain_to_terrain_intersections(
             let (_entity_a, _spatial_hash_a, position_a, chunk_a) = &mut entity_a[0];
             let (_entity_b, _spatial_hash_b, position_b, chunk_b) = &mut entity_b[0];
 
-            let quat_a = position_a.quat();
-            let inverse_quat_a = position_a.inverse_quat();
-            let quat_b = position_b.quat();
             let inverse_quat_b = position_b.inverse_quat();
-
-            // We have 8 corners to check. Since they are all only 1 unit from each other, they'll land in the block of potential collision.
-            // We just need to do 8 checks per block.
-            let corners = [
-                Vec3::new(0.0, 0.0, 0.0),
-                Vec3::new(0.0, 0.0, 1.0),
-                Vec3::new(0.0, 1.0, 0.0),
-                Vec3::new(0.0, 1.0, 1.0),
-                Vec3::new(1.0, 0.0, 0.0),
-                Vec3::new(1.0, 0.0, 1.0),
-                Vec3::new(1.0, 1.0, 0.0),
-                Vec3::new(1.0, 1.0, 1.0),
-            ];
-
-            // Check for collisions from chunk a to chunk b.
-            for (coordinate_a, block_a) in chunk_a.iter() {
-                let coordinate_a_global_space =
-                    inverse_quat_a * (coordinate_a.as_vec3()) + position_a.translation;
-
-                if block_a.is_some() {
-                    for corner_offset in corners.iter() {
-                        let corner_raw = quat_b
-                            * (coordinate_a_global_space - position_b.translation + *corner_offset);
-
-                        let corner = corner_raw.floor().as_ivec3();
-                        let block_b = chunk_b.get_block_local(corner);
-
-                        if debug_render_settings.terrain_terrain_checks && block_b.is_some() {
-                            let point = inverse_quat_b * corner_raw + position_b.translation;
-                            lines.line_gradient(
-                                point,
-                                point + Vec3::Y,
-                                0.0,
-                                Color::Hsla {
-                                    hue: position_a.rotation + position_b.rotation,
-                                    saturation: 0.5,
-                                    lightness: 0.5,
-                                    alpha: 1.0,
-                                },
-                                Color::GREEN,
-                            );
-                        }
+            collision_check(
+                chunk_a,
+                position_a,
+                chunk_b,
+                position_b,
+                |corner_position| {
+                    if debug_render_settings.terrain_terrain_checks {
+                        let point = inverse_quat_b * corner_position + position_b.translation;
+                        lines.line_gradient(
+                            point,
+                            point + Vec3::Y,
+                            0.0,
+                            Color::Hsla {
+                                hue: position_a.rotation + position_b.rotation,
+                                saturation: 0.5,
+                                lightness: 0.5,
+                                alpha: 1.0,
+                            },
+                            Color::GREEN,
+                        );
                     }
-                }
-            }
+                },
+            );
+
+            let inverse_quat_a = position_a.inverse_quat();
+            collision_check(
+                chunk_b,
+                position_b,
+                chunk_a,
+                position_a,
+                |corner_position| {
+                    if debug_render_settings.terrain_terrain_checks {
+                        let point = inverse_quat_a * corner_position + position_a.translation;
+                        lines.line_gradient(
+                            point,
+                            point + Vec3::Y,
+                            0.0,
+                            Color::Hsla {
+                                hue: position_a.rotation + position_b.rotation,
+                                saturation: 0.5,
+                                lightness: 0.5,
+                                alpha: 1.0,
+                            },
+                            Color::CYAN,
+                        );
+                    }
+                },
+            );
         }
     }
 }

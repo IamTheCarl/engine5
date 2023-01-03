@@ -585,10 +585,10 @@ fn compute_terrain_to_terrain_intersections(
 ) {
     fn collision_check(
         chunk_a: &Chunk,
-        position_a: &Position,
+        position_a: &mut Position,
         chunk_b: &Chunk,
-        position_b: &Position,
-        mut collision_handler: impl FnMut(Vec3, Vec3),
+        position_b: &mut Position,
+        mut collision_handler: impl FnMut(Vec3, Vec3, &mut Position, &mut Position),
     ) {
         // We have 8 corners to check. Since they are all only 1 unit from each other, they'll land in the block of potential collision.
         // We just need to do 8 checks per block.
@@ -658,7 +658,12 @@ fn compute_terrain_to_terrain_intersections(
                             direction.z = 0.0;
                         }
 
-                        collision_handler(coordinate_a_in_b_space, direction);
+                        collision_handler(
+                            coordinate_a_in_b_space,
+                            direction,
+                            position_a,
+                            position_b,
+                        );
                     }
                 }
             }
@@ -688,17 +693,15 @@ fn compute_terrain_to_terrain_intersections(
             let (_entity_a, _spatial_hash_a, position_a, chunk_a) = &mut entity_a[0];
             let (_entity_b, _spatial_hash_b, position_b, chunk_b) = &mut entity_b[0];
 
-            let mut normal_accumulator_a = NormalAccumulator::new();
-            let mut normal_accumulator_b = NormalAccumulator::new();
-
             let inverse_quat_b = position_b.inverse_quat();
             collision_check(
                 chunk_a,
                 position_a,
                 chunk_b,
                 position_b,
-                |corner_position, depth| {
-                    normal_accumulator_a.add_normal(depth);
+                |corner_position, depth, position_a, position_b| {
+                    position_a.translation += inverse_quat_b * depth * 0.5;
+                    position_b.translation -= inverse_quat_b * depth * 0.5;
 
                     if debug_render_settings.terrain_terrain_checks {
                         let point = inverse_quat_b * corner_position + position_b.translation;
@@ -724,8 +727,9 @@ fn compute_terrain_to_terrain_intersections(
                 position_b,
                 chunk_a,
                 position_a,
-                |corner_position, depth| {
-                    normal_accumulator_b.add_normal(depth);
+                |corner_position, depth, position_a, position_b| {
+                    position_a.translation += inverse_quat_a * depth * 0.5;
+                    position_b.translation -= inverse_quat_a * depth * 0.5;
 
                     if debug_render_settings.terrain_terrain_checks {
                         let point = inverse_quat_a * corner_position + position_a.translation;
@@ -744,120 +748,6 @@ fn compute_terrain_to_terrain_intersections(
                     }
                 },
             );
-
-            // Now we need to select the most extreme axis.
-            let normal_a = normal_accumulator_a.compute_true_normal();
-            let normal_b = normal_accumulator_b.compute_true_normal();
-
-            let normal_a_abs = normal_a.abs();
-            let normal_b_abs = normal_b.abs();
-
-            enum Axis {
-                X(f32),
-                Y(f32),
-                Z(f32),
-            }
-
-            impl Axis {
-                fn abs(&self) -> f32 {
-                    match self {
-                        Self::X(value) => *value,
-                        Self::Y(value) => *value,
-                        Self::Z(value) => *value,
-                    }
-                }
-            }
-
-            enum TransformSpace {
-                A(Axis),
-                B(Axis),
-            }
-
-            impl TransformSpace {
-                fn abs(&self) -> f32 {
-                    match self {
-                        Self::A(value) => value,
-                        Self::B(value) => value,
-                    }
-                    .abs()
-                }
-            }
-
-            let x = if normal_a_abs.x > normal_b_abs.x {
-                TransformSpace::A(Axis::X(normal_a.x))
-            } else {
-                TransformSpace::B(Axis::X(normal_b.x))
-            };
-
-            let y = if normal_a_abs.y > normal_b_abs.y {
-                TransformSpace::A(Axis::Y(normal_a.y))
-            } else {
-                TransformSpace::B(Axis::Y(normal_b.y))
-            };
-
-            let z = if normal_a_abs.z > normal_b_abs.z {
-                TransformSpace::A(Axis::Z(normal_a.z))
-            } else {
-                TransformSpace::B(Axis::Z(normal_b.z))
-            };
-
-            let value = if x.abs() > y.abs() {
-                if x.abs() > z.abs() {
-                    x
-                } else {
-                    z
-                }
-            } else if y.abs() > z.abs() {
-                y
-            } else {
-                z
-            };
-
-            let true_normal = match value {
-                TransformSpace::A(value) => match value {
-                    Axis::X(value) => inverse_quat_a * Vec3::new(value, 0.0, 0.0),
-                    Axis::Y(value) => inverse_quat_a * Vec3::new(0.0, value, 0.0),
-                    Axis::Z(value) => inverse_quat_a * Vec3::new(0.0, 0.0, value),
-                },
-                TransformSpace::B(value) => match value {
-                    Axis::X(value) => inverse_quat_b * Vec3::new(value, 0.0, 0.0),
-                    Axis::Y(value) => inverse_quat_b * Vec3::new(0.0, value, 0.0),
-                    Axis::Z(value) => inverse_quat_b * Vec3::new(0.0, 0.0, value),
-                },
-            };
-
-            if debug_render_settings.terrain_terrain_checks {
-                let point = position_a.translation;
-                lines.line_gradient(
-                    point,
-                    point + true_normal,
-                    0.0,
-                    Color::Hsla {
-                        hue: position_a.rotation + position_b.rotation,
-                        saturation: 0.5,
-                        lightness: 0.5,
-                        alpha: 1.0,
-                    },
-                    Color::YELLOW,
-                );
-
-                let point = position_b.translation;
-                lines.line_gradient(
-                    point,
-                    point - true_normal,
-                    0.0,
-                    Color::Hsla {
-                        hue: position_a.rotation + position_b.rotation,
-                        saturation: 0.5,
-                        lightness: 0.5,
-                        alpha: 1.0,
-                    },
-                    Color::GRAY,
-                );
-            }
-
-            // position_a.translation += true_normal * 0.5;
-            // position_b.translation -= true_normal * 0.5;
         }
     }
 }

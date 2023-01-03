@@ -5,6 +5,39 @@ use ordered_float::NotNan;
 use std::collections::{HashMap, HashSet};
 use wgpu::PrimitiveTopology;
 
+struct ComponentIterator {
+    index: usize,
+    components: [f32; 3],
+}
+
+impl ComponentIterator {
+    fn new(vector: Vec3) -> Self {
+        Self {
+            index: 0,
+            components: [vector.x, vector.y, vector.z],
+        }
+    }
+
+    fn into_vec3(mut iterator: impl Iterator<Item = f32>) -> Vec3 {
+        Vec3::new(
+            iterator.next().expect("No X component provided."),
+            iterator.next().expect("No Y component provided."),
+            iterator.next().expect("No Z component provided."),
+        )
+    }
+}
+
+impl Iterator for ComponentIterator {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let component = self.components.get(self.index);
+        self.index += 1;
+
+        component.copied()
+    }
+}
+
 #[derive(Resource)]
 struct MeshCollection {
     cylinders: HashMap<Cylinder, Handle<Mesh>>,
@@ -82,11 +115,6 @@ impl Position {
     #[inline]
     pub fn local_z(&self) -> Vec3 {
         Vec3::new(f32::sin(self.rotation), 0.0, f32::cos(self.rotation))
-    }
-
-    #[inline]
-    pub fn local_x(&self) -> Vec3 {
-        Vec3::new(f32::cos(self.rotation), 0.0, f32::sin(self.rotation))
     }
 
     #[inline]
@@ -208,6 +236,38 @@ fn insert_spatial_hash(
 ) {
     for (entity, _, _) in entities.iter() {
         commands.entity(entity).insert(SpatialHash::default());
+    }
+}
+
+struct NormalAccumulator {
+    max_normal: Vec3,
+    min_normal: Vec3,
+}
+
+impl NormalAccumulator {
+    fn new() -> Self {
+        Self {
+            max_normal: Vec3::default(),
+            min_normal: Vec3::default(),
+        }
+    }
+
+    fn add_normal(&mut self, normal: Vec3) {
+        self.max_normal = self.max_normal.max(normal);
+        self.min_normal = self.min_normal.min(normal);
+    }
+
+    fn compute_true_normal(&self) -> Vec3 {
+        let max_normal_iter = ComponentIterator::new(self.max_normal);
+        let min_normal_iter = ComponentIterator::new(self.min_normal);
+
+        ComponentIterator::into_vec3(max_normal_iter.zip(min_normal_iter).map(|(max, min)| {
+            if min.abs() > max.abs() {
+                min
+            } else {
+                max
+            }
+        }))
     }
 }
 
@@ -333,8 +393,7 @@ fn compute_cylinder_to_terrain_intersections(
                     }
                 }
 
-                let mut max_normal = Vec3::ZERO;
-                let mut min_normal = Vec3::ZERO;
+                let mut normal_accumulator = NormalAccumulator::new();
 
                 let rounded_height = cylinder.height.ceil() as i8;
 
@@ -495,8 +554,7 @@ fn compute_cylinder_to_terrain_intersections(
                                     }
                                 };
 
-                                max_normal = max_normal.max(normal);
-                                min_normal = min_normal.min(normal);
+                                normal_accumulator.add_normal(normal);
 
                                 debug_assert!(!cylinder_position.translation.is_nan());
                             }
@@ -505,30 +563,7 @@ fn compute_cylinder_to_terrain_intersections(
                 }
 
                 // Apply our collisions.
-                let true_normal = {
-                    let max_normal_abs = max_normal.abs();
-                    let min_normal_abs = min_normal.abs();
-
-                    let x = if min_normal_abs.x > max_normal_abs.x {
-                        min_normal.x
-                    } else {
-                        max_normal.x
-                    };
-
-                    let y = if min_normal_abs.y > max_normal_abs.y {
-                        min_normal.y
-                    } else {
-                        max_normal.y
-                    };
-
-                    let z = if min_normal_abs.z > max_normal_abs.z {
-                        min_normal.z
-                    } else {
-                        max_normal.z
-                    };
-
-                    Vec3::new(x, y, z)
-                };
+                let true_normal = normal_accumulator.compute_true_normal();
 
                 let true_normal = terrain_position.inverse_quat() * true_normal; // Rotate back into global space.
 
@@ -553,7 +588,7 @@ fn compute_terrain_to_terrain_intersections(
         position_a: &Position,
         chunk_b: &Chunk,
         position_b: &Position,
-        mut collision_handler: impl FnMut(Vec3),
+        mut collision_handler: impl FnMut(Vec3, Vec3),
     ) {
         // We have 8 corners to check. Since they are all only 1 unit from each other, they'll land in the block of potential collision.
         // We just need to do 8 checks per block.
@@ -586,7 +621,44 @@ fn compute_terrain_to_terrain_intersections(
                     let block_b = chunk_b.get_block_local(corner_coordinate);
 
                     if block_b.is_some() {
-                        collision_handler(coordinate_a_in_b_space);
+                        // We have a collision. Let's figure out the normal of the collision.
+                        let mut direction = ComponentIterator::into_vec3(
+                            ComponentIterator::new(coordinate_a_in_b_space.fract()).map(|axis| {
+                                if axis > 0.5 {
+                                    1.0 - axis
+                                } else {
+                                    -axis
+                                }
+                            }),
+                        );
+
+                        // Check if a block exists in the direction of the axis.
+                        // If there is a block there, we can't push in that direction.
+                        let x = direction.x.signum() as i32;
+                        let is_block = chunk_b
+                            .get_block_local(corner_coordinate + BlockLocalCoordinate::new(x, 0, 0))
+                            .is_some();
+                        if is_block {
+                            direction.x = 0.0;
+                        }
+
+                        let y = direction.y.signum() as i32;
+                        let is_block = chunk_b
+                            .get_block_local(corner_coordinate + BlockLocalCoordinate::new(0, y, 0))
+                            .is_some();
+                        if is_block {
+                            direction.y = 0.0;
+                        }
+
+                        let z = direction.z.signum() as i32;
+                        let is_block = chunk_b
+                            .get_block_local(corner_coordinate + BlockLocalCoordinate::new(0, 0, z))
+                            .is_some();
+                        if is_block {
+                            direction.z = 0.0;
+                        }
+
+                        collision_handler(coordinate_a_in_b_space, direction);
                     }
                 }
             }
@@ -616,18 +688,23 @@ fn compute_terrain_to_terrain_intersections(
             let (_entity_a, _spatial_hash_a, position_a, chunk_a) = &mut entity_a[0];
             let (_entity_b, _spatial_hash_b, position_b, chunk_b) = &mut entity_b[0];
 
+            let mut normal_accumulator_a = NormalAccumulator::new();
+            let mut normal_accumulator_b = NormalAccumulator::new();
+
             let inverse_quat_b = position_b.inverse_quat();
             collision_check(
                 chunk_a,
                 position_a,
                 chunk_b,
                 position_b,
-                |corner_position| {
+                |corner_position, depth| {
+                    normal_accumulator_a.add_normal(depth);
+
                     if debug_render_settings.terrain_terrain_checks {
                         let point = inverse_quat_b * corner_position + position_b.translation;
                         lines.line_gradient(
                             point,
-                            point + Vec3::Y,
+                            point + inverse_quat_b * depth,
                             0.0,
                             Color::Hsla {
                                 hue: position_a.rotation + position_b.rotation,
@@ -647,12 +724,14 @@ fn compute_terrain_to_terrain_intersections(
                 position_b,
                 chunk_a,
                 position_a,
-                |corner_position| {
+                |corner_position, depth| {
+                    normal_accumulator_b.add_normal(depth);
+
                     if debug_render_settings.terrain_terrain_checks {
                         let point = inverse_quat_a * corner_position + position_a.translation;
                         lines.line_gradient(
                             point,
-                            point + Vec3::Y,
+                            point + inverse_quat_a * depth,
                             0.0,
                             Color::Hsla {
                                 hue: position_a.rotation + position_b.rotation,
@@ -665,6 +744,120 @@ fn compute_terrain_to_terrain_intersections(
                     }
                 },
             );
+
+            // Now we need to select the most extreme axis.
+            let normal_a = normal_accumulator_a.compute_true_normal();
+            let normal_b = normal_accumulator_b.compute_true_normal();
+
+            let normal_a_abs = normal_a.abs();
+            let normal_b_abs = normal_b.abs();
+
+            enum Axis {
+                X(f32),
+                Y(f32),
+                Z(f32),
+            }
+
+            impl Axis {
+                fn abs(&self) -> f32 {
+                    match self {
+                        Self::X(value) => *value,
+                        Self::Y(value) => *value,
+                        Self::Z(value) => *value,
+                    }
+                }
+            }
+
+            enum TransformSpace {
+                A(Axis),
+                B(Axis),
+            }
+
+            impl TransformSpace {
+                fn abs(&self) -> f32 {
+                    match self {
+                        Self::A(value) => value,
+                        Self::B(value) => value,
+                    }
+                    .abs()
+                }
+            }
+
+            let x = if normal_a_abs.x > normal_b_abs.x {
+                TransformSpace::A(Axis::X(normal_a.x))
+            } else {
+                TransformSpace::B(Axis::X(normal_b.x))
+            };
+
+            let y = if normal_a_abs.y > normal_b_abs.y {
+                TransformSpace::A(Axis::Y(normal_a.y))
+            } else {
+                TransformSpace::B(Axis::Y(normal_b.y))
+            };
+
+            let z = if normal_a_abs.z > normal_b_abs.z {
+                TransformSpace::A(Axis::Z(normal_a.z))
+            } else {
+                TransformSpace::B(Axis::Z(normal_b.z))
+            };
+
+            let value = if x.abs() > y.abs() {
+                if x.abs() > z.abs() {
+                    x
+                } else {
+                    z
+                }
+            } else if y.abs() > z.abs() {
+                y
+            } else {
+                z
+            };
+
+            let true_normal = match value {
+                TransformSpace::A(value) => match value {
+                    Axis::X(value) => inverse_quat_a * Vec3::new(value, 0.0, 0.0),
+                    Axis::Y(value) => inverse_quat_a * Vec3::new(0.0, value, 0.0),
+                    Axis::Z(value) => inverse_quat_a * Vec3::new(0.0, 0.0, value),
+                },
+                TransformSpace::B(value) => match value {
+                    Axis::X(value) => inverse_quat_b * Vec3::new(value, 0.0, 0.0),
+                    Axis::Y(value) => inverse_quat_b * Vec3::new(0.0, value, 0.0),
+                    Axis::Z(value) => inverse_quat_b * Vec3::new(0.0, 0.0, value),
+                },
+            };
+
+            if debug_render_settings.terrain_terrain_checks {
+                let point = position_a.translation;
+                lines.line_gradient(
+                    point,
+                    point + true_normal,
+                    0.0,
+                    Color::Hsla {
+                        hue: position_a.rotation + position_b.rotation,
+                        saturation: 0.5,
+                        lightness: 0.5,
+                        alpha: 1.0,
+                    },
+                    Color::YELLOW,
+                );
+
+                let point = position_b.translation;
+                lines.line_gradient(
+                    point,
+                    point - true_normal,
+                    0.0,
+                    Color::Hsla {
+                        hue: position_a.rotation + position_b.rotation,
+                        saturation: 0.5,
+                        lightness: 0.5,
+                        alpha: 1.0,
+                    },
+                    Color::GRAY,
+                );
+            }
+
+            // position_a.translation += true_normal * 0.5;
+            // position_b.translation -= true_normal * 0.5;
         }
     }
 }

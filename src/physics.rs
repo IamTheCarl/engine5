@@ -584,11 +584,12 @@ fn compute_terrain_to_terrain_intersections(
     mut lines: ResMut<DebugLines>,
 ) {
     fn collision_check(
+        lines: &mut ResMut<DebugLines>,
+        debug_color: Option<Color>,
         chunk_a: &Chunk,
         position_a: &mut Position,
         chunk_b: &Chunk,
         position_b: &mut Position,
-        mut collision_handler: impl FnMut(Vec3, Vec3, &mut Position, &mut Position),
     ) {
         // We have 8 corners to check. Since they are all only 1 unit from each other, they'll land in the block of potential collision.
         // We just need to do 8 checks per block.
@@ -604,6 +605,7 @@ fn compute_terrain_to_terrain_intersections(
         ];
 
         let inverse_quat_a = position_a.inverse_quat();
+        let inverse_quat_b = position_b.inverse_quat();
         let quat_b = position_b.quat();
 
         // Check for collisions from chunk a to chunk b.
@@ -658,12 +660,25 @@ fn compute_terrain_to_terrain_intersections(
                             direction.z = 0.0;
                         }
 
-                        collision_handler(
-                            coordinate_a_in_b_space,
-                            direction,
-                            position_a,
-                            position_b,
-                        );
+                        position_a.translation += inverse_quat_b * direction * 0.5;
+                        position_b.translation -= inverse_quat_b * direction * 0.5;
+
+                        if let Some(debug_color) = debug_color {
+                            let point =
+                                inverse_quat_b * coordinate_a_in_b_space + position_b.translation;
+                            lines.line_gradient(
+                                point,
+                                point + inverse_quat_b * direction,
+                                0.0,
+                                Color::Hsla {
+                                    hue: position_a.rotation + position_b.rotation,
+                                    saturation: 0.5,
+                                    lightness: 0.5,
+                                    alpha: 1.0,
+                                },
+                                debug_color,
+                            );
+                        }
                     }
                 }
             }
@@ -693,60 +708,26 @@ fn compute_terrain_to_terrain_intersections(
             let (_entity_a, _spatial_hash_a, position_a, chunk_a) = &mut entity_a[0];
             let (_entity_b, _spatial_hash_b, position_b, chunk_b) = &mut entity_b[0];
 
-            let inverse_quat_b = position_b.inverse_quat();
             collision_check(
+                &mut lines,
+                debug_render_settings
+                    .terrain_terrain_checks
+                    .then_some(Color::GREEN),
                 chunk_a,
                 position_a,
                 chunk_b,
                 position_b,
-                |corner_position, depth, position_a, position_b| {
-                    position_a.translation += inverse_quat_b * depth * 0.5;
-                    position_b.translation -= inverse_quat_b * depth * 0.5;
-
-                    if debug_render_settings.terrain_terrain_checks {
-                        let point = inverse_quat_b * corner_position + position_b.translation;
-                        lines.line_gradient(
-                            point,
-                            point + inverse_quat_b * depth,
-                            0.0,
-                            Color::Hsla {
-                                hue: position_a.rotation + position_b.rotation,
-                                saturation: 0.5,
-                                lightness: 0.5,
-                                alpha: 1.0,
-                            },
-                            Color::GREEN,
-                        );
-                    }
-                },
             );
 
-            let inverse_quat_a = position_a.inverse_quat();
             collision_check(
+                &mut lines,
+                debug_render_settings
+                    .terrain_terrain_checks
+                    .then_some(Color::GREEN),
                 chunk_b,
                 position_b,
                 chunk_a,
                 position_a,
-                |corner_position, depth, position_a, position_b| {
-                    position_a.translation += inverse_quat_a * depth * 0.5;
-                    position_b.translation -= inverse_quat_a * depth * 0.5;
-
-                    if debug_render_settings.terrain_terrain_checks {
-                        let point = inverse_quat_a * corner_position + position_a.translation;
-                        lines.line_gradient(
-                            point,
-                            point + inverse_quat_a * depth,
-                            0.0,
-                            Color::Hsla {
-                                hue: position_a.rotation + position_b.rotation,
-                                saturation: 0.5,
-                                lightness: 0.5,
-                                alpha: 1.0,
-                            },
-                            Color::CYAN,
-                        );
-                    }
-                },
             );
         }
     }

@@ -2,7 +2,10 @@ use crate::terrain::{BlockLocalCoordinate, Chunk};
 use bevy::{math::Vec3Swizzles, prelude::*};
 use bevy_prototype_debug_lines::DebugLines;
 use ordered_float::NotNan;
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Instant,
+};
 use wgpu::PrimitiveTopology;
 
 struct ComponentIterator {
@@ -583,6 +586,8 @@ fn compute_terrain_to_terrain_intersections(
     debug_render_settings: Res<DebugRenderSettings>,
     mut lines: ResMut<DebugLines>,
 ) {
+    let start_time = Instant::now();
+
     fn collision_check(
         lines: &mut ResMut<DebugLines>,
         debug_color: Option<Color>,
@@ -591,94 +596,93 @@ fn compute_terrain_to_terrain_intersections(
         chunk_b: &Chunk,
         position_b: &mut Position,
     ) {
-        // We have 8 corners to check. Since they are all only 1 unit from each other, they'll land in the block of potential collision.
-        // We just need to do 8 checks per block.
-        let corners = [
-            Vec3::new(0.0, 0.0, 0.0),
-            Vec3::new(0.0, 0.0, 1.0),
-            Vec3::new(0.0, 1.0, 0.0),
-            Vec3::new(0.0, 1.0, 1.0),
-            Vec3::new(1.0, 0.0, 0.0),
-            Vec3::new(1.0, 0.0, 1.0),
-            Vec3::new(1.0, 1.0, 0.0),
-            Vec3::new(1.0, 1.0, 1.0),
-        ];
-
         let inverse_quat_a = position_a.inverse_quat();
         let inverse_quat_b = position_b.inverse_quat();
         let quat_b = position_b.quat();
+        let quat_a = position_a.quat();
+
+        // Let's figure out the a smaller slice of possibly intersecting blocks.
+        let b_top_left_in_a_space = quat_a * (position_b.translation - position_a.translation);
+        let b_top_right_in_a_space = quat_a
+            * ((position_b.translation
+                + Vec3::new(
+                    Chunk::CHUNK_DIAMETER as f32,
+                    0.0,
+                    Chunk::CHUNK_DIAMETER as f32,
+                ))
+                - position_a.translation);
 
         // Check for collisions from chunk a to chunk b.
-        for (coordinate_a, block_a) in chunk_a.iter() {
+        for (coordinate_a, block_a) in
+            chunk_a.iter_range(b_top_left_in_a_space, b_top_right_in_a_space)
+        {
             if block_a.is_some() {
-                for corner_offset in corners.iter() {
-                    let coordinate_a_global_space = inverse_quat_a
-                        * (coordinate_a.as_vec3() + *corner_offset)
-                        + position_a.translation;
+                let coordinate_a_global_space = inverse_quat_a
+                    * (coordinate_a.as_vec3() + Vec3::splat(0.5))
+                    + position_a.translation;
 
-                    let coordinate_a_in_b_space =
-                        quat_b * (coordinate_a_global_space - position_b.translation);
+                let coordinate_a_in_b_space =
+                    quat_b * (coordinate_a_global_space - position_b.translation);
 
-                    let corner_coordinate = coordinate_a_in_b_space.floor().as_ivec3();
-                    let block_b = chunk_b.get_block_local(corner_coordinate);
+                let corner_coordinate = coordinate_a_in_b_space.floor().as_ivec3();
+                let block_b = chunk_b.get_block_local(corner_coordinate);
 
-                    if block_b.is_some() {
-                        // We have a collision. Let's figure out the normal of the collision.
-                        let mut direction = ComponentIterator::into_vec3(
-                            ComponentIterator::new(coordinate_a_in_b_space.fract()).map(|axis| {
-                                if axis > 0.5 {
-                                    1.0 - axis
-                                } else {
-                                    -axis
-                                }
-                            }),
+                if block_b.is_some() {
+                    // We have a collision. Let's figure out the normal of the collision.
+                    let mut direction = ComponentIterator::into_vec3(
+                        ComponentIterator::new(coordinate_a_in_b_space.fract()).map(|axis| {
+                            if axis > 0.5 {
+                                1.0 - axis
+                            } else {
+                                -axis
+                            }
+                        }),
+                    );
+
+                    // Check if a block exists in the direction of the axis.
+                    // If there is a block there, we can't push in that direction.
+                    let x = direction.x.signum() as i32;
+                    let is_block = chunk_b
+                        .get_block_local(corner_coordinate + BlockLocalCoordinate::new(x, 0, 0))
+                        .is_some();
+                    if is_block {
+                        direction.x = 0.0;
+                    }
+
+                    let y = direction.y.signum() as i32;
+                    let is_block = chunk_b
+                        .get_block_local(corner_coordinate + BlockLocalCoordinate::new(0, y, 0))
+                        .is_some();
+                    if is_block {
+                        direction.y = 0.0;
+                    }
+
+                    let z = direction.z.signum() as i32;
+                    let is_block = chunk_b
+                        .get_block_local(corner_coordinate + BlockLocalCoordinate::new(0, 0, z))
+                        .is_some();
+                    if is_block {
+                        direction.z = 0.0;
+                    }
+
+                    // position_a.translation += inverse_quat_b * direction * 0.5;
+                    // position_b.translation -= inverse_quat_b * direction * 0.5;
+
+                    if let Some(debug_color) = debug_color {
+                        let point =
+                            inverse_quat_b * coordinate_a_in_b_space + position_b.translation;
+                        lines.line_gradient(
+                            point,
+                            point + inverse_quat_b * direction,
+                            0.0,
+                            Color::Hsla {
+                                hue: position_a.rotation + position_b.rotation,
+                                saturation: 0.5,
+                                lightness: 0.5,
+                                alpha: 1.0,
+                            },
+                            debug_color,
                         );
-
-                        // Check if a block exists in the direction of the axis.
-                        // If there is a block there, we can't push in that direction.
-                        let x = direction.x.signum() as i32;
-                        let is_block = chunk_b
-                            .get_block_local(corner_coordinate + BlockLocalCoordinate::new(x, 0, 0))
-                            .is_some();
-                        if is_block {
-                            direction.x = 0.0;
-                        }
-
-                        let y = direction.y.signum() as i32;
-                        let is_block = chunk_b
-                            .get_block_local(corner_coordinate + BlockLocalCoordinate::new(0, y, 0))
-                            .is_some();
-                        if is_block {
-                            direction.y = 0.0;
-                        }
-
-                        let z = direction.z.signum() as i32;
-                        let is_block = chunk_b
-                            .get_block_local(corner_coordinate + BlockLocalCoordinate::new(0, 0, z))
-                            .is_some();
-                        if is_block {
-                            direction.z = 0.0;
-                        }
-
-                        position_a.translation += inverse_quat_b * direction * 0.5;
-                        position_b.translation -= inverse_quat_b * direction * 0.5;
-
-                        if let Some(debug_color) = debug_color {
-                            let point =
-                                inverse_quat_b * coordinate_a_in_b_space + position_b.translation;
-                            lines.line_gradient(
-                                point,
-                                point + inverse_quat_b * direction,
-                                0.0,
-                                Color::Hsla {
-                                    hue: position_a.rotation + position_b.rotation,
-                                    saturation: 0.5,
-                                    lightness: 0.5,
-                                    alpha: 1.0,
-                                },
-                                debug_color,
-                            );
-                        }
                     }
                 }
             }
@@ -723,7 +727,7 @@ fn compute_terrain_to_terrain_intersections(
                 &mut lines,
                 debug_render_settings
                     .terrain_terrain_checks
-                    .then_some(Color::GREEN),
+                    .then_some(Color::CYAN),
                 chunk_b,
                 position_b,
                 chunk_a,
@@ -731,6 +735,8 @@ fn compute_terrain_to_terrain_intersections(
             );
         }
     }
+
+    dbg!(start_time.elapsed());
 }
 
 fn handle_removed_spatial_hash_entities(
@@ -940,7 +946,7 @@ impl Plugin for PhysicsPlugin {
                 .label(collision_checks)
                 .with_system(compute_cylinder_to_cylinder_intersections)
                 .with_system(compute_cylinder_to_terrain_intersections)
-                .with_system(compute_terrain_to_terrain_intersections)
+                // .with_system(compute_terrain_to_terrain_intersections)
                 .after(update_movement),
         );
 

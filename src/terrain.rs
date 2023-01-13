@@ -13,7 +13,7 @@ use bevy::{
         texture::Volume,
     },
 };
-use std::{borrow::Cow, collections::HashMap, num::NonZeroU16, str::FromStr};
+use std::{borrow::Cow, collections::HashMap, num::NonZeroU16, ops::Range, str::FromStr};
 use thiserror::Error;
 use wgpu::{TextureDimension, TextureFormat};
 
@@ -22,12 +22,6 @@ use crate::physics::{Position, SpatialHashOffset, Velocity};
 type BlockID = NonZeroU16;
 pub type BlockCoordinate = IVec3;
 pub type BlockLocalCoordinate = IVec3;
-
-#[derive(Error, Debug)]
-pub enum BlockIndexError {
-    #[error("Indexed block out of chunk range.")]
-    OutOfRange,
-}
 
 #[derive(Clone, Copy, Debug)]
 pub enum BlockDirection {
@@ -641,27 +635,12 @@ impl Chunk {
     pub fn get_block_local_mut(
         &mut self,
         position: BlockLocalCoordinate,
-    ) -> Result<&mut Option<Block>, BlockIndexError> {
-        let x: usize = position
-            .x
-            .try_into()
-            .map_err(|_error| BlockIndexError::OutOfRange)?;
-        let y: usize = position
-            .y
-            .try_into()
-            .map_err(|_error| BlockIndexError::OutOfRange)?;
-        let z: usize = position
-            .z
-            .try_into()
-            .map_err(|_error| BlockIndexError::OutOfRange)?;
+    ) -> Option<&mut Option<Block>> {
+        let x: usize = position.x.try_into().ok()?;
+        let y: usize = position.y.try_into().ok()?;
+        let z: usize = position.z.try_into().ok()?;
 
-        self.blocks
-            .get_mut(y)
-            .ok_or(BlockIndexError::OutOfRange)?
-            .get_mut(z)
-            .ok_or(BlockIndexError::OutOfRange)?
-            .get_mut(x)
-            .ok_or(BlockIndexError::OutOfRange)
+        self.blocks.get_mut(y)?.get_mut(z)?.get_mut(x)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (BlockLocalCoordinate, Option<Block>)> + '_ {
@@ -694,6 +673,58 @@ impl Chunk {
                                 block,
                             )
                         })
+                    })
+            })
+    }
+
+    pub fn iter_range(
+        &self,
+        point_a: Vec3,
+        point_b: Vec3,
+    ) -> impl Iterator<Item = (BlockLocalCoordinate, Option<Block>)> + '_ {
+        fn to_valid_range(range: Range<i32>) -> Range<usize> {
+            dbg!(dbg!(range.start) as usize..dbg!(range.end) as usize)
+        }
+
+        dbg!(point_a, point_b);
+
+        let lower_bound = point_a
+            .min(point_b)
+            .max(Vec3::splat(0.0))
+            .floor()
+            .as_ivec3();
+        let upper_bound = point_a
+            .max(point_b)
+            .min(Vec3::splat(Self::CHUNK_DIAMETER as f32))
+            .ceil()
+            .as_ivec3();
+
+        dbg!(lower_bound, upper_bound);
+
+        self.blocks
+            .get(to_valid_range(lower_bound.y..upper_bound.y))
+            .expect("Range validator failed")
+            .iter()
+            .enumerate()
+            .flat_map(move |(y, z_slices)| {
+                z_slices
+                    .get(to_valid_range(lower_bound.z..upper_bound.z))
+                    .expect("Range validator failed")
+                    .iter()
+                    .enumerate()
+                    .flat_map(move |(z, x_slices)| {
+                        x_slices
+                            .get(to_valid_range(lower_bound.x..upper_bound.x))
+                            .expect("Range validator failed")
+                            .iter()
+                            .enumerate()
+                            .map(move |(x, block)| {
+                                (
+                                    BlockLocalCoordinate::new(x as i32, y as i32, z as i32)
+                                        + lower_bound,
+                                    *block,
+                                )
+                            })
                     })
             })
     }

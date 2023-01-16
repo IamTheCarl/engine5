@@ -614,7 +614,7 @@ fn compute_terrain_to_terrain_intersections(
 
         // Check for collisions from chunk a to chunk b.
         for (coordinate_a, block_a) in
-            chunk_a.iter_range(b_top_left_in_a_space, b_top_right_in_a_space)
+            chunk_a.fuzzy_iter_range(b_top_left_in_a_space, b_top_right_in_a_space)
         {
             if block_a.is_some() {
                 let coordinate_a_global_space = inverse_quat_a
@@ -868,13 +868,7 @@ fn remove_debug_mesh_cylinders(
 ) {
     if !settings.cylinders {
         for (entity, _, _) in cylinders.iter() {
-            commands
-                .entity(entity)
-                .remove::<Handle<Mesh>>()
-                .remove::<Handle<StandardMaterial>>()
-                .remove::<GlobalTransform>()
-                .remove::<Visibility>()
-                .remove::<ComputedVisibility>();
+            commands.entity(entity).despawn();
         }
     }
 }
@@ -920,7 +914,7 @@ impl Plugin for PhysicsPlugin {
                 commands.insert_resource(DebugRenderSettings {
                     cylinders: true,
                     cylinder_terrain_checks: false,
-                    hashing_center_point: true,
+                    hashing_center_point: false,
                     cylinder_cylinder_checks: false,
                     terrain_terrain_checks: true,
                 });

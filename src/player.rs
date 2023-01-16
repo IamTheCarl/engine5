@@ -6,8 +6,8 @@ use ordered_float::NotNan;
 
 /// Currently just a modified version of https://crates.io/crates/bevy_flycam.
 ///
-use crate::physics::{Cylinder, Position, SpatialHashOffset, Velocity};
-use crate::terrain::{BlockLocalCoordinate, BlockRegistry, BlockTag, Chunk, TerrainPlugin};
+use crate::physics::{Cylinder, Position, Velocity};
+use crate::terrain::{LoadsTerrain, TerrainPlugin};
 
 /// Keeps track of mouse motion events, pitch, and yaw
 #[derive(Resource, Default)]
@@ -29,7 +29,7 @@ impl Default for MovementSettings {
     fn default() -> Self {
         Self {
             sensitivity: 0.00012,
-            speed: 6.,
+            speed: 12.,
         }
     }
 }
@@ -61,33 +61,12 @@ fn initial_grab_cursor(mut windows: ResMut<Windows>) {
 }
 
 /// Spawns the `Camera3dBundle` to be controlled
-fn setup_player(mut commands: Commands, block_registry: Res<BlockRegistry>) {
-    let default_tag = BlockTag::try_from("core:default").unwrap();
-    let default_data = block_registry.get_by_tag(&default_tag).unwrap();
-    let default_block = default_data.spawn();
-
-    let mut hump_chunk = Chunk::new(Some(default_block));
-
-    for (position, block) in hump_chunk.iter_mut() {
-        let position = position.as_vec3();
-
-        let height = ((position.x / 16.0) * std::f64::consts::PI as f32).sin()
-            * ((position.z / 16.0) * std::f64::consts::PI as f32).sin()
-            * 16.0;
-        if position.y > height {
-            *block = None;
-        }
-    }
-
+fn setup_player(mut commands: Commands) {
     commands
         .spawn((
-            // Cylinder {
-            //     height: NotNan::new(3.0).unwrap(),
-            //     radius: NotNan::new(2.0).unwrap(),
-            // },
-            hump_chunk,
-            SpatialHashOffset {
-                translation: Vec3::new(8.0, 0.0, 8.0),
+            Cylinder {
+                height: NotNan::new(2.5).unwrap(),
+                radius: NotNan::new(0.5).unwrap(),
             },
             Position {
                 translation: Vec3::new(-2.0, 5.0, 5.0),
@@ -97,21 +76,18 @@ fn setup_player(mut commands: Commands, block_registry: Res<BlockRegistry>) {
             Transform::default(),
             GlobalTransform::default(),
             MovementControl,
+            LoadsTerrain { radius: 4 },
         ))
         .with_children(|parent| {
             parent
                 .spawn((
-                    Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
+                    Transform::from_translation(Vec3::new(0.0, 2.0, 0.0)),
                     GlobalTransform::default(),
                     MovementControl,
                 ))
                 .with_children(|parent| {
                     parent.spawn((Camera3dBundle {
-                        transform: Transform::from_translation(Vec3::new(
-                            0.0 + 0.1,
-                            2.0,
-                            0.0 + 32.0,
-                        )),
+                        transform: Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
                         ..Default::default()
                     },));
                 });
@@ -231,9 +207,9 @@ impl Plugin for PlayerPlugin {
         app.init_resource::<InputState>()
             .init_resource::<MovementSettings>()
             .add_startup_system(initial_grab_cursor)
-            .add_system(player_look)
-            .add_system(player_turn)
-            .add_system(player_move)
+            .add_system(player_look.after(update_input_state))
+            .add_system(player_turn.after(update_input_state))
+            .add_system(player_move.after(update_input_state))
             .add_system(update_input_state) // TODO should happen before movement update.
             .add_system(cursor_grab);
     }

@@ -2,7 +2,7 @@ use super::{
     terrain_file::{TerrainFile, ToLoad},
     Chunk, ChunkBundle, ChunkIndex, ChunkPosition,
 };
-use crate::physics::{Position, SpatialHashOffset};
+use crate::physics::Position;
 use bevy::{prelude::*, time::FixedTimestep};
 use std::collections::HashMap;
 
@@ -32,16 +32,16 @@ pub struct TerrainSpace {
     loaded_terrain: HashMap<ChunkIndex, Entity>,
 }
 
-#[derive(Component)]
-pub struct ParentTerrainSpace {
-    parent: Entity,
-}
+// #[derive(Component)]
+// pub struct ParentTerrainSpace {
+//     parent: Entity,
+// }
 
-impl ParentTerrainSpace {
-    pub fn get(&self) -> Entity {
-        self.parent
-    }
-}
+// impl ParentTerrainSpace {
+//     pub fn get(&self) -> Entity {
+//         self.parent
+//     }
+// }
 
 impl TerrainSpace {
     fn load_chunk(
@@ -65,23 +65,15 @@ impl TerrainSpace {
                 false
             }
             std::collections::hash_map::Entry::Vacant(to_load) => {
-                let position = chunk_position.as_position();
-
                 let mut entity = commands.spawn((
                     ChunkBundle {
                         chunk: Chunk::new(None),
-                        transform: Transform::default(),
-                        position,
                         chunk_position,
-                        offset: SpatialHashOffset {
-                            translation: Vec3::new(8.0, 0.0, 8.0),
-                        },
+                        ..Default::default()
                     },
                     ToLoad, // Mark that this terrain needs to be loaded.
-                    ParentTerrainSpace {
-                        parent: space_entity,
-                    },
                 ));
+                entity.set_parent(space_entity);
 
                 if let Some(despawn_deadline) = despawn_deadline {
                     entity.insert(ActiveTerrainTimer {
@@ -106,9 +98,27 @@ pub struct TerrainSpaceBundle {
     pub terrain_space: TerrainSpace,
     pub position: Position,
     pub file: TerrainFile,
+    pub transform: Transform,
     pub global_transform: GlobalTransform,
     pub visibility: Visibility,
     pub computed_visibility: ComputedVisibility,
+}
+
+impl Default for TerrainSpaceBundle {
+    fn default() -> Self {
+        Self {
+            terrain_space: Default::default(),
+            position: Position {
+                translation: Vec3::ZERO,
+                rotation: 0.0,
+            },
+            file: TerrainFile::new(), // TODO I need a way to set this to None.
+            transform: Default::default(),
+            global_transform: Default::default(),
+            visibility: Default::default(),
+            computed_visibility: Default::default(),
+        }
+    }
 }
 
 fn load_all_terrain(
@@ -144,8 +154,8 @@ fn load_terrain(
 
     for (space_entity, space_position, mut space, _terrain_file) in terrain_spaces.iter_mut() {
         for (loader_position, loads_terrain) in terrain_loaders.iter() {
-            let loader_position_in_chunk_space = space_position.inverse_quat()
-                * (loader_position.translation - space_position.translation);
+            let loader_position_in_chunk_space =
+                space_position.quat() * (loader_position.translation - space_position.translation);
             let chunk_index =
                 (loader_position_in_chunk_space / Chunk::CHUNK_DIAMETER as f32).as_ivec3();
 
@@ -174,7 +184,7 @@ fn clean_up_chunks(
         With<Chunk>,
         &ActiveTerrainTimer,
         &ChunkPosition,
-        &ParentTerrainSpace,
+        &Parent,
     )>,
     mut terrain_spaces: Query<&mut TerrainSpace>,
     mut terrain_time: ResMut<TerrainTime>,

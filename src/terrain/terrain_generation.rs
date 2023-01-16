@@ -1,11 +1,9 @@
 use bevy::prelude::*;
 
-use super::{
-    terrain_space::ParentTerrainSpace, Block, BlockLocalCoordinate, Chunk, ChunkIndex,
-    ChunkPosition, UpdateMesh,
-};
+use crate::physics::SpatialHashOffset;
 
-// TODO should this be configurable? Maybe something to auto benchmark on startup?
+use super::{Block, BlockLocalCoordinate, Chunk, ChunkIndex, ChunkPosition, UpdateMesh};
+
 const GENERATION_BATCH_SIZE: usize = 1;
 
 #[derive(Component)]
@@ -29,8 +27,8 @@ fn flat_world_generator(chunk_index: ChunkIndex, chunk: &mut Chunk, context: &Fl
 
     if chunk_index.y == 0 {
         for (_position, block) in chunk.iter_range_mut(
-            IVec3::new(0, 0, 0),
-            IVec3::new(
+            BlockLocalCoordinate::new(0, 0, 0),
+            BlockLocalCoordinate::new(
                 Chunk::CHUNK_DIAMETER as i32,
                 1,
                 Chunk::CHUNK_DIAMETER as i32,
@@ -55,7 +53,7 @@ fn new_terrain_generator<C, F>(
         Entity,
         &ChunkPosition,
         &mut Chunk,
-        &ParentTerrainSpace,
+        &Parent,
         With<ToGenerate>,
     )>,
 )
@@ -69,10 +67,11 @@ where
         Entity,
         &ChunkPosition,
         &mut Chunk,
-        &ParentTerrainSpace,
+        &Parent,
         With<ToGenerate>,
     )>| {
         // First, generate all the terrain.
+        // TODO the generation calls should be done outside of the ECS so that this system becomes non-blocking.
         to_generate.par_for_each_mut(
             GENERATION_BATCH_SIZE,
             |(_entity, position, mut chunk, parent, _to_generate)| {
@@ -86,11 +85,14 @@ where
         // Now that they're all generated, we can remove the tags to generate the chunks.
         // We have to do this now rather than with the generation because the command queue can't be shared between
         // threads in an efficient way.
-        for (entity, _position, _chunk, _parent, _to_generate) in to_generate.iter_mut() {
-            commands
-                .entity(entity)
-                .remove::<ToGenerate>()
-                .insert(UpdateMesh);
+        for (entity, position, _chunk, _parent, _to_generate) in to_generate.iter_mut() {
+            commands.entity(entity).remove::<ToGenerate>().insert((
+                UpdateMesh,
+                position.as_transform(),
+                SpatialHashOffset {
+                    translation: Vec3::new(8.0, 0.0, 8.0),
+                },
+            ));
         }
     }
 }

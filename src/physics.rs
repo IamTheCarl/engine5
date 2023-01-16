@@ -1,4 +1,4 @@
-use crate::terrain::{BlockLocalCoordinate, Chunk};
+use crate::terrain::{BlockLocalCoordinate, Chunk, ChunkPosition, TerrainSpace};
 use bevy::{math::Vec3Swizzles, prelude::*};
 use bevy_prototype_debug_lines::DebugLines;
 use ordered_float::NotNan;
@@ -358,226 +358,227 @@ fn compute_cylinder_to_cylinder_intersections(
 
 fn compute_cylinder_to_terrain_intersections(
     mut cylinders: Query<(With<SpatialHash>, &mut Position, &Cylinder)>,
-    terrain: Query<(&SpatialHash, &Position, &Chunk, Without<Cylinder>)>,
+    terrain_space: Query<(&TerrainSpace, &Position, Without<Cylinder>)>,
+    terrain: Query<(&ChunkPosition, &Chunk, Without<Cylinder>)>,
     spatial_object_tracker: Res<SpatialObjectTracker>,
     debug_render_settings: Res<DebugRenderSettings>,
     mut lines: ResMut<DebugLines>,
 ) {
-    for (terrain_spatial_hash, terrain_position, terrain, _) in terrain.iter() {
-        let terrain_quat = terrain_position.quat();
+    // for (terrain_spatial_hash, terrain_position, terrain, _) in terrain.iter() {
+    //     let terrain_quat = terrain_position.quat();
 
-        let mut block_scan_set = HashSet::new();
+    //     let mut block_scan_set = HashSet::new();
 
-        spatial_object_tracker.get_ballpark(terrain_spatial_hash, |maybe_cylinder_entity| {
-            // Need to make sure it's actually a cylinder.
-            if let Ok((_cylinder_spatial_hash, mut cylinder_position, cylinder)) =
-                cylinders.get_mut(*maybe_cylinder_entity)
-            {
-                // Translate cylinder space into chunk local space.
-                let localized_cylinder_position =
-                    cylinder_position.translation - terrain_position.translation;
+    //     spatial_object_tracker.get_ballpark(terrain_spatial_hash, |maybe_cylinder_entity| {
+    //         // Need to make sure it's actually a cylinder.
+    //         if let Ok((_cylinder_spatial_hash, mut cylinder_position, cylinder)) =
+    //             cylinders.get_mut(*maybe_cylinder_entity)
+    //         {
+    //             // Translate cylinder space into chunk local space.
+    //             let localized_cylinder_position =
+    //                 cylinder_position.translation - terrain_position.translation;
 
-                // Rotate cylinder space into chunk local space.
-                let localized_cylinder_position = terrain_quat * localized_cylinder_position;
-                let block_localized_cylinder_position = localized_cylinder_position.floor();
+    //             // Rotate cylinder space into chunk local space.
+    //             let localized_cylinder_position = terrain_quat * localized_cylinder_position;
+    //             let block_localized_cylinder_position = localized_cylinder_position.floor();
 
-                let scan_x_radius = cylinder.radius.ceil() as i8 + 1;
-                let z_range_squared = ((scan_x_radius) as f32).powi(2);
+    //             let scan_x_radius = cylinder.radius.ceil() as i8 + 1;
+    //             let z_range_squared = ((scan_x_radius) as f32).powi(2);
 
-                // TODO cache this as an asset? Can we make it not require the hashset instead?
-                for x in -scan_x_radius..=scan_x_radius {
-                    let scan_z_radius = (z_range_squared - (x as f32).powi(2)).sqrt().floor() as i8;
+    //             // TODO cache this as an asset? Can we make it not require the hashset instead?
+    //             for x in -scan_x_radius..=scan_x_radius {
+    //                 let scan_z_radius = (z_range_squared - (x as f32).powi(2)).sqrt().floor() as i8;
 
-                    for z in -scan_z_radius..=scan_z_radius {
-                        block_scan_set.insert((
-                            NotNan::new(x as f32).unwrap(),
-                            NotNan::new(z as f32).unwrap(),
-                        ));
-                    }
-                }
+    //                 for z in -scan_z_radius..=scan_z_radius {
+    //                     block_scan_set.insert((
+    //                         NotNan::new(x as f32).unwrap(),
+    //                         NotNan::new(z as f32).unwrap(),
+    //                     ));
+    //                 }
+    //             }
 
-                let mut normal_accumulator = NormalAccumulator::new();
+    //             let mut normal_accumulator = NormalAccumulator::new();
 
-                let rounded_height = cylinder.height.ceil() as i8;
+    //             let rounded_height = cylinder.height.ceil() as i8;
 
-                for (x, z) in block_scan_set.iter() {
-                    let block_index_unrounded =
-                        Vec3::new(**x, 0.0, **z) + block_localized_cylinder_position;
+    //             for (x, z) in block_scan_set.iter() {
+    //                 let block_index_unrounded =
+    //                     Vec3::new(**x, 0.0, **z) + block_localized_cylinder_position;
 
-                    let closest_point = localized_cylinder_position
-                        .clamp(block_index_unrounded, block_index_unrounded + Vec3::ONE);
+    //                 let closest_point = localized_cylinder_position
+    //                     .clamp(block_index_unrounded, block_index_unrounded + Vec3::ONE);
 
-                    let terrain_color = Color::Hsla {
-                        hue: terrain_position.rotation.to_degrees(),
-                        saturation: 1.0,
-                        lightness: 0.5,
-                        alpha: 1.0,
-                    };
+    //                 let terrain_color = Color::Hsla {
+    //                     hue: terrain_position.rotation.to_degrees(),
+    //                     saturation: 1.0,
+    //                     lightness: 0.5,
+    //                     alpha: 1.0,
+    //                 };
 
-                    let collision_normal = localized_cylinder_position - closest_point;
+    //                 let collision_normal = localized_cylinder_position - closest_point;
 
-                    if debug_render_settings.cylinder_terrain_checks {
-                        let point = (terrain_position.inverse_quat() * closest_point)
-                            + terrain_position.translation;
-                        let collision_normal = terrain_position.inverse_quat() * collision_normal;
+    //                 if debug_render_settings.cylinder_terrain_checks {
+    //                     let point = (terrain_position.inverse_quat() * closest_point)
+    //                         + terrain_position.translation;
+    //                     let collision_normal = terrain_position.inverse_quat() * collision_normal;
 
-                        lines.line_colored(point, point + collision_normal, 0.0, terrain_color);
-                    }
+    //                     lines.line_colored(point, point + collision_normal, 0.0, terrain_color);
+    //                 }
 
-                    // Okay actually make it 2D now.
-                    let collision_normal = collision_normal.xz();
-                    let collision_depth = collision_normal.length();
+    //                 // Okay actually make it 2D now.
+    //                 let collision_normal = collision_normal.xz();
+    //                 let collision_depth = collision_normal.length();
 
-                    // It's possible for this block column to have collisions.
-                    if collision_depth <= *cylinder.radius {
-                        for layer in 0..=rounded_height {
-                            let block_index_unrounded =
-                                block_index_unrounded + Vec3::new(0.0, layer as f32, 0.0);
+    //                 // It's possible for this block column to have collisions.
+    //                 if collision_depth <= *cylinder.radius {
+    //                     for layer in 0..=rounded_height {
+    //                         let block_index_unrounded =
+    //                             block_index_unrounded + Vec3::new(0.0, layer as f32, 0.0);
 
-                            // We don't need to worry about an integer overflow here because the broadphase won't let us compare
-                            // to terrain that far away from a cylinder.
-                            let block_index = block_index_unrounded.as_ivec3();
+    //                         // We don't need to worry about an integer overflow here because the broadphase won't let us compare
+    //                         // to terrain that far away from a cylinder.
+    //                         let block_index = block_index_unrounded.as_ivec3();
 
-                            if terrain.get_block_local(block_index).is_some()
-                                && collision_depth > 0.0
-                            {
-                                let normal = collision_normal.normalize() * *cylinder.radius
-                                    - collision_normal;
+    //                         if terrain.get_block_local(block_index).is_some()
+    //                             && collision_depth > 0.0
+    //                         {
+    //                             let normal = collision_normal.normalize() * *cylinder.radius
+    //                                 - collision_normal;
 
-                                let block_side_direction = normal.normalize();
-                                let block_side_direction = if block_side_direction.x.abs()
-                                    > block_side_direction.y.abs()
-                                {
-                                    BlockLocalCoordinate::new(
-                                        block_side_direction.x.signum() as i32,
-                                        0,
-                                        0,
-                                    )
-                                } else {
-                                    BlockLocalCoordinate::new(
-                                        0,
-                                        0,
-                                        block_side_direction.y.signum() as i32,
-                                    )
-                                };
+    //                             let block_side_direction = normal.normalize();
+    //                             let block_side_direction = if block_side_direction.x.abs()
+    //                                 > block_side_direction.y.abs()
+    //                             {
+    //                                 BlockLocalCoordinate::new(
+    //                                     block_side_direction.x.signum() as i32,
+    //                                     0,
+    //                                     0,
+    //                                 )
+    //                             } else {
+    //                                 BlockLocalCoordinate::new(
+    //                                     0,
+    //                                     0,
+    //                                     block_side_direction.y.signum() as i32,
+    //                                 )
+    //                             };
 
-                                let y_collision_depth = if localized_cylinder_position.y
-                                    > block_index.y as f32
-                                {
-                                    1.0 - (localized_cylinder_position.y - block_index.y as f32)
-                                } else {
-                                    -(*cylinder.height
-                                        - (block_index.y as f32 - localized_cylinder_position.y))
-                                };
+    //                             let y_collision_depth = if localized_cylinder_position.y
+    //                                 > block_index.y as f32
+    //                             {
+    //                                 1.0 - (localized_cylinder_position.y - block_index.y as f32)
+    //                             } else {
+    //                                 -(*cylinder.height
+    //                                     - (block_index.y as f32 - localized_cylinder_position.y))
+    //                             };
 
-                                let is_block_to_side = terrain
-                                    .get_block_local(block_index + block_side_direction)
-                                    .is_some();
+    //                             let is_block_to_side = terrain
+    //                                 .get_block_local(block_index + block_side_direction)
+    //                                 .is_some();
 
-                                let is_block_to_top_or_bottom = terrain
-                                    .get_block_local(
-                                        block_index
-                                            + BlockLocalCoordinate::new(
-                                                0,
-                                                y_collision_depth.signum() as i32,
-                                                0,
-                                            ),
-                                    )
-                                    .is_some();
+    //                             let is_block_to_top_or_bottom = terrain
+    //                                 .get_block_local(
+    //                                     block_index
+    //                                         + BlockLocalCoordinate::new(
+    //                                             0,
+    //                                             y_collision_depth.signum() as i32,
+    //                                             0,
+    //                                         ),
+    //                                 )
+    //                                 .is_some();
 
-                                // Add in Y component.
-                                let normal = {
-                                    if debug_render_settings.cylinder_terrain_checks {
-                                        let point = (terrain_position.inverse_quat()
-                                            * closest_point)
-                                            + terrain_position.translation;
+    //                             // Add in Y component.
+    //                             let normal = {
+    //                                 if debug_render_settings.cylinder_terrain_checks {
+    //                                     let point = (terrain_position.inverse_quat()
+    //                                         * closest_point)
+    //                                         + terrain_position.translation;
 
-                                        let color = if y_collision_depth.abs() < normal.length() {
-                                            Color::PURPLE
-                                        } else {
-                                            Color::CYAN
-                                        };
+    //                                     let color = if y_collision_depth.abs() < normal.length() {
+    //                                         Color::PURPLE
+    //                                     } else {
+    //                                         Color::CYAN
+    //                                     };
 
-                                        lines.line_colored(
-                                            point,
-                                            point
-                                                + Vec3::new(normal.x, y_collision_depth, normal.y),
-                                            0.0,
-                                            color,
-                                        );
+    //                                     lines.line_colored(
+    //                                         point,
+    //                                         point
+    //                                             + Vec3::new(normal.x, y_collision_depth, normal.y),
+    //                                         0.0,
+    //                                         color,
+    //                                     );
 
-                                        let point = (terrain_position.inverse_quat()
-                                            * (block_index_unrounded.floor()
-                                                + Vec3::new(0.5, 0.0, 0.5)))
-                                            + terrain_position.translation;
+    //                                     let point = (terrain_position.inverse_quat()
+    //                                         * (block_index_unrounded.floor()
+    //                                             + Vec3::new(0.5, 0.0, 0.5)))
+    //                                         + terrain_position.translation;
 
-                                        lines.line_colored(point, point + Vec3::Y, 0.0, color);
+    //                                     lines.line_colored(point, point + Vec3::Y, 0.0, color);
 
-                                        lines.line_colored(
-                                            point,
-                                            point
-                                                + terrain_position.inverse_quat()
-                                                    * Vec3::new(
-                                                        block_side_direction.x as f32,
-                                                        block_side_direction.y as f32,
-                                                        block_side_direction.z as f32,
-                                                    ),
-                                            0.0,
-                                            Color::PINK,
-                                        );
+    //                                     lines.line_colored(
+    //                                         point,
+    //                                         point
+    //                                             + terrain_position.inverse_quat()
+    //                                                 * Vec3::new(
+    //                                                     block_side_direction.x as f32,
+    //                                                     block_side_direction.y as f32,
+    //                                                     block_side_direction.z as f32,
+    //                                                 ),
+    //                                         0.0,
+    //                                         Color::PINK,
+    //                                     );
 
-                                        let point = (terrain_position.inverse_quat()
-                                            * (block_index_unrounded.floor()
-                                                + Vec3::new(0.5, 0.5, 0.5)))
-                                            + terrain_position.translation;
+    //                                     let point = (terrain_position.inverse_quat()
+    //                                         * (block_index_unrounded.floor()
+    //                                             + Vec3::new(0.5, 0.5, 0.5)))
+    //                                         + terrain_position.translation;
 
-                                        lines.line_colored(
-                                            point,
-                                            point
-                                                + terrain_position.inverse_quat()
-                                                    * Vec3::new(
-                                                        0.0,
-                                                        y_collision_depth.signum(),
-                                                        0.0,
-                                                    ),
-                                            0.0,
-                                            Color::CRIMSON,
-                                        );
-                                    }
+    //                                     lines.line_colored(
+    //                                         point,
+    //                                         point
+    //                                             + terrain_position.inverse_quat()
+    //                                                 * Vec3::new(
+    //                                                     0.0,
+    //                                                     y_collision_depth.signum(),
+    //                                                     0.0,
+    //                                                 ),
+    //                                         0.0,
+    //                                         Color::CRIMSON,
+    //                                     );
+    //                                 }
 
-                                    if (y_collision_depth.abs() < normal.length()
-                                        || (is_block_to_side && y_collision_depth.abs() < 0.1))
-                                        && !is_block_to_top_or_bottom
-                                    {
-                                        Vec3::new(0.0, y_collision_depth, 0.0)
-                                    } else if normal.x.abs() > normal.y.abs() {
-                                        Vec3::new(normal.x, 0.0, 0.0)
-                                    } else {
-                                        Vec3::new(0.0, 0.0, normal.y)
-                                    }
-                                };
+    //                                 if (y_collision_depth.abs() < normal.length()
+    //                                     || (is_block_to_side && y_collision_depth.abs() < 0.1))
+    //                                     && !is_block_to_top_or_bottom
+    //                                 {
+    //                                     Vec3::new(0.0, y_collision_depth, 0.0)
+    //                                 } else if normal.x.abs() > normal.y.abs() {
+    //                                     Vec3::new(normal.x, 0.0, 0.0)
+    //                                 } else {
+    //                                     Vec3::new(0.0, 0.0, normal.y)
+    //                                 }
+    //                             };
 
-                                normal_accumulator.add_normal(normal);
+    //                             normal_accumulator.add_normal(normal);
 
-                                debug_assert!(!cylinder_position.translation.is_nan());
-                            }
-                        }
-                    }
-                }
+    //                             debug_assert!(!cylinder_position.translation.is_nan());
+    //                         }
+    //                     }
+    //                 }
+    //             }
 
-                // Apply our collisions.
-                let true_normal = normal_accumulator.compute_true_normal();
+    //             // Apply our collisions.
+    //             let true_normal = normal_accumulator.compute_true_normal();
 
-                let true_normal = terrain_position.inverse_quat() * true_normal; // Rotate back into global space.
+    //             let true_normal = terrain_position.inverse_quat() * true_normal; // Rotate back into global space.
 
-                cylinder_position.translation += true_normal;
+    //             cylinder_position.translation += true_normal;
 
-                // We're going to reuse these buffers.
-                block_scan_set.clear();
-                // collision_normals.clear();
-            }
-        });
-    }
+    //             // We're going to reuse these buffers.
+    //             block_scan_set.clear();
+    //             // collision_normals.clear();
+    //         }
+    //     });
+    // }
 }
 
 fn compute_terrain_to_terrain_intersections(
@@ -913,7 +914,7 @@ impl Plugin for PhysicsPlugin {
                 // TODO make this accessible from a menu or terminal.
                 commands.insert_resource(DebugRenderSettings {
                     cylinders: true,
-                    cylinder_terrain_checks: false,
+                    cylinder_terrain_checks: true,
                     hashing_center_point: false,
                     cylinder_cylinder_checks: false,
                     terrain_terrain_checks: true,

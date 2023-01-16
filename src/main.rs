@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use bevy_prototype_debug_lines::DebugLinesPlugin;
-use physics::Position;
+use physics::{Position, Velocity};
 use terrain::{BlockRegistry, BlockTag, FlatWorld, TerrainFile, TerrainSpace, TerrainSpaceBundle};
 // use bevy_flycam::PlayerPlugin;
 
@@ -74,12 +74,17 @@ fn setup(
                 rotation: 0.0,
             },
             file: TerrainFile::new(),
+            transform: Transform::default(),
             global_transform: GlobalTransform::default(),
             visibility: Visibility { is_visible: true },
             computed_visibility: ComputedVisibility::default(),
         },
         FlatWorld {
             block: default_block,
+        },
+        Velocity {
+            translation: Vec3::ZERO,
+            rotational: 1.0,
         },
     ));
 }

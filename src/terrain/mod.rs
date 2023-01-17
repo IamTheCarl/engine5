@@ -17,13 +17,11 @@ use std::{borrow::Cow, collections::HashMap, num::NonZeroU16, ops::Range, str::F
 use thiserror::Error;
 use wgpu::{TextureDimension, TextureFormat};
 
-use crate::physics::{Position, SpatialHashOffset};
-
 mod terrain_file;
 pub use terrain_file::TerrainFile;
 
 mod terrain_generation;
-pub use terrain_generation::{EmptyWorld, FlatWorld};
+pub use terrain_generation::*;
 
 mod terrain_space;
 pub use terrain_space::{LoadAllTerrain, LoadsTerrain, TerrainSpace, TerrainSpaceBundle};
@@ -609,7 +607,7 @@ fn terrain_vertex_encode() {
 
 #[derive(Component, Clone)]
 pub struct Chunk {
-    // FIXME the current convention is z, y, x, for performance, it should be y, z, x.
+    // Blocks are organized as x, z, y.
     blocks: [[[Option<Block>; Self::CHUNK_DIAMETER]; Self::CHUNK_DIAMETER]; Self::CHUNK_DIAMETER],
 }
 
@@ -638,7 +636,7 @@ impl Chunk {
         let y: usize = position.y.try_into().ok()?;
         let z: usize = position.z.try_into().ok()?;
 
-        self.blocks.get(y)?.get(z)?.get(x).and_then(|block| *block)
+        self.blocks.get(x)?.get(z)?.get(y).and_then(|block| *block)
     }
 
     pub fn get_block_local_mut(
@@ -649,13 +647,13 @@ impl Chunk {
         let y: usize = position.y.try_into().ok()?;
         let z: usize = position.z.try_into().ok()?;
 
-        self.blocks.get_mut(y)?.get_mut(z)?.get_mut(x)
+        self.blocks.get_mut(x)?.get_mut(z)?.get_mut(y)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (BlockLocalCoordinate, Option<Block>)> + '_ {
-        self.blocks.iter().enumerate().flat_map(|(y, z_slices)| {
-            z_slices.iter().enumerate().flat_map(move |(z, x_slices)| {
-                x_slices.iter().enumerate().map(move |(x, block)| {
+        self.blocks.iter().enumerate().flat_map(|(x, z_slices)| {
+            z_slices.iter().enumerate().flat_map(move |(z, y_slices)| {
+                y_slices.iter().enumerate().map(move |(y, block)| {
                     (
                         BlockLocalCoordinate::new(x as i32, y as i32, z as i32),
                         *block,
@@ -671,12 +669,12 @@ impl Chunk {
         self.blocks
             .iter_mut()
             .enumerate()
-            .flat_map(|(y, z_slices)| {
+            .flat_map(|(x, z_slices)| {
                 z_slices
                     .iter_mut()
                     .enumerate()
-                    .flat_map(move |(z, x_slices)| {
-                        x_slices.iter_mut().enumerate().map(move |(x, block)| {
+                    .flat_map(move |(z, y_slices)| {
+                        y_slices.iter_mut().enumerate().map(move |(y, block)| {
                             (
                                 BlockLocalCoordinate::new(x as i32, y as i32, z as i32),
                                 block,
@@ -711,23 +709,23 @@ impl Chunk {
         dbg!(lower_bound, upper_bound);
 
         self.blocks
-            .get(to_valid_range(lower_bound.y..upper_bound.y))
+            .get(to_valid_range(lower_bound.x..upper_bound.x))
             .expect("Range validator failed")
             .iter()
             .enumerate()
-            .flat_map(move |(y, z_slices)| {
+            .flat_map(move |(x, z_slices)| {
                 z_slices
                     .get(to_valid_range(lower_bound.z..upper_bound.z))
                     .expect("Range validator failed")
                     .iter()
                     .enumerate()
-                    .flat_map(move |(z, x_slices)| {
-                        x_slices
-                            .get(to_valid_range(lower_bound.x..upper_bound.x))
+                    .flat_map(move |(z, y_slices)| {
+                        y_slices
+                            .get(to_valid_range(lower_bound.y..upper_bound.y))
                             .expect("Range validator failed")
                             .iter()
                             .enumerate()
-                            .map(move |(x, block)| {
+                            .map(move |(y, block)| {
                                 (
                                     BlockLocalCoordinate::new(x as i32, y as i32, z as i32)
                                         + lower_bound,
@@ -753,23 +751,23 @@ impl Chunk {
             .min(IVec3::splat(Self::CHUNK_DIAMETER as i32));
 
         self.blocks
-            .get_mut(to_valid_range(lower_bound.y..upper_bound.y))
+            .get_mut(to_valid_range(lower_bound.x..upper_bound.x))
             .expect("Range validation failed")
             .iter_mut()
             .enumerate()
-            .flat_map(move |(y, z_slices)| {
+            .flat_map(move |(x, z_slices)| {
                 z_slices
                     .get_mut(to_valid_range(lower_bound.z..upper_bound.z))
                     .expect("Range validation failed")
                     .iter_mut()
                     .enumerate()
-                    .flat_map(move |(z, x_slices)| {
-                        x_slices
-                            .get_mut(to_valid_range(lower_bound.x..upper_bound.x))
+                    .flat_map(move |(z, y_slices)| {
+                        y_slices
+                            .get_mut(to_valid_range(lower_bound.y..upper_bound.y))
                             .expect("Range validation failed")
                             .iter_mut()
                             .enumerate()
-                            .map(move |(x, block)| {
+                            .map(move |(y, block)| {
                                 (
                                     BlockLocalCoordinate::new(x as i32, y as i32, z as i32)
                                         + lower_bound,
@@ -777,6 +775,20 @@ impl Chunk {
                                 )
                             })
                     })
+            })
+    }
+
+    fn iter_columns_mut(
+        &mut self,
+    ) -> impl Iterator<Item = (IVec2, &mut [Option<Block>; Self::CHUNK_DIAMETER])> {
+        self.blocks
+            .iter_mut()
+            .enumerate()
+            .flat_map(|(x, z_slices)| {
+                z_slices
+                    .iter_mut()
+                    .enumerate()
+                    .map(move |(z, column)| (IVec2::new(x as i32, z as i32), column))
             })
     }
 
@@ -1390,6 +1402,10 @@ impl ChunkPosition {
         Transform::from_translation(
             self.index.as_vec3() * Vec3::splat(Chunk::CHUNK_DIAMETER as f32),
         )
+    }
+
+    pub fn as_block_coordinate(&self) -> BlockCoordinate {
+        self.index * IVec3::splat(Chunk::CHUNK_DIAMETER as i32)
     }
 }
 

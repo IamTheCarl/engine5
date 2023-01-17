@@ -37,12 +37,6 @@ fn load_terrain(
     }
 }
 
-// fn update_chunk_positions(
-//     mut commands: Commands,
-//     chunks: Query<(Entity, With<Chunk>, &ChunkPosition)>,
-// ) {
-// }
-
 pub fn register_terrain_files(app: &mut App) {
     app.add_system(load_terrain);
 }

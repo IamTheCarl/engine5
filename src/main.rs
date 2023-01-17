@@ -1,7 +1,9 @@
 use bevy::prelude::*;
 use bevy_prototype_debug_lines::DebugLinesPlugin;
 use physics::{Position, Velocity};
-use terrain::{BlockRegistry, BlockTag, FlatWorld, TerrainFile, TerrainSpace, TerrainSpaceBundle};
+use terrain::{
+    BlockRegistry, BlockTag, OscillatingHills, TerrainFile, TerrainSpace, TerrainSpaceBundle,
+};
 // use bevy_flycam::PlayerPlugin;
 
 mod physics;
@@ -79,8 +81,10 @@ fn setup(
             visibility: Visibility { is_visible: true },
             computed_visibility: ComputedVisibility::default(),
         },
-        FlatWorld {
+        OscillatingHills {
             block: default_block,
+            rate: 512,
+            depth: 16,
         },
         Velocity {
             translation: Vec3::ZERO,

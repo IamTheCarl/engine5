@@ -6,7 +6,7 @@ use crate::physics::Position;
 use bevy::{prelude::*, time::FixedTimestep};
 use std::collections::HashMap;
 
-const CHUNK_TIME_TO_LIVE_SECONDS: usize = 5;
+const CHUNK_TIME_TO_LIVE_MS: usize = 5;
 
 #[derive(Component)]
 pub struct LoadsTerrain {
@@ -150,7 +150,7 @@ fn load_terrain(
     mut terrain_spaces: Query<(Entity, &Position, &mut TerrainSpace, With<TerrainFile>)>,
     terrain_time: Res<TerrainTime>,
 ) {
-    let despawn_deadline = terrain_time.time + CHUNK_TIME_TO_LIVE_SECONDS;
+    let despawn_deadline = terrain_time.time + CHUNK_TIME_TO_LIVE_MS;
 
     for (space_entity, space_position, mut space, _terrain_file) in terrain_spaces.iter_mut() {
         for (loader_position, loads_terrain) in terrain_loaders.iter() {
@@ -225,6 +225,6 @@ pub fn register_terrain_space(app: &mut App) {
     app.add_system(
         clean_up_chunks
             .after(load_terrain)
-            .with_run_criteria(FixedTimestep::step(1.0)),
+            .with_run_criteria(FixedTimestep::step(0.1)),
     );
 }

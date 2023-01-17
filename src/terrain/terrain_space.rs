@@ -156,13 +156,19 @@ fn load_terrain(
         for (loader_position, loads_terrain) in terrain_loaders.iter() {
             let loader_position_in_chunk_space =
                 space_position.quat() * (loader_position.translation - space_position.translation);
-            let chunk_index =
+            let base_chunk_index =
                 (loader_position_in_chunk_space / Chunk::CHUNK_DIAMETER as f32).as_ivec3();
 
+            let radius_squared = (loads_terrain.radius * loads_terrain.radius) as f32;
             for x in -loads_terrain.radius..loads_terrain.radius {
-                for z in -loads_terrain.radius..loads_terrain.radius {
-                    for y in -loads_terrain.radius..loads_terrain.radius {
-                        let chunk_index = chunk_index + ChunkIndex::new(x, y, z);
+                let z_range = (radius_squared - (x * x) as f32).sqrt().ceil() as i32;
+                for z in -z_range..z_range {
+                    let y_range = (radius_squared - (x * x) as f32 - (z * z) as f32)
+                        .sqrt()
+                        .ceil() as i32;
+
+                    for y in -y_range..y_range {
+                        let chunk_index = base_chunk_index + ChunkIndex::new(x, y, z);
 
                         space.load_chunk(
                             &mut commands,

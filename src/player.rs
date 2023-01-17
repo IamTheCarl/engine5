@@ -76,7 +76,7 @@ fn setup_player(mut commands: Commands) {
             Transform::default(),
             GlobalTransform::default(),
             MovementControl,
-            LoadsTerrain { radius: 4 },
+            LoadsTerrain { radius: 8 },
         ))
         .with_children(|parent| {
             parent

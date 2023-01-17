@@ -27,8 +27,8 @@ mod terrain_space;
 pub use terrain_space::{LoadAllTerrain, LoadsTerrain, TerrainSpace, TerrainSpaceBundle};
 
 type BlockID = NonZeroU16;
-pub type BlockCoordinate = IVec3;
-pub type BlockLocalCoordinate = IVec3;
+pub type GlobalBlockCoordinate = IVec3;
+pub type LocalBlockCoordinate = IVec3; // TODO consider making this an unsigned type.
 
 #[derive(Clone, Copy, Debug)]
 pub enum BlockDirection {
@@ -608,30 +608,33 @@ fn terrain_vertex_encode() {
 #[derive(Component, Clone)]
 pub struct Chunk {
     // Blocks are organized as x, z, y.
-    blocks: [[[Option<Block>; Self::CHUNK_DIAMETER]; Self::CHUNK_DIAMETER]; Self::CHUNK_DIAMETER],
+    blocks: [[[Option<Block>; Self::CHUNK_DIAMETER as usize]; Self::CHUNK_DIAMETER as usize];
+        Self::CHUNK_DIAMETER as usize],
 }
 
 impl Chunk {
-    pub const CHUNK_DIAMETER: usize = 16;
+    pub const CHUNK_BIT_SHIFT: u32 = 4;
+    pub const CHUNK_DIAMETER: i32 = 1 << Self::CHUNK_BIT_SHIFT as i32;
 
     pub fn new(block: Option<Block>) -> Self {
         Self {
-            blocks: [[[block; Self::CHUNK_DIAMETER]; Self::CHUNK_DIAMETER]; Self::CHUNK_DIAMETER],
+            blocks: [[[block; Self::CHUNK_DIAMETER as usize]; Self::CHUNK_DIAMETER as usize];
+                Self::CHUNK_DIAMETER as usize],
         }
     }
 
     fn get_neighbor(
         &self,
-        position: BlockLocalCoordinate,
+        position: LocalBlockCoordinate,
         direction: BlockDirection,
     ) -> Option<Block> {
-        let offset: BlockLocalCoordinate = direction.into();
+        let offset: LocalBlockCoordinate = direction.into();
         let new_position = position + offset;
 
         self.get_block_local(new_position)
     }
 
-    pub fn get_block_local(&self, position: BlockLocalCoordinate) -> Option<Block> {
+    pub fn get_block_local(&self, position: LocalBlockCoordinate) -> Option<Block> {
         let x: usize = position.x.try_into().ok()?;
         let y: usize = position.y.try_into().ok()?;
         let z: usize = position.z.try_into().ok()?;
@@ -641,7 +644,7 @@ impl Chunk {
 
     pub fn get_block_local_mut(
         &mut self,
-        position: BlockLocalCoordinate,
+        position: LocalBlockCoordinate,
     ) -> Option<&mut Option<Block>> {
         let x: usize = position.x.try_into().ok()?;
         let y: usize = position.y.try_into().ok()?;
@@ -650,12 +653,12 @@ impl Chunk {
         self.blocks.get_mut(x)?.get_mut(z)?.get_mut(y)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (BlockLocalCoordinate, Option<Block>)> + '_ {
+    pub fn iter(&self) -> impl Iterator<Item = (LocalBlockCoordinate, Option<Block>)> + '_ {
         self.blocks.iter().enumerate().flat_map(|(x, z_slices)| {
             z_slices.iter().enumerate().flat_map(move |(z, y_slices)| {
                 y_slices.iter().enumerate().map(move |(y, block)| {
                     (
-                        BlockLocalCoordinate::new(x as i32, y as i32, z as i32),
+                        LocalBlockCoordinate::new(x as i32, y as i32, z as i32),
                         *block,
                     )
                 })
@@ -665,7 +668,7 @@ impl Chunk {
 
     pub fn iter_mut(
         &mut self,
-    ) -> impl Iterator<Item = (BlockLocalCoordinate, &mut Option<Block>)> + '_ {
+    ) -> impl Iterator<Item = (LocalBlockCoordinate, &mut Option<Block>)> + '_ {
         self.blocks
             .iter_mut()
             .enumerate()
@@ -676,7 +679,7 @@ impl Chunk {
                     .flat_map(move |(z, y_slices)| {
                         y_slices.iter_mut().enumerate().map(move |(y, block)| {
                             (
-                                BlockLocalCoordinate::new(x as i32, y as i32, z as i32),
+                                LocalBlockCoordinate::new(x as i32, y as i32, z as i32),
                                 block,
                             )
                         })
@@ -688,7 +691,7 @@ impl Chunk {
         &self,
         point_a: Vec3,
         point_b: Vec3,
-    ) -> impl Iterator<Item = (BlockLocalCoordinate, Option<Block>)> + '_ {
+    ) -> impl Iterator<Item = (LocalBlockCoordinate, Option<Block>)> + '_ {
         fn to_valid_range(range: Range<i32>) -> Range<usize> {
             dbg!(dbg!(range.start) as usize..dbg!(range.end) as usize)
         }
@@ -727,7 +730,7 @@ impl Chunk {
                             .enumerate()
                             .map(move |(y, block)| {
                                 (
-                                    BlockLocalCoordinate::new(x as i32, y as i32, z as i32)
+                                    LocalBlockCoordinate::new(x as i32, y as i32, z as i32)
                                         + lower_bound,
                                     *block,
                                 )
@@ -740,15 +743,13 @@ impl Chunk {
         &mut self,
         point_a: IVec3,
         point_b: IVec3,
-    ) -> impl Iterator<Item = (BlockLocalCoordinate, &mut Option<Block>)> + '_ {
+    ) -> impl Iterator<Item = (LocalBlockCoordinate, &mut Option<Block>)> + '_ {
         fn to_valid_range(range: Range<i32>) -> Range<usize> {
             range.start as usize..range.end as usize
         }
 
         let lower_bound = point_a.min(point_b).max(IVec3::splat(0));
-        let upper_bound = point_a
-            .max(point_b)
-            .min(IVec3::splat(Self::CHUNK_DIAMETER as i32));
+        let upper_bound = point_a.max(point_b).min(IVec3::splat(Self::CHUNK_DIAMETER));
 
         self.blocks
             .get_mut(to_valid_range(lower_bound.x..upper_bound.x))
@@ -769,7 +770,7 @@ impl Chunk {
                             .enumerate()
                             .map(move |(y, block)| {
                                 (
-                                    BlockLocalCoordinate::new(x as i32, y as i32, z as i32)
+                                    LocalBlockCoordinate::new(x as i32, y as i32, z as i32)
                                         + lower_bound,
                                     block,
                                 )
@@ -780,7 +781,7 @@ impl Chunk {
 
     fn iter_columns_mut(
         &mut self,
-    ) -> impl Iterator<Item = (IVec2, &mut [Option<Block>; Self::CHUNK_DIAMETER])> {
+    ) -> impl Iterator<Item = (IVec2, &mut [Option<Block>; Self::CHUNK_DIAMETER as usize])> {
         self.blocks
             .iter_mut()
             .enumerate()
@@ -1404,8 +1405,8 @@ impl ChunkPosition {
         )
     }
 
-    pub fn as_block_coordinate(&self) -> BlockCoordinate {
-        self.index * IVec3::splat(Chunk::CHUNK_DIAMETER as i32)
+    pub fn as_block_coordinate(&self) -> GlobalBlockCoordinate {
+        self.index * IVec3::splat(Chunk::CHUNK_DIAMETER)
     }
 }
 

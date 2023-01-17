@@ -2,7 +2,8 @@ use bevy::prelude::*;
 use bevy_prototype_debug_lines::DebugLinesPlugin;
 use physics::{Position, Velocity};
 use terrain::{
-    BlockRegistry, BlockTag, OscillatingHills, TerrainFile, TerrainSpace, TerrainSpaceBundle,
+    BlockRegistry, BlockTag, CheckerBoard, FlatWorld, OscillatingHills, TerrainFile, TerrainSpace,
+    TerrainSpaceBundle,
 };
 // use bevy_flycam::PlayerPlugin;
 
@@ -86,9 +87,18 @@ fn setup(
             rate: 512,
             depth: 16,
         },
-        Velocity {
-            translation: Vec3::ZERO,
-            rotational: 1.0,
-        },
+        // FlatWorld {
+        //     block: default_block,
+        // },
+        // CheckerBoard {
+        //     even_block: default_block,
+        //     odd_block: default_block,
+        //     even_height: 1,
+        //     odd_height: 3,
+        // },
+        // Velocity {
+        //     translation: Vec3::ZERO,
+        //     rotational: 0.1,
+        // },
     ));
 }

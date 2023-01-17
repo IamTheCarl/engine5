@@ -2,7 +2,7 @@ use bevy::{math::Vec3Swizzles, prelude::*};
 
 use crate::physics::SpatialHashOffset;
 
-use super::{Block, BlockLocalCoordinate, Chunk, ChunkPosition, UpdateMesh};
+use super::{Block, Chunk, ChunkPosition, LocalBlockCoordinate, UpdateMesh};
 
 const GENERATION_BATCH_SIZE: usize = 1;
 
@@ -32,12 +32,8 @@ fn flat_world_generator(chunk_position: &ChunkPosition, chunk: &mut Chunk, conte
 
     if chunk_position.index.y == 0 {
         for (_position, block) in chunk.iter_range_mut(
-            BlockLocalCoordinate::new(0, 0, 0),
-            BlockLocalCoordinate::new(
-                Chunk::CHUNK_DIAMETER as i32,
-                1,
-                Chunk::CHUNK_DIAMETER as i32,
-            ),
+            LocalBlockCoordinate::new(0, 0, 0),
+            LocalBlockCoordinate::new(Chunk::CHUNK_DIAMETER, 1, Chunk::CHUNK_DIAMETER),
         ) {
             *block = Some(context.block);
         }
@@ -80,9 +76,39 @@ fn oscillating_hills_generator(
                 + half_depth)
                 .ceil() as usize;
 
-            for block in &mut column[0..height] {
-                *block = Some(context.block);
-            }
+            column[0..height].fill(Some(context.block));
+        }
+    }
+}
+
+#[derive(Component)]
+pub struct CheckerBoard {
+    pub even_block: Block,
+    pub odd_block: Block,
+    pub even_height: i32,
+    pub odd_height: i32,
+}
+
+fn checker_board_generator(
+    chunk_position: &ChunkPosition,
+    chunk: &mut Chunk,
+    context: &CheckerBoard,
+) {
+    // TODO spawn the player.
+
+    if chunk_position.index.y == 0 {
+        let (new_block, height) =
+            if (chunk_position.index.x % 2 == 0) ^ (chunk_position.index.z % 2 == 0) {
+                (context.even_block, context.even_height)
+            } else {
+                (context.odd_block, context.odd_height)
+            };
+
+        for (_position, block) in chunk.iter_range_mut(
+            LocalBlockCoordinate::new(0, 0, 0),
+            LocalBlockCoordinate::new(Chunk::CHUNK_DIAMETER, height, Chunk::CHUNK_DIAMETER),
+        ) {
+            *block = Some(new_block);
         }
     }
 }
@@ -144,4 +170,5 @@ pub fn register_terrain_generators(app: &mut App) {
     app.add_system(new_terrain_generator(flat_world_generator));
     app.add_system(new_terrain_generator(empty_world_generator));
     app.add_system(new_terrain_generator(oscillating_hills_generator));
+    app.add_system(new_terrain_generator(checker_board_generator));
 }

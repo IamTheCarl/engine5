@@ -1,9 +1,14 @@
 use super::{
     terrain_file::{TerrainFile, ToLoad},
-    Chunk, ChunkBundle, ChunkIndex, ChunkPosition,
+    Block, Chunk, ChunkBundle, ChunkIndex, ChunkPosition, GlobalBlockCoordinate,
+    LocalBlockCoordinate,
 };
 use crate::physics::Position;
-use bevy::{prelude::*, time::FixedTimestep};
+use bevy::{
+    ecs::query::{ReadOnlyWorldQuery, WorldQuery},
+    prelude::*,
+    time::FixedTimestep,
+};
 use std::collections::HashMap;
 
 const CHUNK_TIME_TO_LIVE_MS: usize = 5;
@@ -31,17 +36,6 @@ struct TerrainTime {
 pub struct TerrainSpace {
     loaded_terrain: HashMap<ChunkIndex, Entity>,
 }
-
-// #[derive(Component)]
-// pub struct ParentTerrainSpace {
-//     parent: Entity,
-// }
-
-// impl ParentTerrainSpace {
-//     pub fn get(&self) -> Entity {
-//         self.parent
-//     }
-// }
 
 impl TerrainSpace {
     fn load_chunk(
@@ -91,6 +85,77 @@ impl TerrainSpace {
             }
         }
     }
+
+    fn calculate_block_indexes(
+        coordinate: GlobalBlockCoordinate,
+    ) -> (ChunkIndex, LocalBlockCoordinate) {
+        let chunk_index: ChunkIndex = coordinate >> Chunk::CHUNK_BIT_SHIFT;
+        let local_block_coordinate =
+            coordinate.as_uvec3() & (!0u32 >> (32u32 - Chunk::CHUNK_BIT_SHIFT as u32));
+
+        (chunk_index, local_block_coordinate.as_ivec3())
+    }
+
+    pub fn get_block<'a, Q: WorldQuery, F: ReadOnlyWorldQuery>(
+        &self,
+        query: &'a Query<Q, F>,
+        query_wrapper: impl FnOnce(&'a Query<Q, F>, Entity) -> Option<&'a Chunk>,
+        coordinate: GlobalBlockCoordinate,
+    ) -> Option<Block> {
+        let (chunk_index, local_block_coordinate) = Self::calculate_block_indexes(coordinate);
+
+        let chunk_entity = self.loaded_terrain.get(&chunk_index)?;
+        let chunk = query_wrapper(query, *chunk_entity)?;
+        chunk.get_block_local(local_block_coordinate)
+    }
+
+    pub fn get_block_mut<'a, Q: WorldQuery, F: ReadOnlyWorldQuery>(
+        &self,
+        query: &'a mut Query<Q, F>,
+        query_wrapper: impl FnOnce(&'a mut Query<Q, F>, Entity) -> Option<&'a mut Chunk>,
+        coordinate: GlobalBlockCoordinate,
+    ) -> Option<&'a mut Option<Block>> {
+        let (chunk_index, local_block_coordinate) = Self::calculate_block_indexes(coordinate);
+
+        let chunk_entity = self.loaded_terrain.get(&chunk_index)?;
+        let chunk = query_wrapper(query, *chunk_entity)?;
+        chunk.get_block_local_mut(local_block_coordinate)
+    }
+}
+
+#[test]
+fn block_index_calculation() {
+    let (chunk_index, local_block_coordinate) =
+        TerrainSpace::calculate_block_indexes(GlobalBlockCoordinate::new(0, 0, 0));
+    assert_eq!(chunk_index, IVec3::new(0, 0, 0));
+    assert_eq!(local_block_coordinate, IVec3::new(0, 0, 0));
+
+    let (chunk_index, local_block_coordinate) = TerrainSpace::calculate_block_indexes(
+        GlobalBlockCoordinate::new(Chunk::CHUNK_DIAMETER, 0, 0),
+    );
+    assert_eq!(chunk_index, IVec3::new(1, 0, 0));
+    assert_eq!(local_block_coordinate, IVec3::new(0, 0, 0));
+
+    let (chunk_index, local_block_coordinate) = TerrainSpace::calculate_block_indexes(
+        GlobalBlockCoordinate::new(-Chunk::CHUNK_DIAMETER, 0, 0),
+    );
+    assert_eq!(chunk_index, IVec3::new(-1, 0, 0));
+    assert_eq!(local_block_coordinate, IVec3::new(0, 0, 0));
+
+    let (chunk_index, local_block_coordinate) = TerrainSpace::calculate_block_indexes(
+        GlobalBlockCoordinate::new(-Chunk::CHUNK_DIAMETER + 1, 0, 0),
+    );
+    assert_eq!(chunk_index, IVec3::new(-1, 0, 0));
+    assert_eq!(local_block_coordinate, IVec3::new(1, 0, 0));
+
+    let (chunk_index, local_block_coordinate) = TerrainSpace::calculate_block_indexes(
+        GlobalBlockCoordinate::new(-Chunk::CHUNK_DIAMETER - 1, 0, 0),
+    );
+    assert_eq!(chunk_index, IVec3::new(-2, 0, 0));
+    assert_eq!(
+        local_block_coordinate,
+        IVec3::new(Chunk::CHUNK_DIAMETER - 1, 0, 0)
+    );
 }
 
 #[derive(Bundle)]

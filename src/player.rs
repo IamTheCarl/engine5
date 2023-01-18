@@ -69,7 +69,7 @@ fn setup_player(mut commands: Commands) {
                 radius: NotNan::new(0.3).unwrap(),
             },
             Position {
-                translation: Vec3::new(-2.0, 5.0, 5.0),
+                translation: Vec3::new(-2.0, 10.0, 5.0),
                 rotation: 0.0,
             },
             Velocity::default(),

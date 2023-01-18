@@ -374,12 +374,6 @@ fn compute_cylinder_to_terrain_intersections(
         for (mut cylinder_position, cylinder, _with_spatial_hash, _without_terrain_space) in
             cylinders.iter_mut()
         {
-            // Transfer the cylinder into our local space.
-            let localized_cylinder_position =
-                terrain_quat * (cylinder_position.translation - space_position.translation);
-
-            let mut normal_accumulator = NormalAccumulator::new();
-
             let scan_x_radius = cylinder.radius.ceil() as i8 + 1;
             let z_range_squared = ((scan_x_radius) as f32).powi(2);
 
@@ -387,6 +381,10 @@ fn compute_cylinder_to_terrain_intersections(
                 let scan_z_radius = (z_range_squared - (x as f32).powi(2)).sqrt().floor() as i8;
 
                 for z in -scan_z_radius..=scan_z_radius {
+                    // Transfer the cylinder into our local space.
+                    let localized_cylinder_position =
+                        terrain_quat * (cylinder_position.translation - space_position.translation);
+
                     let block_index =
                         localized_cylinder_position.floor() + Vec3::new(x as f32, 0.0, z as f32);
 
@@ -468,31 +466,6 @@ fn compute_cylinder_to_terrain_intersections(
                                         - (block_index.y as f32 - localized_cylinder_position.y))
                                 };
 
-                                let is_block_to_side = space
-                                    .get_block(
-                                        &terrain,
-                                        |terrain, entity| {
-                                            terrain.get(entity).ok().map(|(_index, chunk)| chunk)
-                                        },
-                                        block_index + block_side_direction,
-                                    )
-                                    .is_some();
-
-                                let is_block_to_top_or_bottom = space
-                                    .get_block(
-                                        &terrain,
-                                        |terrain, entity| {
-                                            terrain.get(entity).ok().map(|(_index, chunk)| chunk)
-                                        },
-                                        block_index
-                                            + LocalBlockCoordinate::new(
-                                                0,
-                                                y_collision_depth.signum() as i32,
-                                                0,
-                                            ),
-                                    )
-                                    .is_some();
-
                                 // Add in Y component.
                                 let normal = {
                                     if debug_render_settings.cylinder_terrain_checks {
@@ -551,8 +524,8 @@ fn compute_cylinder_to_terrain_intersections(
                                     }
 
                                     if (y_collision_depth.abs() < normal.length()
-                                        || (is_block_to_side && y_collision_depth.abs() < 0.1))
-                                        && !is_block_to_top_or_bottom
+                                        || y_collision_depth.abs() < 0.1)
+                                        || normal.is_nan()
                                     {
                                         Vec3::new(0.0, y_collision_depth, 0.0)
                                     } else if normal.x.abs() > normal.y.abs() {
@@ -562,7 +535,8 @@ fn compute_cylinder_to_terrain_intersections(
                                     }
                                 };
 
-                                normal_accumulator.add_normal(normal);
+                                let true_normal = space_position.inverse_quat() * normal; // Rotate back into global space.
+                                cylinder_position.translation += true_normal;
 
                                 debug_assert!(!cylinder_position.translation.is_nan());
                             }
@@ -570,12 +544,6 @@ fn compute_cylinder_to_terrain_intersections(
                     }
                 }
             }
-
-            // Apply our collisions.
-            let true_normal = normal_accumulator.compute_true_normal();
-            let true_normal = space_position.inverse_quat() * true_normal; // Rotate back into global space.
-
-            cylinder_position.translation += true_normal;
         }
     }
 }

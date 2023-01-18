@@ -416,8 +416,12 @@ fn compute_cylinder_to_terrain_intersections(
 
                     let rounded_cylinder_height = cylinder.height.ceil() as i32;
 
+                    let contained = block_index == localized_cylinder_position.floor();
+
                     // It's possible for this block column to have collisions.
-                    if collision_depth <= *cylinder.radius {
+                    if collision_depth <= *cylinder.radius || contained
+                    // Or this block containers us.
+                    {
                         for layer in 0..=rounded_cylinder_height {
                             let block_index = block_index + Vec3::new(0.0, layer as f32, 0.0);
 
@@ -434,7 +438,6 @@ fn compute_cylinder_to_terrain_intersections(
                                     block_index,
                                 )
                                 .is_some()
-                                && collision_depth > 0.0
                             {
                                 let normal = collision_normal.normalize() * *cylinder.radius
                                     - collision_normal;

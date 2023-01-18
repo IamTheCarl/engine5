@@ -66,7 +66,7 @@ fn setup_player(mut commands: Commands) {
         .spawn((
             Cylinder {
                 height: NotNan::new(2.5).unwrap(),
-                radius: NotNan::new(0.5).unwrap(),
+                radius: NotNan::new(0.3).unwrap(),
             },
             Position {
                 translation: Vec3::new(-2.0, 5.0, 5.0),

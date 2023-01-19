@@ -6,7 +6,10 @@ use crate::{
     player::create_player,
 };
 
-use super::{Block, Chunk, ChunkPosition, LocalBlockCoordinate, UpdateMesh};
+use super::{
+    Block, Chunk, ChunkIndex, ChunkPosition, LocalBlockCoordinate, TerrainFile, TerrainSpace,
+    TerrainSpaceBundle, UpdateMesh,
+};
 
 #[derive(Component)]
 #[component(storage = "SparseSet")]
@@ -22,7 +25,7 @@ fn empty_world_generator(
     commands: &mut Commands,
 ) {
     // Nothing, absolutely nothing!
-    if chunk_position.index == IVec3::ZERO {
+    if chunk_position.index == ChunkIndex::ZERO {
         let middle = Chunk::CHUNK_DIAMETER / 2;
         create_player(
             commands,
@@ -53,7 +56,7 @@ fn flat_world_generator(
             *block = Some(context.block);
         }
 
-        if chunk_position.index == IVec3::ZERO {
+        if chunk_position.index == ChunkIndex::ZERO {
             let middle = Chunk::CHUNK_DIAMETER / 2;
             create_player(
                 commands,
@@ -102,7 +105,7 @@ fn oscillating_hills_generator(
             column[0..height].fill(Some(context.block));
         }
 
-        if chunk_position.index == IVec3::ZERO {
+        if chunk_position.index == ChunkIndex::ZERO {
             let middle = Chunk::CHUNK_DIAMETER / 2;
 
             let height = calculate_height_for_index(IVec2::splat(middle));
@@ -115,7 +118,7 @@ fn oscillating_hills_generator(
             );
         }
 
-        if chunk_position.index == IVec3::new(0, 0, 1) {
+        if chunk_position.index == ChunkIndex::new(0, 0, 1) {
             let middle = Chunk::CHUNK_DIAMETER / 2;
             let height = calculate_height_for_index(IVec2::splat(middle));
 
@@ -132,6 +135,30 @@ fn oscillating_hills_generator(
                 },
             ));
         }
+    }
+
+    if chunk_position.index == ChunkIndex::new(-1, 1, 0) {
+        commands.spawn((
+            TerrainSpaceBundle {
+                terrain_space: TerrainSpace::default(),
+                position: Position {
+                    translation: Vec3::new(-24.0, 32.0, 0.0),
+                    rotation: 0.0,
+                },
+                file: TerrainFile::new(),
+                transform: Transform::default(),
+                global_transform: GlobalTransform::default(),
+                visibility: Visibility { is_visible: true },
+                computed_visibility: ComputedVisibility::default(),
+            },
+            SingleFilledChunk {
+                block: context.block,
+            },
+            Velocity {
+                translation: Vec3::new(0.0, -1.0, 0.0),
+                rotational: 1.0,
+            },
+        ));
     }
 }
 
@@ -175,7 +202,7 @@ fn checker_board_generator(
             );
         }
 
-        if chunk_position.index == IVec3::new(0, 0, 1) {
+        if chunk_position.index == ChunkIndex::new(0, 0, 1) {
             commands.spawn((
                 Cylinder {
                     height: NotNan::new(1.0).unwrap(),
@@ -188,6 +215,24 @@ fn checker_board_generator(
                     rotation: 0.0,
                 },
             ));
+        }
+    }
+}
+
+#[derive(Component)]
+pub struct SingleFilledChunk {
+    pub block: Block,
+}
+
+fn single_filled_chunk_generator(
+    chunk_position: &ChunkPosition,
+    chunk: &mut Chunk,
+    context: &SingleFilledChunk,
+    _commands: &mut Commands,
+) {
+    if chunk_position.index == ChunkIndex::ZERO {
+        for (_position, block) in chunk.iter_mut() {
+            *block = Some(context.block);
         }
     }
 }
@@ -231,4 +276,5 @@ pub fn register_terrain_generators(app: &mut App) {
     new_terrain_generator(app, empty_world_generator);
     new_terrain_generator(app, oscillating_hills_generator);
     new_terrain_generator(app, checker_board_generator);
+    new_terrain_generator(app, single_filled_chunk_generator);
 }

@@ -19,6 +19,7 @@ pub struct LoadsTerrain {
 }
 
 #[derive(Component)]
+#[component(storage = "SparseSet")]
 pub struct LoadAllTerrain;
 
 #[derive(Component)]
@@ -275,6 +276,38 @@ fn clean_up_chunks(
     terrain_time.time += 1;
 }
 
+#[derive(Component)]
+#[component(storage = "SparseSet")]
+pub struct Initialized;
+
+fn bootstrap_terrain_space(
+    mut commands: Commands,
+    mut spaces: Query<(
+        Entity,
+        &mut TerrainSpace,
+        Without<Initialized>,
+        Without<LoadAllTerrain>,
+    )>,
+    terrain_time: Res<TerrainTime>,
+) {
+    let despawn_deadline = terrain_time.time + CHUNK_TIME_TO_LIVE_MS;
+
+    for (space_entity, mut space, _without_initialized, _without_load_all_terrain) in
+        spaces.iter_mut()
+    {
+        space.load_chunk(
+            &mut commands,
+            space_entity,
+            ChunkPosition {
+                index: ChunkIndex::ZERO,
+            },
+            Some(despawn_deadline),
+        );
+
+        commands.entity(space_entity).insert(Initialized);
+    }
+}
+
 fn setup_system(mut commands: Commands) {
     commands.insert_resource(TerrainTime { time: 0 })
 }
@@ -292,4 +325,6 @@ pub fn register_terrain_space(app: &mut App) {
             .after(load_terrain)
             .with_run_criteria(FixedTimestep::step(0.1)),
     );
+
+    app.add_system(bootstrap_terrain_space);
 }

@@ -7,7 +7,7 @@ use ordered_float::NotNan;
 /// Currently just a modified version of https://crates.io/crates/bevy_flycam.
 ///
 use crate::physics::{Cylinder, Position, Velocity};
-use crate::terrain::{LoadsTerrain, TerrainPlugin};
+use crate::terrain::LoadsTerrain;
 
 /// Keeps track of mouse motion events, pitch, and yaw
 #[derive(Resource, Default)]
@@ -61,17 +61,14 @@ fn initial_grab_cursor(mut windows: ResMut<Windows>) {
 }
 
 /// Spawns the `Camera3dBundle` to be controlled
-fn setup_player(mut commands: Commands) {
+pub fn create_player(commands: &mut Commands, position: Position) {
     commands
         .spawn((
             Cylinder {
                 height: NotNan::new(2.5).unwrap(),
                 radius: NotNan::new(0.3).unwrap(),
             },
-            Position {
-                translation: Vec3::new(-2.0, 10.0, 5.0),
-                rotation: 0.0,
-            },
+            position,
             Velocity::default(),
             Transform::default(),
             GlobalTransform::default(),
@@ -201,8 +198,8 @@ pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
-        app.add_startup_stage_after(TerrainPlugin, PlayerPlugin, SystemStage::parallel());
-        app.add_startup_system_to_stage(PlayerPlugin, setup_player);
+        // app.add_startup_stage_after(TerrainPlugin, PlayerPlugin, SystemStage::parallel());
+        // app.add_startup_system_to_stage(PlayerPlugin, setup_player);
 
         app.init_resource::<InputState>()
             .init_resource::<MovementSettings>()

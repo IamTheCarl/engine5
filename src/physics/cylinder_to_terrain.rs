@@ -172,8 +172,8 @@ pub(super) fn check_for_intersections(
                                         );
                                     }
 
-                                    if (y_collision_depth.abs() < normal.length()
-                                        || y_collision_depth.abs() < 0.1)
+                                    if y_collision_depth.abs() < normal.length()
+                                        || y_collision_depth.abs() < 0.1
                                         || normal.is_nan()
                                     {
                                         Vec3::new(0.0, y_collision_depth, 0.0)

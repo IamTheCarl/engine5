@@ -367,20 +367,6 @@ impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut App) {
         app.add_startup_system(
             |mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>| {
-                commands.spawn((
-                    Cylinder {
-                        height: NotNan::new(1.0).unwrap(),
-                        radius: NotNan::new(2.0).unwrap(),
-                    },
-                    Velocity::default(),
-                    Transform::default(),
-                    Position {
-                        translation: Vec3::new(-5.0, 5.0, -5.0),
-                        rotation: 0.0,
-                    },
-                    SpatialHash::default(),
-                ));
-
                 // TODO make this accessible from a menu or terminal.
                 commands.insert_resource(DebugRenderSettings {
                     cylinders: true,

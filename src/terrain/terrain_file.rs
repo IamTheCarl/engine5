@@ -23,9 +23,9 @@ impl TerrainFile {
 /// Load terrain from a file.
 fn load_terrain(
     mut commands: Commands,
-    mut to_load: Query<(Entity, &ChunkPosition, &mut Chunk, With<ToLoad>)>,
+    mut to_load: Query<(Entity, &ChunkPosition, With<ToLoad>, Without<Chunk>)>,
 ) {
-    for (entity, position, chunk, _to_load) in to_load.iter_mut() {
+    for (entity, position, _to_load, _without_chunk) in to_load.iter_mut() {
         // This chunk no longer needs to be loaded, so remove the marker.
         let mut entity = commands.entity(entity);
         entity.remove::<ToLoad>();

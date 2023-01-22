@@ -1,4 +1,4 @@
-use crate::terrain::Chunk;
+use crate::terrain::{Chunk, LoadTerrain};
 use bevy::prelude::*;
 use bevy_prototype_debug_lines::DebugLines;
 use ordered_float::NotNan;
@@ -361,6 +361,13 @@ fn update_transforms(mut entities: Query<(&Position, &mut Transform)>) {
     }
 }
 
+#[derive(SystemLabel)]
+pub struct CollisionCheck;
+
+#[derive(SystemLabel)]
+pub struct UpdateSpatialHashes;
+
+#[derive(StageLabel)]
 pub struct PhysicsPlugin;
 
 impl Plugin for PhysicsPlugin {
@@ -384,28 +391,26 @@ impl Plugin for PhysicsPlugin {
             },
         );
 
-        app.add_system(update_movement);
+        app.add_stage_after(LoadTerrain, PhysicsPlugin, SystemStage::parallel());
 
-        app.add_system(add_debug_mesh_cylinders);
-        app.add_system(remove_debug_mesh_cylinders);
+        app.add_system_to_stage(PhysicsPlugin, update_movement);
 
-        let collision_checks = "collision_checks";
-        let spatial_hashing = "spatial_hashing";
+        app.add_system_to_stage(PhysicsPlugin, add_debug_mesh_cylinders);
+        app.add_system_to_stage(PhysicsPlugin, remove_debug_mesh_cylinders);
 
-        app.add_system_set(
+        app.add_system_set_to_stage(
+            PhysicsPlugin,
             SystemSet::new()
-                .label(collision_checks)
                 .with_system(cylinder_to_cylinder::check_for_intersections)
                 .with_system(cylinder_to_terrain::check_for_intersections)
-                // .with_system(compute_terrain_to_terrain_intersections)
-                .after(update_movement),
+                .with_system(terrain_to_terrain::check_for_intersections)
+                .after(update_movement)
+                .label(CollisionCheck),
         );
 
-        app.add_system(update_transforms.after(collision_checks));
-
-        app.add_system_set(
+        app.add_system_set_to_stage(
+            PhysicsPlugin,
             SystemSet::new()
-                .label(spatial_hashing)
                 .with_system(insert_spatial_hash)
                 // .with_system(add_spatial_hash_entities_to_tracker)
                 .with_system(update_spatial_hash_entities)
@@ -415,8 +420,9 @@ impl Plugin for PhysicsPlugin {
                         .after(update_spatial_hash_entities)
                         .after(update_spatial_hash_entities_with_offset),
                 )
-                .before(collision_checks)
-                .after(update_movement),
+                .with_system(update_transforms)
+                .after(update_movement)
+                .after(CollisionCheck),
         );
     }
 }

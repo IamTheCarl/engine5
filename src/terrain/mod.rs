@@ -24,7 +24,9 @@ mod terrain_generation;
 pub use terrain_generation::*;
 
 mod terrain_space;
-pub use terrain_space::{LoadAllTerrain, LoadsTerrain, TerrainSpace, TerrainSpaceBundle};
+pub use terrain_space::{
+    LoadAllTerrain, LoadTerrain, LoadsTerrain, TerrainSpace, TerrainSpaceBundle,
+};
 
 type BlockID = NonZeroU16;
 pub type GlobalBlockCoordinate = IVec3;
@@ -683,58 +685,6 @@ impl Chunk {
                                 block,
                             )
                         })
-                    })
-            })
-    }
-
-    pub fn fuzzy_iter_range(
-        &self,
-        point_a: Vec3,
-        point_b: Vec3,
-    ) -> impl Iterator<Item = (LocalBlockCoordinate, Option<Block>)> + '_ {
-        fn to_valid_range(range: Range<i32>) -> Range<usize> {
-            dbg!(dbg!(range.start) as usize..dbg!(range.end) as usize)
-        }
-
-        dbg!(point_a, point_b);
-
-        let lower_bound = point_a
-            .min(point_b)
-            .max(Vec3::splat(0.0))
-            .floor()
-            .as_ivec3();
-        let upper_bound = point_a
-            .max(point_b)
-            .min(Vec3::splat(Self::CHUNK_DIAMETER as f32))
-            .ceil()
-            .as_ivec3();
-
-        dbg!(lower_bound, upper_bound);
-
-        self.blocks
-            .get(to_valid_range(lower_bound.x..upper_bound.x))
-            .expect("Range validator failed")
-            .iter()
-            .enumerate()
-            .flat_map(move |(x, z_slices)| {
-                z_slices
-                    .get(to_valid_range(lower_bound.z..upper_bound.z))
-                    .expect("Range validator failed")
-                    .iter()
-                    .enumerate()
-                    .flat_map(move |(z, y_slices)| {
-                        y_slices
-                            .get(to_valid_range(lower_bound.y..upper_bound.y))
-                            .expect("Range validator failed")
-                            .iter()
-                            .enumerate()
-                            .map(move |(y, block)| {
-                                (
-                                    LocalBlockCoordinate::new(x as i32, y as i32, z as i32)
-                                        + lower_bound,
-                                    *block,
-                                )
-                            })
                     })
             })
     }
@@ -1410,19 +1360,18 @@ impl ChunkPosition {
     }
 }
 
+// It's everything a chunk needs, except the chunk.
 #[derive(Bundle)]
-struct ChunkBundle {
-    chunk: Chunk,
+struct PreChunkBundle {
     chunk_position: ChunkPosition,
     global_transform: GlobalTransform,
     visibility: Visibility,
     computed_visibility: ComputedVisibility,
 }
 
-impl Default for ChunkBundle {
+impl Default for PreChunkBundle {
     fn default() -> Self {
         Self {
-            chunk: Chunk::new(None),
             chunk_position: ChunkPosition { index: IVec3::ZERO },
             global_transform: Default::default(),
             visibility: Default::default(),

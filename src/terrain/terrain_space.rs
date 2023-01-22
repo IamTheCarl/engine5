@@ -1,7 +1,7 @@
 use super::{
     terrain_file::{TerrainFile, ToLoad},
-    Block, Chunk, ChunkBundle, ChunkIndex, ChunkPosition, GlobalBlockCoordinate,
-    LocalBlockCoordinate,
+    Block, Chunk, ChunkIndex, ChunkPosition, GlobalBlockCoordinate, LocalBlockCoordinate,
+    PreChunkBundle,
 };
 use crate::physics::Position;
 use bevy::{
@@ -39,6 +39,14 @@ pub struct TerrainSpace {
 }
 
 impl TerrainSpace {
+    pub fn num_loaded_chunks(&self) -> usize {
+        self.loaded_terrain.len()
+    }
+
+    pub fn iter_loaded_chunks(&self) -> impl Iterator<Item = &Entity> {
+        self.loaded_terrain.values()
+    }
+
     fn load_chunk(
         &mut self,
         commands: &mut Commands,
@@ -61,8 +69,7 @@ impl TerrainSpace {
             }
             std::collections::hash_map::Entry::Vacant(to_load) => {
                 let mut entity = commands.spawn((
-                    ChunkBundle {
-                        chunk: Chunk::new(None),
+                    PreChunkBundle {
                         chunk_position,
                         ..Default::default()
                     },
@@ -264,12 +271,12 @@ fn clean_up_chunks(
     for (chunk_entity, _chunk, timer, position, terrain_space) in chunks.iter() {
         if timer.deadline <= terrain_time.time {
             // Your time has come. It is time to die.
-            commands.entity(chunk_entity).despawn();
-
             let mut space = terrain_spaces
                 .get_mut(terrain_space.get())
                 .expect("Chunk without a space found.");
+
             space.loaded_terrain.remove(&position.index);
+            commands.entity(chunk_entity).despawn();
         }
     }
 
@@ -312,19 +319,26 @@ fn setup_system(mut commands: Commands) {
     commands.insert_resource(TerrainTime { time: 0 })
 }
 
+#[derive(StageLabel)]
+pub struct LoadTerrain;
+
+#[derive(StageLabel)]
+pub struct UnloadTerrain;
+
 pub fn register_terrain_space(app: &mut App) {
     app.add_startup_system(setup_system);
-    app.add_system(load_all_terrain);
 
-    app.add_system(load_terrain);
+    app.add_stage(LoadTerrain, SystemStage::parallel());
+
+    app.add_system_to_stage(LoadTerrain, load_all_terrain);
+    app.add_system_to_stage(LoadTerrain, load_terrain);
+    app.add_system_to_stage(LoadTerrain, bootstrap_terrain_space);
 
     // We check to clean up chunks once a second.
     // We don't run this after `load_all_terrain` because that terrain doesn't dynamically unload.
-    app.add_system(
-        clean_up_chunks
-            .after(load_terrain)
-            .with_run_criteria(FixedTimestep::step(0.1)),
+    app.add_stage_after(LoadTerrain, UnloadTerrain, SystemStage::parallel());
+    app.add_system_to_stage(
+        UnloadTerrain,
+        clean_up_chunks.with_run_criteria(FixedTimestep::step(0.1)),
     );
-
-    app.add_system(bootstrap_terrain_space);
 }

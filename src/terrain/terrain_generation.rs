@@ -20,10 +20,9 @@ pub struct EmptyWorld;
 
 fn empty_world_generator(
     chunk_position: &ChunkPosition,
-    _chunk: &mut Chunk,
     _context: &EmptyWorld,
     commands: &mut Commands,
-) {
+) -> Option<Chunk> {
     // Nothing, absolutely nothing!
     if chunk_position.index == ChunkIndex::ZERO {
         let middle = Chunk::CHUNK_DIAMETER / 2;
@@ -35,6 +34,8 @@ fn empty_world_generator(
             },
         );
     }
+
+    None
 }
 
 #[derive(Component)]
@@ -44,11 +45,12 @@ pub struct FlatWorld {
 
 fn flat_world_generator(
     chunk_position: &ChunkPosition,
-    chunk: &mut Chunk,
     context: &FlatWorld,
     commands: &mut Commands,
-) {
+) -> Option<Chunk> {
     if chunk_position.index.y == 0 {
+        let mut chunk = Chunk::new(None);
+
         for (_position, block) in chunk.iter_range_mut(
             LocalBlockCoordinate::new(0, 0, 0),
             LocalBlockCoordinate::new(Chunk::CHUNK_DIAMETER, 1, Chunk::CHUNK_DIAMETER),
@@ -66,6 +68,10 @@ fn flat_world_generator(
                 },
             );
         }
+
+        Some(chunk)
+    } else {
+        None
     }
 }
 
@@ -78,11 +84,36 @@ pub struct OscillatingHills {
 
 fn oscillating_hills_generator(
     chunk_position: &ChunkPosition,
-    chunk: &mut Chunk,
     context: &OscillatingHills,
     commands: &mut Commands,
-) {
+) -> Option<Chunk> {
+    if chunk_position.index == ChunkIndex::new(-1, 1, 0) {
+        commands.spawn((
+            TerrainSpaceBundle {
+                terrain_space: TerrainSpace::default(),
+                position: Position {
+                    translation: Vec3::new(-24.0, 32.0, 0.0),
+                    rotation: 0.0,
+                },
+                file: TerrainFile::new(),
+                transform: Transform::default(),
+                global_transform: GlobalTransform::default(),
+                visibility: Visibility { is_visible: true },
+                computed_visibility: ComputedVisibility::default(),
+            },
+            SingleFilledChunk {
+                block: context.block,
+            },
+            Velocity {
+                translation: Vec3::new(0.0, -5.0, 0.0),
+                rotational: 1.0,
+            },
+        ));
+    }
+
     if chunk_position.index.y == 0 {
+        let mut chunk = Chunk::new(None);
+
         let base_offset = chunk_position.as_block_coordinate().xz();
 
         let rate = Vec2::splat(context.rate as f32);
@@ -135,30 +166,10 @@ fn oscillating_hills_generator(
                 },
             ));
         }
-    }
 
-    if chunk_position.index == ChunkIndex::new(-1, 1, 0) {
-        commands.spawn((
-            TerrainSpaceBundle {
-                terrain_space: TerrainSpace::default(),
-                position: Position {
-                    translation: Vec3::new(-24.0, 32.0, 0.0),
-                    rotation: 0.0,
-                },
-                file: TerrainFile::new(),
-                transform: Transform::default(),
-                global_transform: GlobalTransform::default(),
-                visibility: Visibility { is_visible: true },
-                computed_visibility: ComputedVisibility::default(),
-            },
-            SingleFilledChunk {
-                block: context.block,
-            },
-            Velocity {
-                translation: Vec3::new(0.0, -1.0, 0.0),
-                rotational: 1.0,
-            },
-        ));
+        Some(chunk)
+    } else {
+        None
     }
 }
 
@@ -172,11 +183,12 @@ pub struct CheckerBoard {
 
 fn checker_board_generator(
     chunk_position: &ChunkPosition,
-    chunk: &mut Chunk,
     context: &CheckerBoard,
     commands: &mut Commands,
-) {
+) -> Option<Chunk> {
     if chunk_position.index.y == 0 {
+        let mut chunk = Chunk::new(None);
+
         let (new_block, height) =
             if (chunk_position.index.x % 2 == 0) ^ (chunk_position.index.z % 2 == 0) {
                 (context.even_block, context.even_height)
@@ -216,6 +228,10 @@ fn checker_board_generator(
                 },
             ));
         }
+
+        Some(chunk)
+    } else {
+        None
     }
 }
 
@@ -226,45 +242,56 @@ pub struct SingleFilledChunk {
 
 fn single_filled_chunk_generator(
     chunk_position: &ChunkPosition,
-    chunk: &mut Chunk,
     context: &SingleFilledChunk,
     _commands: &mut Commands,
-) {
+) -> Option<Chunk> {
     if chunk_position.index == ChunkIndex::ZERO {
+        let mut chunk = Chunk::new(None);
+
         for (_position, block) in chunk.iter_mut() {
             *block = Some(context.block);
         }
+
+        Some(chunk)
+    } else {
+        None
     }
 }
 
 fn new_terrain_generator<C, F>(app: &mut App, generator: F)
 where
-    F: Fn(&ChunkPosition, &mut Chunk, &C, &mut Commands) + Send + Sync + 'static,
+    F: Fn(&ChunkPosition, &C, &mut Commands) -> Option<Chunk> + Send + Sync + 'static,
     C: Component,
 {
     app.add_system(
         move |mut commands: Commands,
               terrain_spaces: Query<&C>,
-              mut to_generate: Query<(
+              to_generate: Query<(
             Entity,
             &ChunkPosition,
-            &mut Chunk,
             &Parent,
             With<ToGenerate>,
+            Without<Chunk>,
         )>| {
             // First, generate all the terrain.
             // TODO the generation calls should be done outside of the ECS so that this system becomes non-blocking.
-            to_generate.for_each_mut(|(entity, position, mut chunk, parent, _to_generate)| {
+            to_generate.for_each(|(entity, position, parent, _to_generate, _without_chunk)| {
                 if let Ok(context) = terrain_spaces.get(parent.get()) {
-                    generator(position, &mut chunk, context, &mut commands);
+                    let chunk = generator(position, context, &mut commands);
 
-                    commands.entity(entity).remove::<ToGenerate>().insert((
-                        UpdateMesh,
+                    let mut entity = commands.entity(entity);
+
+                    entity.remove::<ToGenerate>().insert((
+                        UpdateMesh, // TODO this should probably be controlled by some kind of mobile entity that actually loads terrain.
                         position.as_transform(),
                         SpatialHashOffset {
                             translation: Vec3::new(8.0, 0.0, 8.0),
                         },
                     ));
+
+                    if let Some(chunk) = chunk {
+                        entity.insert(chunk);
+                    }
                 }
             });
         },

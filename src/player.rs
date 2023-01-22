@@ -198,9 +198,6 @@ pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
-        // app.add_startup_stage_after(TerrainPlugin, PlayerPlugin, SystemStage::parallel());
-        // app.add_startup_system_to_stage(PlayerPlugin, setup_player);
-
         app.init_resource::<InputState>()
             .init_resource::<MovementSettings>()
             .add_startup_system(initial_grab_cursor)

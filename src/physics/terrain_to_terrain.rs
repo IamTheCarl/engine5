@@ -53,7 +53,7 @@ pub(super) fn check_for_intersections(
 
     while let Some([a, b]) = iter.fetch_next() {
         // Make sure space_a is the smaller one.
-        let (a, b) = if a.0.num_loaded_chunks() < b.0.num_loaded_chunks() {
+        let (a, b) = if a.0.num_non_empty_chunks() < b.0.num_non_empty_chunks() {
             (a, b)
         } else {
             (b, a)
@@ -61,6 +61,11 @@ pub(super) fn check_for_intersections(
 
         let (space_a, position_a) = a;
         let (space_b, position_b) = b;
+
+        dbg!(
+            space_a.num_non_empty_chunks(),
+            space_b.num_non_empty_chunks()
+        );
 
         let a_quat = position_a.quat();
 

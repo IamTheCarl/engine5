@@ -265,7 +265,7 @@ where
 {
     app.add_system(
         move |mut commands: Commands,
-              terrain_spaces: Query<&C>,
+              mut terrain_spaces: Query<(&mut TerrainSpace, &C)>,
               to_generate: Query<(
             Entity,
             &ChunkPosition,
@@ -275,25 +275,28 @@ where
         )>| {
             // First, generate all the terrain.
             // TODO the generation calls should be done outside of the ECS so that this system becomes non-blocking.
-            to_generate.for_each(|(entity, position, parent, _to_generate, _without_chunk)| {
-                if let Ok(context) = terrain_spaces.get(parent.get()) {
-                    let chunk = generator(position, context, &mut commands);
+            to_generate.for_each(
+                |(entity_id, position, parent, _to_generate, _without_chunk)| {
+                    if let Ok((mut terrain_space, context)) = terrain_spaces.get_mut(parent.get()) {
+                        let chunk = generator(position, context, &mut commands);
 
-                    let mut entity = commands.entity(entity);
+                        let mut entity = commands.entity(entity_id);
 
-                    entity.remove::<ToGenerate>().insert((
-                        UpdateMesh, // TODO this should probably be controlled by some kind of mobile entity that actually loads terrain.
-                        position.as_transform(),
-                        SpatialHashOffset {
-                            translation: Vec3::new(8.0, 0.0, 8.0),
-                        },
-                    ));
+                        entity.remove::<ToGenerate>().insert((
+                            UpdateMesh, // TODO this should probably be controlled by some kind of mobile entity that actually loads terrain.
+                            position.as_transform(),
+                            SpatialHashOffset {
+                                translation: Vec3::new(8.0, 0.0, 8.0),
+                            },
+                        ));
 
-                    if let Some(chunk) = chunk {
-                        entity.insert(chunk);
+                        if let Some(chunk) = chunk {
+                            entity.insert(chunk);
+                            terrain_space.non_empty_chunks.insert(entity_id);
+                        }
                     }
-                }
-            });
+                },
+            );
         },
     );
 }

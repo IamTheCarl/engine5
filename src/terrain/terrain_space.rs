@@ -9,7 +9,7 @@ use bevy::{
     prelude::*,
     time::FixedTimestep,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 const CHUNK_TIME_TO_LIVE_MS: usize = 5;
 
@@ -36,11 +36,12 @@ struct TerrainTime {
 #[derive(Component, Default)]
 pub struct TerrainSpace {
     loaded_terrain: HashMap<ChunkIndex, Entity>,
+    pub(super) non_empty_chunks: HashSet<Entity>,
 }
 
 impl TerrainSpace {
-    pub fn num_loaded_chunks(&self) -> usize {
-        self.loaded_terrain.len()
+    pub fn num_non_empty_chunks(&self) -> usize {
+        self.non_empty_chunks.len()
     }
 
     pub fn iter_loaded_chunks(&self) -> impl Iterator<Item = &Entity> {
@@ -276,6 +277,7 @@ fn clean_up_chunks(
                 .expect("Chunk without a space found.");
 
             space.loaded_terrain.remove(&position.index);
+            space.non_empty_chunks.remove(&chunk_entity);
             commands.entity(chunk_entity).despawn();
         }
     }

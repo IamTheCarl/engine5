@@ -729,7 +729,18 @@ impl Chunk {
             })
     }
 
-    fn iter_columns_mut(
+    pub fn iter_columns(
+        &self,
+    ) -> impl Iterator<Item = (IVec2, &[Option<Block>; Self::CHUNK_DIAMETER as usize])> {
+        self.blocks.iter().enumerate().flat_map(|(x, z_slices)| {
+            z_slices
+                .iter()
+                .enumerate()
+                .map(move |(z, column)| (IVec2::new(x as i32, z as i32), column))
+        })
+    }
+
+    pub fn iter_columns_mut(
         &mut self,
     ) -> impl Iterator<Item = (IVec2, &mut [Option<Block>; Self::CHUNK_DIAMETER as usize])> {
         self.blocks

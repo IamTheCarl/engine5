@@ -377,10 +377,10 @@ impl Plugin for PhysicsPlugin {
                 // TODO make this accessible from a menu or terminal.
                 commands.insert_resource(DebugRenderSettings {
                     cylinders: true,
-                    cylinder_terrain_checks: true,
+                    cylinder_terrain_checks: false,
                     hashing_center_point: true,
                     cylinder_cylinder_checks: false,
-                    terrain_terrain_checks: true,
+                    terrain_terrain_checks: false,
                 });
                 commands.insert_resource(MeshCollection::new());
 

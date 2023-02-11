@@ -245,7 +245,8 @@ fn single_filled_chunk_generator(
     context: &SingleFilledChunk,
     _commands: &mut Commands,
 ) -> Option<Chunk> {
-    if chunk_position.index == ChunkIndex::ZERO {
+    if chunk_position.index == ChunkIndex::ZERO || chunk_position.index == ChunkIndex::new(1, 0, 0)
+    {
         let mut chunk = Chunk::new(None);
 
         for (_position, block) in chunk.iter_mut() {

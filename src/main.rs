@@ -72,9 +72,9 @@ fn setup(mut commands: Commands, block_registry: Res<BlockRegistry>) {
         //     even_height: 1,
         //     odd_height: 3,
         // },
-        // Velocity {
-        //     translation: Vec3::ZERO,
-        //     rotational: 0.1,
-        // },
+        Velocity {
+            translation: Vec3::ZERO,
+            rotational: 0.1,
+        },
     ));
 }

@@ -1,12 +1,12 @@
 use bevy::prelude::*;
 
-use super::{terrain_generation::ToGenerate, Chunk, ChunkIndex, ChunkPosition};
+use super::{terrain_generation::ToGenerate, Chunk, ChunkPosition};
 
 #[derive(Component)]
 #[component(storage = "SparseSet")]
 pub struct ToLoad;
 
-#[derive(Component)]
+#[derive(Component, Default)]
 pub struct TerrainFile {}
 
 impl TerrainFile {
@@ -25,7 +25,7 @@ fn load_terrain(
     mut commands: Commands,
     mut to_load: Query<(Entity, &ChunkPosition, With<ToLoad>, Without<Chunk>)>,
 ) {
-    for (entity, position, _to_load, _without_chunk) in to_load.iter_mut() {
+    for (entity, _position, _to_load, _without_chunk) in to_load.iter_mut() {
         // This chunk no longer needs to be loaded, so remove the marker.
         let mut entity = commands.entity(entity);
         entity.remove::<ToLoad>();

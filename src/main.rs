@@ -2,14 +2,13 @@ use bevy::prelude::*;
 use bevy_prototype_debug_lines::DebugLinesPlugin;
 use physics::{Position, Velocity};
 use terrain::{
-    BlockRegistry, BlockTag, CheckerBoard, FlatWorld, OscillatingHills, TerrainFile, TerrainSpace,
-    TerrainSpaceBundle,
+    BlockRegistry, BlockTag, OscillatingHills, TerrainFile, TerrainSpace, TerrainSpaceBundle,
 };
 // use bevy_flycam::PlayerPlugin;
 
-mod physics;
-mod player;
-mod terrain;
+pub mod physics;
+pub mod player;
+pub mod terrain;
 
 fn main() {
     App::new()
@@ -74,7 +73,7 @@ fn setup(mut commands: Commands, block_registry: Res<BlockRegistry>) {
         // },
         Velocity {
             translation: Vec3::ZERO,
-            rotational: 0.1,
+            rotational: 0.0,
         },
     ));
 }

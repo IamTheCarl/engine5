@@ -17,13 +17,13 @@ use std::{borrow::Cow, collections::HashMap, num::NonZeroU16, ops::Range, str::F
 use thiserror::Error;
 use wgpu::{TextureDimension, TextureFormat};
 
-mod terrain_file;
+pub mod terrain_file;
 pub use terrain_file::TerrainFile;
 
-mod terrain_generation;
+pub mod terrain_generation;
 pub use terrain_generation::*;
 
-mod terrain_space;
+pub mod terrain_space;
 pub use terrain_space::{
     LoadAllTerrain, LoadTerrain, LoadsTerrain, TerrainSpace, TerrainSpaceBundle,
 };

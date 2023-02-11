@@ -105,7 +105,7 @@ fn oscillating_hills_generator(
                 block: context.block,
             },
             Velocity {
-                translation: Vec3::new(0.0, -5.0, 0.0),
+                translation: Vec3::new(0.0, 0.0, 0.0),
                 rotational: 1.0,
             },
         ));
@@ -264,16 +264,22 @@ where
     F: Fn(&ChunkPosition, &C, &mut Commands) -> Option<Chunk> + Send + Sync + 'static,
     C: Component,
 {
+    type ToGenerateQuery<'a, 'b, 'c> = Query<
+        'a,
+        'b,
+        (
+            Entity,
+            &'c ChunkPosition,
+            &'c Parent,
+            With<ToGenerate>,
+            Without<Chunk>,
+        ),
+    >;
+
     app.add_system(
         move |mut commands: Commands,
               mut terrain_spaces: Query<(&mut TerrainSpace, &C)>,
-              to_generate: Query<(
-            Entity,
-            &ChunkPosition,
-            &Parent,
-            With<ToGenerate>,
-            Without<Chunk>,
-        )>| {
+              to_generate: ToGenerateQuery| {
             // First, generate all the terrain.
             // TODO the generation calls should be done outside of the ECS so that this system becomes non-blocking.
             to_generate.for_each(

@@ -1,5 +1,3 @@
-use std::time::{Duration, Instant};
-
 use bevy::prelude::*;
 use bevy_prototype_debug_lines::DebugLines;
 
@@ -46,9 +44,6 @@ pub(super) fn check_for_intersections(
     debug_render_settings: Res<DebugRenderSettings>,
     mut lines: ResMut<DebugLines>,
 ) {
-    static mut MAX_TIME: Duration = Duration::from_secs(0);
-    let start_time = Instant::now();
-
     let mut iter = terrain_space.iter_combinations_mut();
 
     while let Some([a, b]) = iter.fetch_next() {
@@ -126,10 +121,4 @@ pub(super) fn check_for_intersections(
             }
         }
     }
-
-    let elapsed = start_time.elapsed();
-    if elapsed > unsafe { MAX_TIME } {
-        unsafe { MAX_TIME = elapsed };
-    }
-    dbg!(start_time.elapsed(), unsafe { MAX_TIME });
 }

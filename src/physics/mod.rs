@@ -2,9 +2,98 @@ use crate::terrain::{Chunk, LoadTerrain};
 use bevy::prelude::*;
 use bevy_prototype_debug_lines::DebugLines;
 use ordered_float::NotNan;
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    num::NonZeroUsize,
+};
 use wgpu::PrimitiveTopology;
 
+mod cylinder_to_cylinder;
+mod cylinder_to_terrain;
+mod ray_cast_with_terrain;
+pub use ray_cast_with_terrain::{
+    RayTerrainIntersection, RayTerrainIntersectionList, RayTerrainIntersectionType,
+};
+mod terrain_to_terrain;
+
+#[derive(Component)]
+pub struct RayCast {
+    pub direction: Vec3,
+    pub length: f32,
+}
+
+impl From<Vec3> for RayCast {
+    fn from(vector: Vec3) -> Self {
+        Self {
+            direction: vector.normalize(),
+            length: vector.length(),
+        }
+    }
+}
+
+// TODO move this cylinder-ray stuff into its own module.
+#[derive(Component)]
+pub struct RayCylinderIntersectionList {
+    pub contact_limit: Option<NonZeroUsize>,
+    pub contacts: HashMap<Entity, RayCylinderIntersection>,
+}
+pub enum RayCylinderIntersection {
+    Entry { position: Vec3, normal: Vec3 },
+    Exit { position: Vec3, normal: Vec3 },
+}
+
+// TODO Should this go in a general math library?
+pub struct ComponentIterator<Component: Copy> {
+    index: usize,
+    components: [Component; 3],
+}
+
+impl ComponentIterator<f32> {
+    pub fn new_f32(vector: Vec3) -> Self {
+        Self {
+            index: 0,
+            components: [vector.x, vector.y, vector.z],
+        }
+    }
+
+    pub fn into_vec3(mut iterator: impl Iterator<Item = f32>) -> Vec3 {
+        Vec3::new(
+            iterator.next().expect("No X component provided."),
+            iterator.next().expect("No Y component provided."),
+            iterator.next().expect("No Z component provided."),
+        )
+    }
+}
+
+impl ComponentIterator<i32> {
+    pub fn new_i32(vector: IVec3) -> Self {
+        Self {
+            index: 0,
+            components: [vector.x, vector.y, vector.z],
+        }
+    }
+
+    pub fn into_ivec3(mut iterator: impl Iterator<Item = i32>) -> IVec3 {
+        IVec3::new(
+            iterator.next().expect("No X component provided."),
+            iterator.next().expect("No Y component provided."),
+            iterator.next().expect("No Z component provided."),
+        )
+    }
+}
+
+impl<Component: Copy> Iterator for ComponentIterator<Component> {
+    type Item = Component;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let component = self.components.get(self.index);
+        self.index += 1;
+
+        component.copied()
+    }
+}
+
+// TODO this is probably a pretty clunky way to render the cylinders. I just made it because I didn't have debug lines at the time.
 #[derive(Resource)]
 struct MeshCollection {
     cylinders: HashMap<Cylinder, Handle<Mesh>>,
@@ -206,10 +295,6 @@ fn insert_spatial_hash(
     }
 }
 
-mod cylinder_to_cylinder;
-mod cylinder_to_terrain;
-mod terrain_to_terrain;
-
 fn handle_removed_spatial_hash_entities(
     removals: RemovedComponents<SpatialHash>,
     spatial_objects: Query<&SpatialHash>,
@@ -378,7 +463,7 @@ impl Plugin for PhysicsPlugin {
                 commands.insert_resource(DebugRenderSettings {
                     cylinders: true,
                     cylinder_terrain_checks: false,
-                    hashing_center_point: true,
+                    hashing_center_point: false,
                     cylinder_cylinder_checks: false,
                     terrain_terrain_checks: false,
                 });
@@ -393,10 +478,16 @@ impl Plugin for PhysicsPlugin {
 
         app.add_stage_after(LoadTerrain, PhysicsPlugin, SystemStage::parallel());
 
-        app.add_system_to_stage(PhysicsPlugin, update_movement);
-
         app.add_system_to_stage(PhysicsPlugin, add_debug_mesh_cylinders);
         app.add_system_to_stage(PhysicsPlugin, remove_debug_mesh_cylinders);
+
+        app.add_system_set_to_stage(
+            PhysicsPlugin,
+            SystemSet::new()
+                .with_system(update_movement)
+                .with_system(ray_cast_with_terrain::clear_intersection_lists)
+                .before(CollisionCheck),
+        );
 
         app.add_system_set_to_stage(
             PhysicsPlugin,
@@ -404,6 +495,7 @@ impl Plugin for PhysicsPlugin {
                 .with_system(cylinder_to_cylinder::check_for_intersections)
                 .with_system(cylinder_to_terrain::check_for_intersections)
                 .with_system(terrain_to_terrain::check_for_intersections)
+                .with_system(ray_cast_with_terrain::check_for_intersections)
                 .after(update_movement)
                 .label(CollisionCheck),
         );
@@ -421,6 +513,7 @@ impl Plugin for PhysicsPlugin {
                         .after(update_spatial_hash_entities_with_offset),
                 )
                 .with_system(update_transforms)
+                .with_system(ray_cast_with_terrain::debug_render)
                 .after(update_movement)
                 .after(CollisionCheck),
         );

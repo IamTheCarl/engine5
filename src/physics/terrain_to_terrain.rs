@@ -3,40 +3,7 @@ use bevy_prototype_debug_lines::DebugLines;
 
 use crate::terrain::{Chunk, ChunkPosition, TerrainSpace};
 
-use super::{DebugRenderSettings, Position};
-
-struct ComponentIterator {
-    index: usize,
-    components: [f32; 3],
-}
-
-impl ComponentIterator {
-    fn new(vector: Vec3) -> Self {
-        Self {
-            index: 0,
-            components: [vector.x, vector.y, vector.z],
-        }
-    }
-
-    fn into_vec3(mut iterator: impl Iterator<Item = f32>) -> Vec3 {
-        Vec3::new(
-            iterator.next().expect("No X component provided."),
-            iterator.next().expect("No Y component provided."),
-            iterator.next().expect("No Z component provided."),
-        )
-    }
-}
-
-impl Iterator for ComponentIterator {
-    type Item = f32;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let component = self.components.get(self.index);
-        self.index += 1;
-
-        component.copied()
-    }
-}
+use super::{ComponentIterator, DebugRenderSettings, Position};
 
 pub(super) fn check_for_intersections(
     mut terrain_space: Query<(&TerrainSpace, &mut Position)>,
@@ -108,7 +75,7 @@ pub(super) fn check_for_intersections(
 
                                 // We have a collision. Let's figure out the normal of the collision.
                                 let direction = ComponentIterator::into_vec3(
-                                    ComponentIterator::new(block_b_fractional_position.fract())
+                                    ComponentIterator::new_f32(block_b_fractional_position.fract())
                                         .map(|axis| if axis > 0.5 { 1.0 - axis } else { -axis }),
                                 );
 

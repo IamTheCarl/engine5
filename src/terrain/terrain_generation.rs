@@ -106,7 +106,7 @@ fn oscillating_hills_generator(
             },
             Velocity {
                 translation: Vec3::new(0.0, 0.0, 0.0),
-                rotational: 1.0,
+                rotational: 0.2,
             },
         ));
     }

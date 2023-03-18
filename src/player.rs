@@ -6,7 +6,7 @@ use ordered_float::NotNan;
 
 /// Currently just a modified version of https://crates.io/crates/bevy_flycam.
 ///
-use crate::physics::{Cylinder, Position, Velocity};
+use crate::physics::{Cylinder, Position, RayCast, RayTerrainIntersectionList, Velocity};
 use crate::terrain::LoadsTerrain;
 
 /// Keeps track of mouse motion events, pitch, and yaw
@@ -87,6 +87,23 @@ pub fn create_player(commands: &mut Commands, position: Position) {
                         transform: Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
                         ..Default::default()
                     },));
+
+                    for x in 0..64 {
+                        let x = x as f32 - 32.0;
+                        for y in 0..64 {
+                            let y = y as f32 - 32.0;
+
+                            parent.spawn((
+                                RayCast {
+                                    direction: Vec3::NEG_Z,
+                                    length: 256.0,
+                                },
+                                Transform::from_translation(Vec3::new(x, y, 0.0)),
+                                GlobalTransform::IDENTITY,
+                                RayTerrainIntersectionList::default(),
+                            ));
+                        }
+                    }
                 });
         });
 }

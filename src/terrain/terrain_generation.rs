@@ -161,7 +161,7 @@ fn oscillating_hills_generator(
                 Velocity::default(),
                 Transform::default(),
                 Position {
-                    translation: Vec3::new(0.0, height as f32, 24.0),
+                    translation: Vec3::new(0.0, height, 24.0),
                     rotation: 0.0,
                 },
             ));

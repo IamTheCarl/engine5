@@ -88,17 +88,17 @@ pub fn create_player(commands: &mut Commands, position: Position) {
                         ..Default::default()
                     },));
 
-                    for x in 0..64 {
-                        let x = x as f32 - 32.0;
-                        for y in 0..64 {
-                            let y = y as f32 - 32.0;
+                    for x in 0..32 {
+                        let x = x as f32 - 16.0;
+                        for y in 0..32 {
+                            let y = y as f32 - 16.0;
 
                             parent.spawn((
                                 RayCast {
                                     direction: Vec3::NEG_Z,
                                     length: 256.0,
                                 },
-                                Transform::from_translation(Vec3::new(x, y, 0.0)),
+                                Transform::from_translation(Vec3::new(x * 2.0, y * 2.0, 0.0)),
                                 GlobalTransform::IDENTITY,
                                 RayTerrainIntersectionList::default(),
                             ));

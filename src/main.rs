@@ -73,7 +73,7 @@ fn setup(mut commands: Commands, block_registry: Res<BlockRegistry>) {
         // },
         Velocity {
             translation: Vec3::ZERO,
-            rotational: 0.0,
+            rotational: -0.2,
         },
     ));
 }

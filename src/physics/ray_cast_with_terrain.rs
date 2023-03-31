@@ -31,24 +31,45 @@ pub fn clear_intersection_lists(mut lists: Query<&mut RayTerrainIntersectionList
 }
 
 pub fn check_for_intersections(
-    mut rays: Query<(&GlobalTransform, &RayCast, &mut RayTerrainIntersectionList)>,
+    mut rays: Query<(Entity, &RayCast, &mut RayTerrainIntersectionList)>,
     terrain_spaces: Query<(Entity, &TerrainSpace, &Position)>,
     terrain: Query<(&ChunkPosition, &Chunk)>,
+    transforms: Query<(Option<&Parent>, &Transform)>,
     mut lines: ResMut<DebugLines>,
 ) {
     // Since a terrain space is a *much* bigger piece of memory, lets iterate through those less often than we iterate through rays.
     for (terrain_entity, terrain_space, terrain_position) in terrain_spaces.iter() {
-        let terrain_inverse_quat = terrain_position.inverse_quat();
+        let inverse_terrain_quat = terrain_position.inverse_quat();
         let terrain_quat = terrain_position.quat();
 
-        for (ray_transform, ray, mut intersection_list) in rays.iter_mut() {
-            let ray_transform = ray_transform.compute_transform();
-            // let mut localized_ray_transform = ray_transform;
-            // localized_ray_transform.rotate(terrain_inverse_quat);
-            // localized_ray_transform.translation -= terrain_position.translation;
+        for (ray_entity, ray, mut intersection_list) in rays.iter_mut() {
+            let mut next_entity = ray_entity;
+            let ray_transform = {
+                let mut calculated_transform = Transform::default();
 
-            let ray_position = ray_transform.translation - terrain_position.translation;
-            let ray_direction = terrain_inverse_quat * -ray_transform.rotation * ray.direction;
+                loop {
+                    if let Ok((parent, transform)) = transforms.get(next_entity) {
+                        calculated_transform = transform.mul_transform(calculated_transform);
+
+                        if let Some(parent) = parent {
+                            next_entity = parent.get();
+                        } else {
+                            // Looks like that's the last one.
+                            break;
+                        }
+                    } else {
+                        // A parent didn't exist.
+                        unreachable!()
+                    }
+                }
+
+                calculated_transform
+            };
+
+            let ray_position_in_terrain_space =
+                terrain_quat * (ray_transform.translation - terrain_position.translation);
+            let ray_direction_in_terrain_space =
+                terrain_quat * (-ray_transform.rotation * ray.direction);
 
             fn calculate_step_axis(ray_direction: Vec3, axis: f32) -> f32 {
                 let value = ((ray_direction.x / axis).powi(2)
@@ -64,16 +85,26 @@ pub fn check_for_intersections(
                 }
             }
 
-            let step_directions = ray_direction.signum();
+            let step_directions = ray_direction_in_terrain_space.signum();
             let step_lengths = Vec3::new(
-                calculate_step_axis(ray_direction, ray_direction.x),
-                calculate_step_axis(ray_direction, ray_direction.y),
-                calculate_step_axis(ray_direction, ray_direction.z),
+                calculate_step_axis(
+                    ray_direction_in_terrain_space,
+                    ray_direction_in_terrain_space.x,
+                ),
+                calculate_step_axis(
+                    ray_direction_in_terrain_space,
+                    ray_direction_in_terrain_space.y,
+                ),
+                calculate_step_axis(
+                    ray_direction_in_terrain_space,
+                    ray_direction_in_terrain_space.z,
+                ),
             );
 
-            let mut ray_travel = ray_position.fract() * step_lengths * step_directions;
+            let mut ray_travel =
+                ray_position_in_terrain_space.fract() * step_lengths * step_directions;
 
-            let mut block_position = ray_position.floor().as_ivec3();
+            let mut block_position = ray_position_in_terrain_space.floor().as_ivec3();
             let step_directions = step_directions.as_ivec3();
 
             let mut distance_traveled = 0.0;
@@ -115,7 +146,8 @@ pub fn check_for_intersections(
                     // We hit a block.
                     // TODO should that stay terrain local?
                     let impact_point = ray_transform.translation
-                        + (terrain_quat * ray_direction) * distance_traveled;
+                        + (inverse_terrain_quat * ray_direction_in_terrain_space)
+                            * distance_traveled;
 
                     lines.line_colored(
                         impact_point,
@@ -128,42 +160,9 @@ pub fn check_for_intersections(
                         ),
                     );
 
-                    // lines.line_colored(
-                    //     ray_transform.translation,
-                    //     impact_point,
-                    //     0.0,
-                    //     Color::rgb(
-                    //         block_position.x as f32 / 16.0,
-                    //         block_position.y as f32 / 16.0,
-                    //         block_position.z as f32 / 16.0,
-                    //     ),
-                    // );
-
                     break;
                 }
             }
-
-            // lines.line_colored(
-            //     ray_transform.translation,
-            //     ray_transform.translation + ray_direction * distance_traveled,
-            //     1.0,
-            //     Color::rgb(
-            //         block_position.x as f32 / 16.0,
-            //         block_position.y as f32 / 16.0,
-            //         block_position.z as f32 / 16.0,
-            //     ),
-            // );
-
-            // lines.line_colored(
-            //     ray_transform.translation + ray_direction * distance_traveled,
-            //     ray_transform.translation + ray_direction * distance_traveled + Vec3::Y * 0.5,
-            //     5.0,
-            //     Color::rgb(
-            //         block_position.x as f32 / 16.0,
-            //         block_position.y as f32 / 16.0,
-            //         block_position.z as f32 / 16.0,
-            //     ),
-            // );
         }
     }
 }
@@ -199,73 +198,3 @@ pub fn debug_render(
         }
     }
 }
-
-// lines.line_colored(
-//     ray_transform.transform_point(Vec3::ZERO),
-//     ray_transform.transform_point(Vec3::X),
-//     0.0,
-//     Color::RED,
-// );
-// lines.line_colored(
-//     ray_transform.transform_point(Vec3::ZERO),
-//     ray_transform.transform_point(Vec3::Y),
-//     0.0,
-//     Color::GREEN,
-// );
-// lines.line_colored(
-//     ray_transform.transform_point(Vec3::ZERO),
-//     ray_transform.transform_point(Vec3::Z),
-//     0.0,
-//     Color::BLUE,
-// );
-
-// dbg!(ray_direction);
-// lines.line_colored(
-//     ray_transform.translation,
-//     ray_transform.translation + ray_direction,
-//     0.0,
-//     Color::PURPLE,
-// );
-// lines.line_colored(
-//     ray_transform.translation,
-//     ray_transform.translation + Vec3::new(step_directions.x, 0.0, 0.0),
-//     0.0,
-//     Color::RED,
-// );
-// lines.line_colored(
-//     ray_transform.translation,
-//     ray_transform.translation + Vec3::new(0.0, step_directions.y, 0.0),
-//     0.0,
-//     Color::GREEN,
-// );
-// lines.line_colored(
-//     ray_transform.translation,
-//     ray_transform.translation + Vec3::new(0.0, 0.0, step_directions.z),
-//     0.0,
-//     Color::BLUE,
-// );
-
-// lines.line_colored(
-//     ray_transform.translation,
-//     ray_transform.translation + ray_direction,
-//     0.0,
-//     Color::PURPLE,
-// );
-// lines.line_colored(
-//     ray_transform.translation,
-//     ray_transform.translation + Vec3::new(step_lengths.x, 0.0, 0.0),
-//     0.0,
-//     Color::RED,
-// );
-// lines.line_colored(
-//     ray_transform.translation,
-//     ray_transform.translation + Vec3::new(0.0, step_lengths.y, 0.0),
-//     0.0,
-//     Color::GREEN,
-// );
-// lines.line_colored(
-//     ray_transform.translation,
-//     ray_transform.translation + Vec3::new(0.0, 0.0, step_lengths.z),
-//     0.0,
-//     Color::BLUE,
-// );

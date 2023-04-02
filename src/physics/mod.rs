@@ -446,6 +446,31 @@ fn update_transforms(mut entities: Query<(&Position, &mut Transform)>) {
     }
 }
 
+/// Calculates the global transform for an entity by climbing up the hierarchy of transforms.
+/// entity - The entity we wish to calculate the global transform of.
+/// transform_getter - a closure to fetch an entity's transform and its parent.
+pub fn calculate_global_transform<'a>(
+    entity: Entity,
+    transform_getter: impl Fn(Entity) -> (Option<Entity>, &'a Transform),
+) -> Transform {
+    let mut next_entity = entity;
+    let mut calculated_transform = Transform::default();
+
+    loop {
+        let (parent, transform) = transform_getter(next_entity);
+        calculated_transform = transform.mul_transform(calculated_transform);
+
+        if let Some(parent) = parent {
+            next_entity = parent;
+        } else {
+            // Looks like that's the last one.
+            break;
+        }
+    }
+
+    calculated_transform
+}
+
 #[derive(SystemLabel)]
 pub struct CollisionCheck;
 

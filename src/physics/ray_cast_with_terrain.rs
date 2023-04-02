@@ -2,9 +2,8 @@ use std::{collections::HashMap, num::NonZeroUsize};
 
 use bevy::prelude::*;
 use bevy_prototype_debug_lines::DebugLines;
-use ordered_float::NotNan;
 
-use super::{ComponentIterator, Position, RayCast};
+use super::{calculate_global_transform, Position, RayCast};
 use crate::terrain::{Chunk, ChunkPosition, GlobalBlockCoordinate, TerrainSpace};
 
 #[derive(Component, Default)]
@@ -19,11 +18,13 @@ pub enum RayTerrainIntersectionType {
     Exit,
 }
 
+/// An intersection with terrain.
+/// All values are local to the terrain space.
 pub struct RayTerrainIntersection {
     intersection_type: RayTerrainIntersectionType,
     block_coordinate: GlobalBlockCoordinate,
     position: Vec3,
-    normal: Vec3,
+    normal: IVec3,
 }
 
 pub fn clear_intersection_lists(mut lists: Query<&mut RayTerrainIntersectionList>) {
@@ -35,37 +36,18 @@ pub fn check_for_intersections(
     terrain_spaces: Query<(Entity, &TerrainSpace, &Position)>,
     terrain: Query<(&ChunkPosition, &Chunk)>,
     transforms: Query<(Option<&Parent>, &Transform)>,
-    mut lines: ResMut<DebugLines>,
 ) {
     // Since a terrain space is a *much* bigger piece of memory, lets iterate through those less often than we iterate through rays.
-    for (terrain_entity, terrain_space, terrain_position) in terrain_spaces.iter() {
-        let inverse_terrain_quat = terrain_position.inverse_quat();
+    for (terrain_space_entity, terrain_space, terrain_position) in terrain_spaces.iter() {
         let terrain_quat = terrain_position.quat();
 
         for (ray_entity, ray, mut intersection_list) in rays.iter_mut() {
-            let mut next_entity = ray_entity;
-            let ray_transform = {
-                let mut calculated_transform = Transform::default();
+            let ray_transform = calculate_global_transform(ray_entity, |entity| {
+                let (parent, transform) = transforms.get(entity).expect("A parent didn't exist.");
+                (parent.map(|parent| parent.get()), transform)
+            });
 
-                loop {
-                    if let Ok((parent, transform)) = transforms.get(next_entity) {
-                        calculated_transform = transform.mul_transform(calculated_transform);
-
-                        if let Some(parent) = parent {
-                            next_entity = parent.get();
-                        } else {
-                            // Looks like that's the last one.
-                            break;
-                        }
-                    } else {
-                        // A parent didn't exist.
-                        unreachable!()
-                    }
-                }
-
-                calculated_transform
-            };
-
+            // Move ray into terrain space.
             let ray_position_in_terrain_space =
                 terrain_quat * (ray_transform.translation - terrain_position.translation);
             let ray_direction_in_terrain_space =
@@ -85,6 +67,7 @@ pub fn check_for_intersections(
                 }
             }
 
+            // Prepare for block iteration.
             let step_directions = ray_direction_in_terrain_space.signum();
             let step_lengths = Vec3::new(
                 calculate_step_axis(
@@ -109,31 +92,55 @@ pub fn check_for_intersections(
 
             let mut distance_traveled = 0.0;
 
-            // TODO you can also bail out once you have "enough" collisions.
-            while distance_traveled < ray.length {
-                if ray_travel.x < ray_travel.y {
+            let mut intersections = Vec::new();
+            let mut was_in_terrain = false;
+
+            enum StepDirection {
+                X,
+                Y,
+                Z,
+            }
+
+            // Actually step through the terrain blocks.
+            while distance_traveled < ray.length
+                && intersection_list
+                    .contact_limit
+                    .map_or(true, |contact_limit| {
+                        intersections.len() < contact_limit.get()
+                    })
+            {
+                // Take the shortest step possible to just get into the next block.
+                // I just think this style of if statements looks better in this context.
+                #[allow(clippy::collapsible_else_if)]
+                let last_step_direction = if ray_travel.x < ray_travel.y {
                     if ray_travel.x < ray_travel.z {
                         // X
                         block_position.x += step_directions.x;
                         distance_traveled = ray_travel.x;
                         ray_travel.x += step_lengths.x;
+                        StepDirection::X
                     } else {
                         // Z
                         block_position.z += step_directions.z;
                         distance_traveled = ray_travel.z;
                         ray_travel.z += step_lengths.z;
+                        StepDirection::Z
                     }
-                } else if ray_travel.y < ray_travel.z {
-                    // Y
-                    block_position.y += step_directions.y;
-                    distance_traveled = ray_travel.y;
-                    ray_travel.y += step_lengths.y;
                 } else {
-                    // Z
-                    block_position.z += step_directions.z;
-                    distance_traveled = ray_travel.z;
-                    ray_travel.z += step_lengths.z;
-                }
+                    if ray_travel.y < ray_travel.z {
+                        // Y
+                        block_position.y += step_directions.y;
+                        distance_traveled = ray_travel.y;
+                        ray_travel.y += step_lengths.y;
+                        StepDirection::Y
+                    } else {
+                        // Z
+                        block_position.z += step_directions.z;
+                        distance_traveled = ray_travel.z;
+                        ray_travel.z += step_lengths.z;
+                        StepDirection::Z
+                    }
+                };
 
                 if terrain_space
                     .get_block(
@@ -144,56 +151,100 @@ pub fn check_for_intersections(
                     .is_some()
                 {
                     // We hit a block.
-                    // TODO should that stay terrain local?
-                    let impact_point = ray_transform.translation
-                        + (inverse_terrain_quat * ray_direction_in_terrain_space)
-                            * distance_traveled;
+                    let intersection_type = if was_in_terrain {
+                        RayTerrainIntersectionType::Tunneled
+                    } else {
+                        RayTerrainIntersectionType::Entry
+                    };
 
-                    lines.line_colored(
-                        impact_point,
-                        impact_point + Vec3::Y * 0.5,
-                        0.0,
-                        Color::rgb(
-                            block_position.x as f32 / 16.0,
-                            block_position.y as f32 / 16.0,
-                            block_position.z as f32 / 16.0,
-                        ),
-                    );
+                    let position = ray_position_in_terrain_space
+                        + ray_direction_in_terrain_space * distance_traveled;
 
-                    break;
+                    let normal = match last_step_direction {
+                        StepDirection::X => IVec3::new(step_directions.x, 0, 0),
+                        StepDirection::Y => IVec3::new(0, step_directions.y, 0),
+                        StepDirection::Z => IVec3::new(0, 0, step_directions.z),
+                    };
+
+                    intersections.push(RayTerrainIntersection {
+                        intersection_type,
+                        block_coordinate: block_position,
+                        position,
+                        normal,
+                    });
+
+                    was_in_terrain = true;
+                } else {
+                    // We did not hit a block.
+                    if was_in_terrain {
+                        // In fact, we just exited a block.
+                        let intersection_type = RayTerrainIntersectionType::Exit;
+
+                        let position = ray_position_in_terrain_space
+                            + ray_direction_in_terrain_space * distance_traveled;
+
+                        let normal = match last_step_direction {
+                            StepDirection::X => IVec3::new(step_directions.x, 0, 0),
+                            StepDirection::Y => IVec3::new(0, step_directions.y, 0),
+                            StepDirection::Z => IVec3::new(0, 0, step_directions.z),
+                        };
+
+                        intersections.push(RayTerrainIntersection {
+                            intersection_type,
+                            block_coordinate: block_position,
+                            position,
+                            normal,
+                        });
+
+                        was_in_terrain = false;
+                    }
                 }
             }
+
+            intersection_list
+                .contacts
+                .insert(terrain_space_entity, intersections);
         }
     }
 }
 
 pub fn debug_render(
-    rays: Query<(&GlobalTransform, &RayCast, &mut RayTerrainIntersectionList)>,
+    rays: Query<(Entity, &mut RayTerrainIntersectionList)>,
+    transforms: Query<(Option<&Parent>, &Transform)>,
+    terrain_spaces: Query<&Position>,
     mut lines: ResMut<DebugLines>,
 ) {
-    for (transform, ray, intersection_list) in rays.iter() {
-        let transform = transform.compute_transform();
-        // lines.line_colored(
-        //     transform.translation,
-        //     transform.transform_point(ray.direction * ray.length),
-        //     0.0,
-        //     Color::GREEN,
-        // );
+    for (ray_entity, intersection_list) in rays.iter() {
+        let ray_transform = calculate_global_transform(ray_entity, |entity| {
+            let (parent, transform) = transforms.get(entity).expect("A parent didn't exist.");
+            (parent.map(|parent| parent.get()), transform)
+        });
 
-        for (entity, contacts) in intersection_list.contacts.iter() {
-            for contact in contacts.iter() {
-                let color = match contact.intersection_type {
-                    RayTerrainIntersectionType::Entry => Color::GREEN,
-                    RayTerrainIntersectionType::Tunneled => Color::ORANGE,
-                    RayTerrainIntersectionType::Exit => Color::RED,
-                };
+        for (terrain_space_entity, contacts) in intersection_list.contacts.iter() {
+            // Should never fail.
+            if let Ok(terrain_position) = terrain_spaces.get(*terrain_space_entity) {
+                let inverse_terrain_quat = terrain_position.inverse_quat();
 
-                lines.line_colored(
-                    transform.transform_point(contact.position),
-                    transform.transform_point(contact.position) + Vec3::Y,
-                    0.0,
-                    color,
-                );
+                let mut contact_iterator = contacts.iter().peekable();
+
+                while let Some(contact) = contact_iterator.next() {
+                    let color = match contact.intersection_type {
+                        RayTerrainIntersectionType::Entry => Color::GREEN,
+                        RayTerrainIntersectionType::Tunneled => Color::ORANGE,
+                        RayTerrainIntersectionType::Exit => Color::RED,
+                    };
+
+                    let point =
+                        (inverse_terrain_quat * contact.position) + terrain_position.translation;
+                    let next_point = contact_iterator
+                        .peek()
+                        .map(|contact| {
+                            (inverse_terrain_quat * contact.position) + terrain_position.translation
+                        })
+                        .unwrap_or(point + Vec3::Y);
+
+                    lines.line_colored(point, next_point, 0.0, color);
+                }
             }
         }
     }

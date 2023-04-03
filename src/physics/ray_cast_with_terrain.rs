@@ -161,9 +161,9 @@ pub fn check_for_intersections(
                         + ray_direction_in_terrain_space * distance_traveled;
 
                     let normal = match last_step_direction {
-                        StepDirection::X => IVec3::new(step_directions.x, 0, 0),
-                        StepDirection::Y => IVec3::new(0, step_directions.y, 0),
-                        StepDirection::Z => IVec3::new(0, 0, step_directions.z),
+                        StepDirection::X => IVec3::new(-step_directions.x, 0, 0),
+                        StepDirection::Y => IVec3::new(0, -step_directions.y, 0),
+                        StepDirection::Z => IVec3::new(0, 0, -step_directions.z),
                     };
 
                     intersections.push(RayTerrainIntersection {
@@ -209,17 +209,11 @@ pub fn check_for_intersections(
 }
 
 pub fn debug_render(
-    rays: Query<(Entity, &mut RayTerrainIntersectionList)>,
-    transforms: Query<(Option<&Parent>, &Transform)>,
+    rays: Query<&mut RayTerrainIntersectionList>,
     terrain_spaces: Query<&Position>,
     mut lines: ResMut<DebugLines>,
 ) {
-    for (ray_entity, intersection_list) in rays.iter() {
-        let ray_transform = calculate_global_transform(ray_entity, |entity| {
-            let (parent, transform) = transforms.get(entity).expect("A parent didn't exist.");
-            (parent.map(|parent| parent.get()), transform)
-        });
-
+    for intersection_list in rays.iter() {
         for (terrain_space_entity, contacts) in intersection_list.contacts.iter() {
             // Should never fail.
             if let Ok(terrain_position) = terrain_spaces.get(*terrain_space_entity) {
@@ -228,14 +222,23 @@ pub fn debug_render(
                 let mut contact_iterator = contacts.iter().peekable();
 
                 while let Some(contact) = contact_iterator.next() {
+                    let point =
+                        (inverse_terrain_quat * contact.position) + terrain_position.translation;
+
                     let color = match contact.intersection_type {
-                        RayTerrainIntersectionType::Entry => Color::GREEN,
+                        RayTerrainIntersectionType::Entry => {
+                            lines.line_colored(
+                                point,
+                                point + inverse_terrain_quat * contact.normal.as_vec3(),
+                                0.0,
+                                Color::GREEN,
+                            );
+                            Color::GREEN
+                        }
                         RayTerrainIntersectionType::Tunneled => Color::ORANGE,
                         RayTerrainIntersectionType::Exit => Color::RED,
                     };
 
-                    let point =
-                        (inverse_terrain_quat * contact.position) + terrain_position.translation;
                     let next_point = contact_iterator
                         .peek()
                         .map(|contact| {

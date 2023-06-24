@@ -240,7 +240,7 @@ fn place_block(
         for (terrain_space_entity, contacts) in ray.contacts.iter() {
             if let Some(first) = contacts.first() {
                 if let Some((new_terrain_space_entity, contact)) = closest_contact {
-                    if contact.distance < first.distance {
+                    if contact.distance > first.distance {
                         closest_contact = Some((new_terrain_space_entity, contact));
                     }
                 } else {
@@ -359,7 +359,7 @@ fn remove_block(
         for (terrain_space_entity, contacts) in ray.contacts.iter() {
             if let Some(first) = contacts.first() {
                 if let Some((new_terrain_space_entity, contact)) = closest_contact {
-                    if contact.distance < first.distance {
+                    if contact.distance > first.distance {
                         closest_contact = Some((new_terrain_space_entity, contact));
                     }
                 } else {

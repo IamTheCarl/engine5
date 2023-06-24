@@ -70,11 +70,11 @@ pub(super) fn check_for_intersections(
                     // Or this block containers us.
                     {
                         for layer in 0..=rounded_cylinder_height {
-                            let block_index = block_index + Vec3::new(0.0, layer as f32, 0.0);
+                            let block_index_float = block_index + Vec3::new(0.0, layer as f32, 0.0);
 
                             // We don't need to worry about an integer overflow here because the broadphase won't let us compare
                             // to terrain that far away from a cylinder.
-                            let block_index = block_index.as_ivec3();
+                            let block_index = block_index_float.as_ivec3();
 
                             if space
                                 .get_block(
@@ -85,6 +85,9 @@ pub(super) fn check_for_intersections(
                                     block_index,
                                 )
                                 .is_some()
+                                && ((block_index_float.y + 1.0) > localized_cylinder_position.y
+                                    && block_index_float.y
+                                        < (localized_cylinder_position.y + *cylinder.height))
                             {
                                 let normal = collision_normal.normalize() * *cylinder.radius
                                     - collision_normal;

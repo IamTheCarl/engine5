@@ -194,7 +194,7 @@ pub fn check_for_intersections(
                     intersections.push(RayTerrainIntersection {
                         distance: distance_traveled,
                         intersection_type,
-                        block_coordinate: dbg!(block_position),
+                        block_coordinate: block_position,
                         position,
                         normal,
                     });

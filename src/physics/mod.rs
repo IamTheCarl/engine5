@@ -488,7 +488,7 @@ impl Plugin for PhysicsPlugin {
                 // TODO make this accessible from a menu or terminal.
                 commands.insert_resource(DebugRenderSettings {
                     cylinders: true,
-                    cylinder_terrain_checks: false,
+                    cylinder_terrain_checks: true,
                     hashing_center_point: false,
                     cylinder_cylinder_checks: false,
                     terrain_terrain_checks: false,

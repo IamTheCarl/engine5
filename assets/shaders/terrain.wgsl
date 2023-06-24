@@ -29,12 +29,12 @@ fn vertex(@location(0) vertex: u32) -> VertexOutput {
     );
 
     var TANGENT_LOOKUP_TABLE = array(
-        vec4( 1.0,  0.0,  0.0, -1.0), // Up
-        vec4( 1.0,  0.0,  0.0,  1.0), // Down
-        vec4( 1.0,  0.0,  0.0,  1.0), // North
-        vec4( 1.0,  0.0,  0.0, -1.0), // South
-        vec4( 0.0,  1.0,  0.0, -1.0), // East
-        vec4( 0.0, -1.0,  0.0,  1.0), // West
+        vec4( 0.0,  1.0,  0.0, 0.0), // Up
+        vec4( 0.0, -1.0,  0.0, 0.0), // Down
+        vec4( 0.0,  0.0,  1.0, 0.0), // North
+        vec4( 0.0,  0.0, -1.0, 0.0), // South
+        vec4( 1.0,  0.0,  0.0, 0.0), // East
+        vec4(-1.0,  0.0,  0.0, 0.0), // West
     );
 
     var x = extract_unsigned(vertex, 5u, 0u);

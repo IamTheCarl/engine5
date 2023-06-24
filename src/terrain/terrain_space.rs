@@ -100,7 +100,7 @@ impl TerrainSpace {
     ) -> (ChunkIndex, LocalBlockCoordinate) {
         let chunk_index: ChunkIndex = coordinate >> Chunk::CHUNK_BIT_SHIFT;
         let local_block_coordinate =
-            coordinate.as_uvec3() & (!0u32 >> (32u32 - Chunk::CHUNK_BIT_SHIFT as u32));
+            coordinate.as_uvec3() & (!0u32 >> (32u32 - Chunk::CHUNK_BIT_SHIFT));
 
         (chunk_index, local_block_coordinate.as_ivec3())
     }
@@ -121,14 +121,25 @@ impl TerrainSpace {
     pub fn get_block_mut<'a, Q: WorldQuery, F: ReadOnlyWorldQuery>(
         &self,
         query: &'a mut Query<Q, F>,
-        query_wrapper: impl FnOnce(&'a mut Query<Q, F>, Entity) -> Option<&'a mut Chunk>,
+        query_wrapper: impl FnOnce(&'a mut Query<Q, F>, Entity) -> Option<Mut<'a, Chunk>>,
         coordinate: GlobalBlockCoordinate,
-    ) -> Option<&'a mut Option<Block>> {
+        callback: impl FnOnce(Option<(Entity, &mut Option<Block>)>),
+    ) {
         let (chunk_index, local_block_coordinate) = Self::calculate_block_indexes(coordinate);
 
-        let chunk_entity = self.loaded_terrain.get(&chunk_index)?;
-        let chunk = query_wrapper(query, *chunk_entity)?;
-        chunk.get_block_local_mut(local_block_coordinate)
+        if let Some(chunk_entity) = self.loaded_terrain.get(&chunk_index) {
+            if let Some(mut chunk) = query_wrapper(query, *chunk_entity) {
+                if let Some(block) = chunk.get_block_local_mut(local_block_coordinate) {
+                    callback(Some((*chunk_entity, block)))
+                } else {
+                    callback(None)
+                }
+            } else {
+                callback(None)
+            }
+        } else {
+            callback(None)
+        }
     }
 }
 

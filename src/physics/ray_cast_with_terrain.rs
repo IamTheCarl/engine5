@@ -3,15 +3,16 @@ use std::{collections::HashMap, num::NonZeroUsize};
 use bevy::prelude::*;
 use bevy_prototype_debug_lines::DebugLines;
 
-use super::{calculate_global_transform, Position, RayCast};
+use super::{calculate_global_transform, DebugRenderSettings, Position, RayCast};
 use crate::terrain::{Chunk, ChunkPosition, GlobalBlockCoordinate, TerrainSpace};
 
 #[derive(Component, Default)]
 pub struct RayTerrainIntersectionList {
-    contact_limit: Option<NonZeroUsize>,
-    contacts: HashMap<Entity, Vec<RayTerrainIntersection>>,
+    pub contact_limit: Option<NonZeroUsize>,
+    pub contacts: HashMap<Entity, Vec<RayTerrainIntersection>>,
 }
 
+#[derive(Debug)]
 pub enum RayTerrainIntersectionType {
     Entry,
     Tunneled,
@@ -20,11 +21,13 @@ pub enum RayTerrainIntersectionType {
 
 /// An intersection with terrain.
 /// All values are local to the terrain space.
+#[derive(Debug)]
 pub struct RayTerrainIntersection {
-    intersection_type: RayTerrainIntersectionType,
-    block_coordinate: GlobalBlockCoordinate,
-    position: Vec3,
-    normal: IVec3,
+    pub distance: f32,
+    pub intersection_type: RayTerrainIntersectionType,
+    pub block_coordinate: GlobalBlockCoordinate,
+    pub position: Vec3,
+    pub normal: IVec3,
 }
 
 pub fn clear_intersection_lists(mut lists: Query<&mut RayTerrainIntersectionList>) {
@@ -36,6 +39,8 @@ pub fn check_for_intersections(
     terrain_spaces: Query<(Entity, &TerrainSpace, &Position)>,
     terrain: Query<(&ChunkPosition, &Chunk)>,
     transforms: Query<(Option<&Parent>, &Transform)>,
+    debug_render_settings: Res<DebugRenderSettings>,
+    mut lines: ResMut<DebugLines>,
 ) {
     // Since a terrain space is a *much* bigger piece of memory, lets iterate through those less often than we iterate through rays.
     for (terrain_space_entity, terrain_space, terrain_position) in terrain_spaces.iter() {
@@ -84,10 +89,30 @@ pub fn check_for_intersections(
                 ),
             );
 
-            let mut ray_travel =
-                ray_position_in_terrain_space.fract() * step_lengths * step_directions;
-
             let mut block_position = ray_position_in_terrain_space.floor().as_ivec3();
+
+            let mut ray_axis_lengths = {
+                let x = if step_directions.x < 0.0 {
+                    ray_position_in_terrain_space.x - block_position.x as f32
+                } else {
+                    (block_position.x as f32 + 1.0) - ray_position_in_terrain_space.x
+                };
+
+                let y = if step_directions.y < 0.0 {
+                    ray_position_in_terrain_space.y - block_position.y as f32
+                } else {
+                    (block_position.y as f32 + 1.0) - ray_position_in_terrain_space.y
+                };
+
+                let z = if step_directions.z < 0.0 {
+                    ray_position_in_terrain_space.z - block_position.z as f32
+                } else {
+                    (block_position.z as f32 + 1.0) - ray_position_in_terrain_space.z
+                };
+
+                Vec3::new(x * step_lengths.x, y * step_lengths.y, z * step_lengths.z)
+            };
+
             let step_directions = step_directions.as_ivec3();
 
             let mut distance_traveled = 0.0;
@@ -112,32 +137,32 @@ pub fn check_for_intersections(
                 // Take the shortest step possible to just get into the next block.
                 // I just think this style of if statements looks better in this context.
                 #[allow(clippy::collapsible_else_if)]
-                let last_step_direction = if ray_travel.x < ray_travel.y {
-                    if ray_travel.x < ray_travel.z {
+                let last_step_direction = if ray_axis_lengths.x < ray_axis_lengths.y {
+                    if ray_axis_lengths.x < ray_axis_lengths.z {
                         // X
                         block_position.x += step_directions.x;
-                        distance_traveled = ray_travel.x;
-                        ray_travel.x += step_lengths.x;
+                        distance_traveled = ray_axis_lengths.x;
+                        ray_axis_lengths.x += step_lengths.x;
                         StepDirection::X
                     } else {
                         // Z
                         block_position.z += step_directions.z;
-                        distance_traveled = ray_travel.z;
-                        ray_travel.z += step_lengths.z;
+                        distance_traveled = ray_axis_lengths.z;
+                        ray_axis_lengths.z += step_lengths.z;
                         StepDirection::Z
                     }
                 } else {
-                    if ray_travel.y < ray_travel.z {
+                    if ray_axis_lengths.y < ray_axis_lengths.z {
                         // Y
                         block_position.y += step_directions.y;
-                        distance_traveled = ray_travel.y;
-                        ray_travel.y += step_lengths.y;
+                        distance_traveled = ray_axis_lengths.y;
+                        ray_axis_lengths.y += step_lengths.y;
                         StepDirection::Y
                     } else {
                         // Z
                         block_position.z += step_directions.z;
-                        distance_traveled = ray_travel.z;
-                        ray_travel.z += step_lengths.z;
+                        distance_traveled = ray_axis_lengths.z;
+                        ray_axis_lengths.z += step_lengths.z;
                         StepDirection::Z
                     }
                 };
@@ -167,11 +192,21 @@ pub fn check_for_intersections(
                     };
 
                     intersections.push(RayTerrainIntersection {
+                        distance: distance_traveled,
                         intersection_type,
-                        block_coordinate: block_position,
+                        block_coordinate: dbg!(block_position),
                         position,
                         normal,
                     });
+
+                    if debug_render_settings.terrain_ray_casts {
+                        draw_debug_cube(
+                            &mut lines,
+                            Color::DARK_GREEN,
+                            terrain_position.translation
+                                + terrain_quat.inverse() * block_position.as_vec3(),
+                        );
+                    }
 
                     was_in_terrain = true;
                 } else {
@@ -190,6 +225,7 @@ pub fn check_for_intersections(
                         };
 
                         intersections.push(RayTerrainIntersection {
+                            distance: distance_traveled,
                             intersection_type,
                             block_coordinate: block_position,
                             position,
@@ -197,6 +233,22 @@ pub fn check_for_intersections(
                         });
 
                         was_in_terrain = false;
+
+                        if debug_render_settings.terrain_ray_casts {
+                            draw_debug_cube(
+                                &mut lines,
+                                Color::CRIMSON,
+                                terrain_position.translation
+                                    + terrain_quat.inverse() * block_position.as_vec3(),
+                            );
+                        }
+                    } else if debug_render_settings.terrain_ray_casts {
+                        draw_debug_cube(
+                            &mut lines,
+                            Color::BLUE,
+                            terrain_position.translation
+                                + terrain_quat.inverse() * block_position.as_vec3(),
+                        );
                     }
                 }
             }
@@ -208,6 +260,7 @@ pub fn check_for_intersections(
     }
 }
 
+// TODO eventually this should become unnecessary.
 pub fn debug_render(
     rays: Query<&mut RayTerrainIntersectionList>,
     terrain_spaces: Query<&Position>,
@@ -229,7 +282,7 @@ pub fn debug_render(
                         RayTerrainIntersectionType::Entry => {
                             lines.line_colored(
                                 point,
-                                point + inverse_terrain_quat * contact.normal.as_vec3(),
+                                point + inverse_terrain_quat * contact.normal.as_vec3() * 0.25,
                                 0.0,
                                 Color::GREEN,
                             );
@@ -251,4 +304,44 @@ pub fn debug_render(
             }
         }
     }
+}
+
+fn draw_debug_cube(lines: &mut ResMut<DebugLines>, color: Color, position: Vec3) {
+    lines.line_colored(
+        position + Vec3::new(0.0, 0.0, 0.0),
+        position + Vec3::new(1.0, 0.0, 0.0),
+        0.0,
+        color,
+    );
+    lines.line_colored(
+        position + Vec3::new(0.0, 0.0, 0.0),
+        position + Vec3::new(0.0, 1.0, 0.0),
+        0.0,
+        color,
+    );
+    lines.line_colored(
+        position + Vec3::new(0.0, 0.0, 0.0),
+        position + Vec3::new(0.0, 0.0, 1.0),
+        0.0,
+        color,
+    );
+
+    lines.line_colored(
+        position + Vec3::new(1.0, 1.0, 1.0),
+        position + Vec3::new(0.0, 1.0, 1.0),
+        0.0,
+        color,
+    );
+    lines.line_colored(
+        position + Vec3::new(1.0, 1.0, 1.0),
+        position + Vec3::new(1.0, 0.0, 1.0),
+        0.0,
+        color,
+    );
+    lines.line_colored(
+        position + Vec3::new(1.0, 1.0, 1.0),
+        position + Vec3::new(1.0, 1.0, 0.0),
+        0.0,
+        color,
+    );
 }

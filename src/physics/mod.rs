@@ -197,6 +197,7 @@ pub struct DebugRenderSettings {
     hashing_center_point: bool,
     cylinder_cylinder_checks: bool,
     terrain_terrain_checks: bool,
+    terrain_ray_casts: bool,
 }
 
 // TODO experiment with storing entities by archtype.
@@ -491,6 +492,7 @@ impl Plugin for PhysicsPlugin {
                     hashing_center_point: false,
                     cylinder_cylinder_checks: false,
                     terrain_terrain_checks: false,
+                    terrain_ray_casts: false,
                 });
                 commands.insert_resource(MeshCollection::new());
 

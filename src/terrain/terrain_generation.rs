@@ -203,7 +203,7 @@ fn checker_board_generator(
             *block = Some(new_block);
         }
 
-        if chunk_position.index == IVec3::ZERO {
+        if chunk_position.index == ChunkIndex::ZERO {
             let middle = Chunk::CHUNK_DIAMETER / 2;
             create_player(
                 commands,

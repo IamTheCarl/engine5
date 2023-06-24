@@ -1,18 +1,25 @@
+use std::collections::HashMap;
+use std::time::Duration;
+
 use bevy::ecs::event::{Events, ManualEventReader};
-use bevy::input::mouse::MouseMotion;
+use bevy::input::mouse;
 use bevy::prelude::*;
 use bevy::window::CursorGrabMode;
 use ordered_float::NotNan;
 
 /// Currently just a modified version of https://crates.io/crates/bevy_flycam.
 ///
-use crate::physics::{Cylinder, Position, RayCast, RayTerrainIntersectionList, Velocity};
-use crate::terrain::LoadsTerrain;
+use crate::physics::{
+    Cylinder, Position, RayCast, RayTerrainIntersection, RayTerrainIntersectionList, Velocity,
+};
+use crate::terrain::{
+    Block, BlockRegistry, BlockTag, Chunk, LoadsTerrain, TerrainSpace, UpdateMesh,
+};
 
 /// Keeps track of mouse motion events, pitch, and yaw
 #[derive(Resource, Default)]
 struct InputState {
-    reader_motion: ManualEventReader<MouseMotion>,
+    reader_motion: ManualEventReader<mouse::MouseMotion>,
     pitch: f32,
     yaw: f32,
 }
@@ -83,27 +90,22 @@ pub fn create_player(commands: &mut Commands, position: Position) {
                     MovementControl,
                 ))
                 .with_children(|parent| {
-                    parent.spawn((Camera3dBundle {
-                        transform: Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
-                        ..Default::default()
-                    },));
-
-                    for x in 0..32 {
-                        let x = x as f32 - 16.0;
-                        for y in 0..32 {
-                            let y = y as f32 - 16.0;
-
-                            parent.spawn((
-                                RayCast {
-                                    direction: Vec3::NEG_Z,
-                                    length: 256.0,
-                                },
-                                Transform::from_translation(Vec3::new(x * 2.0, y * 2.0, 0.0)),
-                                GlobalTransform::IDENTITY,
-                                RayTerrainIntersectionList::default(),
-                            ));
-                        }
-                    }
+                    parent.spawn((
+                        Camera3dBundle {
+                            transform: Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
+                            ..Default::default()
+                        },
+                        RayCast {
+                            direction: Vec3::NEG_Z,
+                            length: 256.0,
+                        },
+                        RayTerrainIntersectionList {
+                            contact_limit: Some(std::num::NonZeroUsize::new(1).unwrap()),
+                            contacts: HashMap::new(),
+                        },
+                        BlockPlacementContext::default(),
+                        BlockRemovalContext::default(),
+                    ));
                 });
         });
 }
@@ -150,21 +152,21 @@ fn update_input_state(
     settings: Res<MovementSettings>,
     windows: Res<Windows>,
     mut state: ResMut<InputState>,
-    motion: Res<Events<MouseMotion>>,
+    motion: Res<Events<mouse::MouseMotion>>,
 ) {
     if let Some(window) = windows.get_primary() {
         let mut delta_state = state.as_mut();
 
-        for ev in delta_state.reader_motion.iter(&motion) {
+        for event in delta_state.reader_motion.iter(&motion) {
             match window.cursor_grab_mode() {
                 CursorGrabMode::None => (),
                 _ => {
                     // Using smallest of height or width ensures equal vertical and horizontal sensitivity
                     let window_scale = window.height().min(window.width());
                     delta_state.pitch -=
-                        (settings.sensitivity * ev.delta.y * window_scale).to_radians();
+                        (settings.sensitivity * event.delta.y * window_scale).to_radians();
                     delta_state.yaw -=
-                        (settings.sensitivity * ev.delta.x * window_scale).to_radians();
+                        (settings.sensitivity * event.delta.x * window_scale).to_radians();
                 }
             }
 
@@ -174,6 +176,7 @@ fn update_input_state(
         warn!("Primary window not found for `player_look`!");
     }
 }
+
 // TODO system to update player's position.
 // TODO system to update player's transform.
 /// Handles looking around if cursor is locked
@@ -196,6 +199,238 @@ fn player_turn(state: Res<InputState>, mut query: Query<(&mut Position, With<Mov
     for (mut position, _) in query.iter_mut() {
         // Order is important to prevent unintended roll
         position.rotation = delta_state.yaw;
+    }
+}
+
+#[derive(Debug, Component)]
+struct BlockPlacementContext {
+    timer: Timer,
+    button_held: bool,
+}
+
+impl Default for BlockPlacementContext {
+    fn default() -> Self {
+        Self {
+            timer: Timer::new(Duration::from_millis(250), TimerMode::Repeating),
+            button_held: Default::default(),
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn place_block(
+    mut commands: Commands,
+    time: Res<Time>,
+    windows: Res<Windows>,
+    buttons: Res<Input<MouseButton>>,
+    block_registry: Res<BlockRegistry>,
+    mut players: Query<(&mut BlockPlacementContext, &RayTerrainIntersectionList)>,
+    mut terrain_spaces: Query<&mut TerrainSpace>,
+    mut terrain: Query<&mut Chunk>,
+) {
+    fn place_block(
+        ray: &RayTerrainIntersectionList,
+        terrain_spaces: &mut Query<&mut TerrainSpace>,
+        terrain: &mut Query<&mut Chunk>,
+        block: Block,
+        commands: &mut Commands,
+    ) {
+        let mut closest_contact: Option<(Entity, &RayTerrainIntersection)> = None;
+
+        for (terrain_space_entity, contacts) in ray.contacts.iter() {
+            if let Some(first) = contacts.first() {
+                if let Some((new_terrain_space_entity, contact)) = closest_contact {
+                    if contact.distance < first.distance {
+                        closest_contact = Some((new_terrain_space_entity, contact));
+                    }
+                } else {
+                    closest_contact = Some((*terrain_space_entity, first));
+                }
+            }
+        }
+
+        // None just means there weren't any contacts at all.
+        if let Some((terrain_entity, intersection)) = closest_contact {
+            if let Ok(terrain_space) = terrain_spaces.get_mut(terrain_entity) {
+                terrain_space.get_block_mut(
+                    terrain,
+                    |terrain, entity| terrain.get_mut(entity).ok(),
+                    intersection.block_coordinate + intersection.normal,
+                    |block_memory| {
+                        if let Some((chunk_entity, block_memory)) = block_memory {
+                            if block_memory.is_none() {
+                                *block_memory = Some(block);
+
+                                if let Some(mut command_list) = commands.get_entity(chunk_entity) {
+                                    command_list.insert(UpdateMesh);
+                                }
+                            }
+                        }
+                    },
+                );
+            } else {
+                log::warn!("Terrain disappeared after the closest intersection was found.")
+            }
+        }
+    }
+
+    // FIXME this shouldn't just panic when it fails.
+    // TODO this should be based on the player's inventory selection.
+    let block = block_registry
+        .get_by_tag(&BlockTag::try_from("core:default").unwrap())
+        .unwrap()
+        .spawn();
+
+    if let Some(window) = windows.get_primary() {
+        match window.cursor_grab_mode() {
+            CursorGrabMode::None => {
+                for (mut context, _ray) in players.iter_mut() {
+                    context.button_held = false;
+                }
+            }
+            CursorGrabMode::Locked | CursorGrabMode::Confined => {
+                if buttons.just_pressed(MouseButton::Right) {
+                    for (mut context, ray) in players.iter_mut() {
+                        context.timer.reset();
+                        context.button_held = true;
+
+                        place_block(ray, &mut terrain_spaces, &mut terrain, block, &mut commands)
+                    }
+                }
+                if buttons.just_released(MouseButton::Right) {
+                    for (mut context, _ray) in players.iter_mut() {
+                        context.button_held = false;
+                    }
+                }
+            }
+        }
+    } else {
+        for (mut context, _ray) in players.iter_mut() {
+            context.button_held = false;
+        }
+        warn!("Primary window not found for `place_block`!");
+    }
+
+    for (mut context, ray) in players.iter_mut() {
+        if context.button_held {
+            context.timer.tick(time.delta());
+
+            for _ in 0..context.timer.times_finished_this_tick() {
+                place_block(ray, &mut terrain_spaces, &mut terrain, block, &mut commands);
+            }
+        }
+    }
+}
+
+#[derive(Debug, Component)]
+struct BlockRemovalContext {
+    timer: Timer,
+    button_held: bool,
+}
+
+impl Default for BlockRemovalContext {
+    fn default() -> Self {
+        Self {
+            timer: Timer::new(Duration::from_millis(250), TimerMode::Repeating),
+            button_held: Default::default(),
+        }
+    }
+}
+
+// TODO this can be combined with the `place_block` system using some generics.
+#[allow(clippy::too_many_arguments)]
+fn remove_block(
+    mut commands: Commands,
+    time: Res<Time>,
+    windows: Res<Windows>,
+    buttons: Res<Input<MouseButton>>,
+    mut players: Query<(&mut BlockRemovalContext, &RayTerrainIntersectionList)>,
+    mut terrain_spaces: Query<&mut TerrainSpace>,
+    mut terrain: Query<&mut Chunk>,
+) {
+    fn remove_block(
+        ray: &RayTerrainIntersectionList,
+        terrain_spaces: &mut Query<&mut TerrainSpace>,
+        terrain: &mut Query<&mut Chunk>,
+        commands: &mut Commands,
+    ) {
+        let mut closest_contact: Option<(Entity, &RayTerrainIntersection)> = None;
+
+        for (terrain_space_entity, contacts) in ray.contacts.iter() {
+            if let Some(first) = contacts.first() {
+                if let Some((new_terrain_space_entity, contact)) = closest_contact {
+                    if contact.distance < first.distance {
+                        closest_contact = Some((new_terrain_space_entity, contact));
+                    }
+                } else {
+                    closest_contact = Some((*terrain_space_entity, first));
+                }
+            }
+        }
+
+        // None just means there weren't any contacts at all.
+        if let Some((terrain_entity, intersection)) = closest_contact {
+            if let Ok(terrain_space) = terrain_spaces.get_mut(terrain_entity) {
+                terrain_space.get_block_mut(
+                    terrain,
+                    |terrain: &mut Query<&mut Chunk>, entity| terrain.get_mut(entity).ok(),
+                    intersection.block_coordinate,
+                    |block_memory| {
+                        if let Some((chunk_entity, block_memory)) = block_memory {
+                            if block_memory.is_some() {
+                                *block_memory = None;
+
+                                if let Some(mut command_list) = commands.get_entity(chunk_entity) {
+                                    command_list.insert(UpdateMesh);
+                                }
+                            }
+                        }
+                    },
+                );
+            } else {
+                log::warn!("Terrain disappeared after the closest intersection was found.")
+            }
+        }
+    }
+
+    if let Some(window) = windows.get_primary() {
+        match window.cursor_grab_mode() {
+            CursorGrabMode::None => {
+                for (mut context, _ray) in players.iter_mut() {
+                    context.button_held = false;
+                }
+            }
+            CursorGrabMode::Locked | CursorGrabMode::Confined => {
+                if buttons.just_pressed(MouseButton::Left) {
+                    for (mut context, ray) in players.iter_mut() {
+                        context.timer.reset();
+                        context.button_held = true;
+
+                        remove_block(ray, &mut terrain_spaces, &mut terrain, &mut commands)
+                    }
+                }
+                if buttons.just_released(MouseButton::Left) {
+                    for (mut context, _ray) in players.iter_mut() {
+                        context.button_held = false;
+                    }
+                }
+            }
+        }
+    } else {
+        for (mut context, _ray) in players.iter_mut() {
+            context.button_held = false;
+        }
+        warn!("Primary window not found for `remove_block`!");
+    }
+
+    for (mut context, ray) in players.iter_mut() {
+        if context.button_held {
+            context.timer.tick(time.delta());
+
+            for _ in 0..context.timer.times_finished_this_tick() {
+                remove_block(ray, &mut terrain_spaces, &mut terrain, &mut commands);
+            }
+        }
     }
 }
 
@@ -222,6 +457,8 @@ impl Plugin for PlayerPlugin {
             .add_system(player_turn.after(update_input_state))
             .add_system(player_move.after(update_input_state))
             .add_system(update_input_state) // TODO should happen before movement update.
+            .add_system(place_block)
+            .add_system(remove_block)
             .add_system(cursor_grab);
     }
 }

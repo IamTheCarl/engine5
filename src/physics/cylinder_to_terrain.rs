@@ -58,8 +58,8 @@ pub(super) fn check_for_intersections(
                     }
 
                     // Okay actually make it 2D now.
-                    let collision_normal = collision_normal.xz();
-                    let collision_depth = collision_normal.length();
+                    let collision_vector = collision_normal.xz();
+                    let collision_depth = collision_vector.length();
 
                     let rounded_cylinder_height = cylinder.height.ceil() as i32;
 
@@ -69,13 +69,30 @@ pub(super) fn check_for_intersections(
                     if collision_depth <= *cylinder.radius || contained
                     // Or this block containers us.
                     {
-                        for layer in 0..=rounded_cylinder_height {
-                            let block_index_float = block_index + Vec3::new(0.0, layer as f32, 0.0);
+                        // We can calculate what would happen on the XZ plane for all blocks in the column.
+                        let collision_xz_normal =
+                            collision_vector.normalize() * *cylinder.radius - collision_vector;
+
+                        // Used for debug later.
+                        let block_side_direction = collision_xz_normal.normalize();
+                        let block_side_direction = if block_side_direction.x.abs()
+                            > block_side_direction.y.abs()
+                        {
+                            LocalBlockCoordinate::new(block_side_direction.x.signum() as i32, 0, 0)
+                        } else {
+                            LocalBlockCoordinate::new(0, 0, block_side_direction.y.signum() as i32)
+                        };
+
+                        let mut y_collision_depth = 0.0f32;
+
+                        for y in 0..=rounded_cylinder_height {
+                            let block_index_float = block_index + Vec3::new(0.0, y as f32, 0.0);
 
                             // We don't need to worry about an integer overflow here because the broadphase won't let us compare
                             // to terrain that far away from a cylinder.
                             let block_index = block_index_float.as_ivec3();
 
+                            // Is there a block to collide with here?
                             if space
                                 .get_block(
                                     &terrain,
@@ -89,27 +106,10 @@ pub(super) fn check_for_intersections(
                                     && block_index_float.y
                                         < (localized_cylinder_position.y + *cylinder.height))
                             {
-                                let normal = collision_normal.normalize() * *cylinder.radius
-                                    - collision_normal;
+                                // There is a block to collide with. The question is, how do we respond?
 
-                                let block_side_direction = normal.normalize();
-                                let block_side_direction = if block_side_direction.x.abs()
-                                    > block_side_direction.y.abs()
-                                {
-                                    LocalBlockCoordinate::new(
-                                        block_side_direction.x.signum() as i32,
-                                        0,
-                                        0,
-                                    )
-                                } else {
-                                    LocalBlockCoordinate::new(
-                                        0,
-                                        0,
-                                        block_side_direction.y.signum() as i32,
-                                    )
-                                };
-
-                                let y_collision_depth = if localized_cylinder_position.y
+                                // We already know how to respond on the xz plane but we need to figure out how to respond on the Y axis.
+                                let local_y_collision_depth = if localized_cylinder_position.y
                                     > block_index.y as f32
                                 {
                                     1.0 - (localized_cylinder_position.y - block_index.y as f32)
@@ -118,81 +118,91 @@ pub(super) fn check_for_intersections(
                                         - (block_index.y as f32 - localized_cylinder_position.y))
                                 };
 
-                                // Add in Y component.
-                                let normal = {
-                                    if debug_render_settings.cylinder_terrain_checks {
-                                        let point = (space_position.inverse_quat() * closest_point)
-                                            + space_position.translation;
+                                if debug_render_settings.cylinder_terrain_checks {
+                                    let point = (space_position.inverse_quat() * closest_point)
+                                        + space_position.translation;
 
-                                        let color = if y_collision_depth.abs() < normal.length() {
-                                            Color::PURPLE
-                                        } else {
-                                            Color::CYAN
-                                        };
-
-                                        lines.line_colored(
-                                            point,
-                                            point
-                                                + Vec3::new(normal.x, y_collision_depth, normal.y),
-                                            0.0,
-                                            color,
-                                        );
-
-                                        let point = (space_position.inverse_quat()
-                                            * (block_index.as_vec3() + Vec3::new(0.5, 0.0, 0.5)))
-                                            + space_position.translation;
-
-                                        lines.line_colored(point, point + Vec3::Y, 0.0, color);
-
-                                        lines.line_colored(
-                                            point,
-                                            point
-                                                + space_position.inverse_quat()
-                                                    * Vec3::new(
-                                                        block_side_direction.x as f32,
-                                                        block_side_direction.y as f32,
-                                                        block_side_direction.z as f32,
-                                                    ),
-                                            0.0,
-                                            Color::PINK,
-                                        );
-
-                                        let point = (space_position.inverse_quat()
-                                            * (block_index.as_vec3() + Vec3::new(0.5, 0.5, 0.5)))
-                                            + space_position.translation;
-
-                                        lines.line_colored(
-                                            point,
-                                            point
-                                                + space_position.inverse_quat()
-                                                    * Vec3::new(
-                                                        0.0,
-                                                        y_collision_depth.signum(),
-                                                        0.0,
-                                                    ),
-                                            0.0,
-                                            Color::CRIMSON,
-                                        );
-                                    }
-
-                                    if y_collision_depth.abs() < normal.length()
-                                        || y_collision_depth.abs() < 0.1
-                                        || normal.is_nan()
+                                    let color = if local_y_collision_depth.abs()
+                                        < collision_xz_normal.length()
                                     {
-                                        Vec3::new(0.0, y_collision_depth, 0.0)
-                                    } else if normal.x.abs() > normal.y.abs() {
-                                        Vec3::new(normal.x, 0.0, 0.0)
+                                        Color::PURPLE
                                     } else {
-                                        Vec3::new(0.0, 0.0, normal.y)
+                                        Color::CYAN
+                                    };
+
+                                    lines.line_colored(
+                                        point,
+                                        point
+                                            + Vec3::new(
+                                                collision_xz_normal.x,
+                                                local_y_collision_depth,
+                                                collision_xz_normal.y,
+                                            ),
+                                        0.0,
+                                        color,
+                                    );
+
+                                    let point = (space_position.inverse_quat()
+                                        * (block_index.as_vec3() + Vec3::new(0.5, 0.0, 0.5)))
+                                        + space_position.translation;
+
+                                    lines.line_colored(point, point + Vec3::Y, 0.0, color);
+
+                                    lines.line_colored(
+                                        point,
+                                        point
+                                            + space_position.inverse_quat()
+                                                * Vec3::new(
+                                                    block_side_direction.x as f32,
+                                                    block_side_direction.y as f32,
+                                                    block_side_direction.z as f32,
+                                                ),
+                                        0.0,
+                                        Color::PINK,
+                                    );
+
+                                    let point = (space_position.inverse_quat()
+                                        * (block_index.as_vec3() + Vec3::new(0.5, 0.5, 0.5)))
+                                        + space_position.translation;
+
+                                    lines.line_colored(
+                                        point,
+                                        point
+                                            + space_position.inverse_quat()
+                                                * Vec3::new(
+                                                    0.0,
+                                                    local_y_collision_depth.signum(),
+                                                    0.0,
+                                                ),
+                                        0.0,
+                                        Color::CRIMSON,
+                                    );
+                                }
+
+                                if local_y_collision_depth.abs() < collision_xz_normal.length()
+                                    || local_y_collision_depth.abs() < 0.1
+                                    || collision_xz_normal.is_nan()
+                                {
+                                    if local_y_collision_depth.abs() > y_collision_depth.abs() {
+                                        y_collision_depth = local_y_collision_depth;
                                     }
-                                };
-
-                                let true_normal = space_position.inverse_quat() * normal; // Rotate back into global space.
-                                cylinder_position.translation += true_normal;
-
-                                debug_assert!(!cylinder_position.translation.is_nan());
+                                } else if collision_xz_normal.x.abs() > collision_xz_normal.y.abs()
+                                {
+                                    y_collision_depth = 0.0;
+                                    cylinder_position.translation += space_position.inverse_quat()
+                                        * Vec3::new(collision_xz_normal.x, 0.0, 0.0);
+                                    break; // The cylinder just got pushed out of the column. There shouldn't be anymore collisions.
+                                } else {
+                                    y_collision_depth = 0.0;
+                                    cylinder_position.translation += space_position.inverse_quat()
+                                        * Vec3::new(0.0, 0.0, collision_xz_normal.y);
+                                    break; // The cylinder just got pushed out of the column. There shouldn't be anymore collisions.
+                                }
                             }
                         }
+                        cylinder_position.translation += Vec3::new(0.0, y_collision_depth, 0.0);
+
+                        debug_assert!(!cylinder_position.translation.is_nan());
                     }
                 }
             }

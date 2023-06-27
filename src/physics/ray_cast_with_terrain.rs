@@ -30,10 +30,6 @@ pub struct RayTerrainIntersection {
     pub normal: IVec3,
 }
 
-pub fn clear_intersection_lists(mut lists: Query<&mut RayTerrainIntersectionList>) {
-    lists.for_each_mut(|mut list| list.contacts.clear());
-}
-
 pub fn check_for_intersections(
     mut rays: Query<(Entity, &RayCast, &mut RayTerrainIntersectionList)>,
     terrain_spaces: Query<(Entity, &TerrainSpace, &Position)>,
@@ -42,6 +38,8 @@ pub fn check_for_intersections(
     debug_render_settings: Res<DebugRenderSettings>,
     mut lines: ResMut<DebugLines>,
 ) {
+    rays.for_each_mut(|(_entity, _ray, mut list)| list.contacts.clear());
+
     // Since a terrain space is a *much* bigger piece of memory, lets iterate through those less often than we iterate through rays.
     for (terrain_space_entity, terrain_space, terrain_position) in terrain_spaces.iter() {
         let terrain_quat = terrain_position.quat();

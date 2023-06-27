@@ -235,13 +235,21 @@ fn place_block(
         block: Block,
         commands: &mut Commands,
     ) {
-        let mut closest_contact: Option<(Entity, &RayTerrainIntersection)> = None;
+        let mut contact_iter = ray.contacts.iter();
 
-        for (terrain_space_entity, contacts) in ray.contacts.iter() {
+        let mut closest_contact: Option<(Entity, &RayTerrainIntersection)> = contact_iter
+            .next()
+            .and_then(|(entity, terrain_contact_vec)| {
+                terrain_contact_vec
+                    .first()
+                    .map(|contact| (*entity, contact))
+            });
+
+        for (terrain_space_entity, contacts) in contact_iter {
             if let Some(first) = contacts.first() {
-                if let Some((new_terrain_space_entity, contact)) = closest_contact {
+                if let Some((_old_terrain_space_entity, contact)) = closest_contact {
                     if contact.distance > first.distance {
-                        closest_contact = Some((new_terrain_space_entity, contact));
+                        closest_contact = Some((*terrain_space_entity, first));
                     }
                 } else {
                     closest_contact = Some((*terrain_space_entity, first));
@@ -354,13 +362,21 @@ fn remove_block(
         terrain: &mut Query<&mut Chunk>,
         commands: &mut Commands,
     ) {
-        let mut closest_contact: Option<(Entity, &RayTerrainIntersection)> = None;
+        let mut contact_iter = ray.contacts.iter();
 
-        for (terrain_space_entity, contacts) in ray.contacts.iter() {
+        let mut closest_contact: Option<(Entity, &RayTerrainIntersection)> = contact_iter
+            .next()
+            .and_then(|(entity, terrain_contact_vec)| {
+                terrain_contact_vec
+                    .first()
+                    .map(|contact| (*entity, contact))
+            });
+
+        for (terrain_space_entity, contacts) in contact_iter {
             if let Some(first) = contacts.first() {
-                if let Some((new_terrain_space_entity, contact)) = closest_contact {
+                if let Some((_old_terrain_space_entity, contact)) = closest_contact {
                     if contact.distance > first.distance {
-                        closest_contact = Some((new_terrain_space_entity, contact));
+                        closest_contact = Some((*terrain_space_entity, first));
                     }
                 } else {
                     closest_contact = Some((*terrain_space_entity, first));

@@ -512,7 +512,6 @@ impl Plugin for PhysicsPlugin {
             PhysicsPlugin,
             SystemSet::new()
                 .with_system(update_movement)
-                .with_system(ray_cast_with_terrain::clear_intersection_lists)
                 .before(CollisionCheck),
         );
 

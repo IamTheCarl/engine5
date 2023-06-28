@@ -1,12 +1,11 @@
 use crate::terrain::{Chunk, LoadTerrain};
-use bevy::prelude::*;
+use bevy::{prelude::*, render::render_resource::PrimitiveTopology};
 use bevy_prototype_debug_lines::DebugLines;
 use ordered_float::NotNan;
 use std::{
     collections::{HashMap, HashSet},
     num::NonZeroUsize,
 };
-use wgpu::PrimitiveTopology;
 
 mod cylinder_to_cylinder;
 mod cylinder_to_terrain;
@@ -297,7 +296,7 @@ fn insert_spatial_hash(
 }
 
 fn handle_removed_spatial_hash_entities(
-    removals: RemovedComponents<SpatialHash>,
+    mut removals: RemovedComponents<SpatialHash>,
     spatial_objects: Query<&SpatialHash>,
     mut spatial_object_tracker: ResMut<SpatialObjectTracker>,
 ) {
@@ -472,13 +471,16 @@ pub fn calculate_global_transform<'a>(
     calculated_transform
 }
 
-#[derive(SystemLabel)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, SystemSet)]
 pub struct CollisionCheck;
 
-#[derive(SystemLabel)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, SystemSet)]
+pub struct PostCollisionCheck;
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, SystemSet)]
 pub struct UpdateSpatialHashes;
 
-#[derive(StageLabel)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 pub struct PhysicsPlugin;
 
 impl Plugin for PhysicsPlugin {
@@ -503,45 +505,38 @@ impl Plugin for PhysicsPlugin {
             },
         );
 
-        app.add_stage_after(LoadTerrain, PhysicsPlugin, SystemStage::parallel());
+        app.configure_set(PhysicsPlugin.after(LoadTerrain));
 
-        app.add_system_to_stage(PhysicsPlugin, add_debug_mesh_cylinders);
-        app.add_system_to_stage(PhysicsPlugin, remove_debug_mesh_cylinders);
+        app.add_system(add_debug_mesh_cylinders.in_set(PhysicsPlugin));
+        app.add_system(remove_debug_mesh_cylinders.in_set(PhysicsPlugin));
 
-        app.add_system_set_to_stage(
-            PhysicsPlugin,
-            SystemSet::new()
-                .with_system(update_movement)
-                .before(CollisionCheck),
+        app.add_system(update_movement.in_set(PhysicsPlugin));
+
+        app.configure_set(CollisionCheck.after(update_movement).in_set(PhysicsPlugin));
+        app.add_system(cylinder_to_cylinder::check_for_intersections.in_set(CollisionCheck));
+        app.add_system(cylinder_to_terrain::check_for_intersections.in_set(CollisionCheck));
+        app.add_system(terrain_to_terrain::check_for_intersections.in_set(CollisionCheck));
+
+        app.configure_set(
+            PostCollisionCheck
+                .after(CollisionCheck)
+                .in_set(PhysicsPlugin),
         );
-
-        app.add_system_set_to_stage(
-            PhysicsPlugin,
-            SystemSet::new()
-                .with_system(cylinder_to_cylinder::check_for_intersections)
-                .with_system(cylinder_to_terrain::check_for_intersections)
-                .with_system(terrain_to_terrain::check_for_intersections)
-                .with_system(ray_cast_with_terrain::check_for_intersections)
-                .after(update_movement)
-                .label(CollisionCheck),
+        app.add_system(ray_cast_with_terrain::check_for_intersections.in_set(PostCollisionCheck));
+        app.add_system(
+            ray_cast_with_terrain::debug_render
+                .after(ray_cast_with_terrain::check_for_intersections)
+                .in_set(PostCollisionCheck),
         );
-
-        app.add_system_set_to_stage(
-            PhysicsPlugin,
-            SystemSet::new()
-                .with_system(insert_spatial_hash)
-                // .with_system(add_spatial_hash_entities_to_tracker)
-                .with_system(update_spatial_hash_entities)
-                .with_system(update_spatial_hash_entities_with_offset)
-                .with_system(
-                    handle_removed_spatial_hash_entities
-                        .after(update_spatial_hash_entities)
-                        .after(update_spatial_hash_entities_with_offset),
-                )
-                .with_system(update_transforms)
-                .with_system(ray_cast_with_terrain::debug_render)
-                .after(update_movement)
-                .after(CollisionCheck),
+        app.add_system(insert_spatial_hash.in_set(PostCollisionCheck));
+        app.add_system(update_spatial_hash_entities.in_set(PostCollisionCheck));
+        app.add_system(update_spatial_hash_entities_with_offset.in_set(PostCollisionCheck));
+        app.add_system(
+            handle_removed_spatial_hash_entities
+                .after(update_spatial_hash_entities)
+                .after(update_spatial_hash_entities_with_offset)
+                .in_set(PostCollisionCheck),
         );
+        app.add_system(update_transforms.in_set(PostCollisionCheck));
     }
 }

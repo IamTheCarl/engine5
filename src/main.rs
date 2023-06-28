@@ -17,7 +17,7 @@ fn main() {
         .run();
 }
 
-#[derive(StageLabel)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 struct Engine5;
 
 impl Engine5 {
@@ -34,8 +34,13 @@ impl Plugin for Engine5 {
         app.add_plugin(DebugLinesPlugin::default());
         // TODO enable DBand dithering once you have control of the camera.
 
-        app.add_startup_stage_after(terrain::TerrainPlugin, Engine5, SystemStage::parallel());
-        app.add_startup_system_to_stage(Engine5, setup);
+        app.configure_set(Engine5.after(terrain::TerrainPlugin));
+        app.add_startup_system(
+            apply_system_buffers
+                .after(terrain::TerrainPlugin)
+                .before(Engine5),
+        );
+        app.add_startup_system(setup.in_set(Engine5));
     }
 }
 
@@ -54,7 +59,7 @@ fn setup(mut commands: Commands, block_registry: Res<BlockRegistry>) {
             file: TerrainFile::new(),
             transform: Transform::default(),
             global_transform: GlobalTransform::default(),
-            visibility: Visibility { is_visible: true },
+            visibility: Visibility::Inherited,
             computed_visibility: ComputedVisibility::default(),
         },
         OscillatingHills {

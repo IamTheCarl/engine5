@@ -7,7 +7,6 @@ use crate::physics::Position;
 use bevy::{
     ecs::query::{ReadOnlyWorldQuery, WorldQuery},
     prelude::*,
-    time::FixedTimestep,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -332,26 +331,23 @@ fn setup_system(mut commands: Commands) {
     commands.insert_resource(TerrainTime { time: 0 })
 }
 
-#[derive(StageLabel)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 pub struct LoadTerrain;
 
-#[derive(StageLabel)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 pub struct UnloadTerrain;
 
 pub fn register_terrain_space(app: &mut App) {
     app.add_startup_system(setup_system);
 
-    app.add_stage(LoadTerrain, SystemStage::parallel());
-
-    app.add_system_to_stage(LoadTerrain, load_all_terrain);
-    app.add_system_to_stage(LoadTerrain, load_terrain);
-    app.add_system_to_stage(LoadTerrain, bootstrap_terrain_space);
+    app.add_system(load_all_terrain.in_set(LoadTerrain));
+    app.add_system(load_terrain.in_set(LoadTerrain));
+    app.add_system(bootstrap_terrain_space.in_set(LoadTerrain));
 
     // We check to clean up chunks once a second.
     // We don't run this after `load_all_terrain` because that terrain doesn't dynamically unload.
-    app.add_stage_after(LoadTerrain, UnloadTerrain, SystemStage::parallel());
-    app.add_system_to_stage(
-        UnloadTerrain,
-        clean_up_chunks.with_run_criteria(FixedTimestep::step(0.1)),
-    );
+    app.configure_set(UnloadTerrain.after(LoadTerrain));
+
+    app.insert_resource(FixedTime::new_from_secs(0.1))
+        .add_system(clean_up_chunks.in_set(UnloadTerrain));
 }

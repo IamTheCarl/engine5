@@ -4,7 +4,7 @@ use std::time::Duration;
 use bevy::ecs::event::{Events, ManualEventReader};
 use bevy::input::mouse;
 use bevy::prelude::*;
-use bevy::window::CursorGrabMode;
+use bevy::window::{CursorGrabMode, PrimaryWindow};
 use ordered_float::NotNan;
 
 /// Currently just a modified version of https://crates.io/crates/bevy_flycam.
@@ -46,22 +46,22 @@ pub struct MovementControl;
 
 /// Grabs/ungrabs mouse cursor
 fn toggle_grab_cursor(window: &mut Window) {
-    match window.cursor_grab_mode() {
+    match window.cursor.grab_mode {
         CursorGrabMode::None => {
-            window.set_cursor_grab_mode(CursorGrabMode::Confined);
-            window.set_cursor_visibility(false);
+            window.cursor.grab_mode = CursorGrabMode::Confined;
+            window.cursor.visible = false;
         }
         _ => {
-            window.set_cursor_grab_mode(CursorGrabMode::None);
-            window.set_cursor_visibility(true);
+            window.cursor.grab_mode = CursorGrabMode::None;
+            window.cursor.visible = true;
         }
     }
 }
 
 /// Grabs the cursor when game first starts
-fn initial_grab_cursor(mut windows: ResMut<Windows>) {
-    if let Some(window) = windows.get_primary_mut() {
-        toggle_grab_cursor(window);
+fn initial_grab_cursor(mut windows: Query<&mut Window, With<PrimaryWindow>>) {
+    if let Ok(mut window) = windows.get_single_mut() {
+        toggle_grab_cursor(&mut window);
     } else {
         warn!("Primary window not found for `initial_grab_cursor`!");
     }
@@ -113,11 +113,11 @@ pub fn create_player(commands: &mut Commands, position: Position) {
 /// Handles keyboard input and movement
 fn player_move(
     keys: Res<Input<KeyCode>>,
-    windows: Res<Windows>,
+    windows: Query<&Window, With<PrimaryWindow>>,
     settings: Res<MovementSettings>,
     mut query: Query<(&Position, &mut Velocity), With<MovementControl>>,
 ) {
-    if let Some(window) = windows.get_primary() {
+    if let Ok(window) = windows.get_single() {
         for (position, mut velocity) in query.iter_mut() {
             velocity.translation = Vec3::ZERO;
             let local_z = position.local_z();
@@ -125,7 +125,7 @@ fn player_move(
             let right = Vec3::new(local_z.z, 0., -local_z.x);
 
             for key in keys.get_pressed() {
-                match window.cursor_grab_mode() {
+                match window.cursor.grab_mode {
                     CursorGrabMode::None => (),
                     _ => match key {
                         KeyCode::E => velocity.translation += forward,
@@ -150,15 +150,15 @@ fn player_move(
 
 fn update_input_state(
     settings: Res<MovementSettings>,
-    windows: Res<Windows>,
+    windows: Query<&Window, With<PrimaryWindow>>,
     mut state: ResMut<InputState>,
     motion: Res<Events<mouse::MouseMotion>>,
 ) {
-    if let Some(window) = windows.get_primary() {
+    if let Ok(window) = windows.get_single() {
         let mut delta_state = state.as_mut();
 
         for event in delta_state.reader_motion.iter(&motion) {
-            match window.cursor_grab_mode() {
+            match window.cursor.grab_mode {
                 CursorGrabMode::None => (),
                 _ => {
                     // Using smallest of height or width ensures equal vertical and horizontal sensitivity
@@ -221,7 +221,7 @@ impl Default for BlockPlacementContext {
 fn place_block(
     mut commands: Commands,
     time: Res<Time>,
-    windows: Res<Windows>,
+    windows: Query<&Window, With<PrimaryWindow>>,
     buttons: Res<Input<MouseButton>>,
     block_registry: Res<BlockRegistry>,
     mut players: Query<(&mut BlockPlacementContext, &RayTerrainIntersectionList)>,
@@ -289,8 +289,8 @@ fn place_block(
         .unwrap()
         .spawn();
 
-    if let Some(window) = windows.get_primary() {
-        match window.cursor_grab_mode() {
+    if let Ok(window) = windows.get_single() {
+        match window.cursor.grab_mode {
             CursorGrabMode::None => {
                 for (mut context, _ray) in players.iter_mut() {
                     context.button_held = false;
@@ -350,7 +350,7 @@ impl Default for BlockRemovalContext {
 fn remove_block(
     mut commands: Commands,
     time: Res<Time>,
-    windows: Res<Windows>,
+    windows: Query<&Window, With<PrimaryWindow>>,
     buttons: Res<Input<MouseButton>>,
     mut players: Query<(&mut BlockRemovalContext, &RayTerrainIntersectionList)>,
     mut terrain_spaces: Query<&mut TerrainSpace>,
@@ -409,8 +409,8 @@ fn remove_block(
         }
     }
 
-    if let Some(window) = windows.get_primary() {
-        match window.cursor_grab_mode() {
+    if let Ok(window) = windows.get_single() {
+        match window.cursor.grab_mode {
             CursorGrabMode::None => {
                 for (mut context, _ray) in players.iter_mut() {
                     context.button_held = false;
@@ -450,10 +450,10 @@ fn remove_block(
     }
 }
 
-fn cursor_grab(keys: Res<Input<KeyCode>>, mut windows: ResMut<Windows>) {
-    if let Some(window) = windows.get_primary_mut() {
+fn cursor_grab(keys: Res<Input<KeyCode>>, mut windows: Query<&mut Window, With<PrimaryWindow>>) {
+    if let Ok(mut window) = windows.get_single_mut() {
         if keys.just_pressed(KeyCode::Escape) {
-            toggle_grab_cursor(window);
+            toggle_grab_cursor(&mut window);
         }
     } else {
         warn!("Primary window not found for `cursor_grab`!");
@@ -461,7 +461,7 @@ fn cursor_grab(keys: Res<Input<KeyCode>>, mut windows: ResMut<Windows>) {
 }
 
 /// Contains everything needed to add first-person fly camera behavior to your game
-#[derive(StageLabel)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {

@@ -7,15 +7,14 @@ use bevy::{
         mesh::{Indices, MeshVertexAttribute, VertexAttributeValues},
         render_asset::RenderAssets,
         render_resource::{
-            AsBindGroup, AsBindGroupShaderType, Extent3d, PrimitiveTopology, ShaderRef,
-            VertexFormat,
+            AsBindGroup, AsBindGroupShaderType, Extent3d, PrimitiveTopology, ShaderDefVal,
+            ShaderRef, TextureDimension, TextureFormat, VertexFormat,
         },
         texture::Volume,
     },
 };
 use std::{borrow::Cow, collections::HashMap, num::NonZeroU16, ops::Range, str::FromStr};
 use thiserror::Error;
-use wgpu::{TextureDimension, TextureFormat};
 
 pub mod terrain_file;
 pub use terrain_file::TerrainFile;
@@ -945,6 +944,9 @@ impl AsBindGroupShaderType<StandardMaterialUniform> for TerrainMaterial {
                 flags |= StandardMaterialFlags::ALPHA_MODE_MASK;
             }
             AlphaMode::Blend => flags |= StandardMaterialFlags::ALPHA_MODE_BLEND,
+            AlphaMode::Premultiplied => flags |= StandardMaterialFlags::ALPHA_MODE_PREMULTIPLIED,
+            AlphaMode::Add => flags |= StandardMaterialFlags::ALPHA_MODE_ADD,
+            AlphaMode::Multiply => flags |= StandardMaterialFlags::ALPHA_MODE_MULTIPLY,
         };
 
         StandardMaterialUniform {
@@ -976,20 +978,18 @@ impl Material for TerrainMaterial {
         _key: bevy::pbr::MaterialPipelineKey<Self>,
     ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
         let defines = [
-            "VERTEX_UVS",
-            "STANDARDMATERIAL_NORMAL_MAP",
-            "VERTEX_TANGENTS",
-            "ARRAY_TEXTURES",
+            ShaderDefVal::Bool(String::from("VERTEX_UVS"), true),
+            ShaderDefVal::Bool(String::from("STANDARDMATERIAL_NORMAL_MAP"), true),
+            ShaderDefVal::Bool(String::from("VERTEX_TANGENTS"), true),
+            ShaderDefVal::Bool(String::from("ARRAY_TEXTURES"), true),
         ];
 
-        let defines_iter = defines.iter().map(|def| def.to_string());
-
-        descriptor.vertex.shader_defs.extend(defines_iter.clone());
+        descriptor.vertex.shader_defs.extend(defines.clone());
         let fragment = descriptor
             .fragment
             .as_mut()
             .expect("Fragment shader unavailable.");
-        fragment.shader_defs.extend(defines_iter);
+        fragment.shader_defs.extend(defines);
 
         Ok(())
     }
@@ -1585,15 +1585,15 @@ fn generate_chunk_mesh(
     }
 }
 
-#[derive(StageLabel)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 pub struct TerrainPlugin;
 
 impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugin(MaterialPlugin::<TerrainMaterial>::default());
 
-        app.add_startup_stage(TerrainPlugin, SystemStage::parallel());
-        app.add_startup_system_to_stage(TerrainPlugin, terrain_setup);
+        app.configure_set(TerrainPlugin);
+        app.add_startup_system(terrain_setup.in_set(TerrainPlugin));
 
         app.add_system(generate_chunk_mesh);
         app.add_system(terrain_texture_loading);

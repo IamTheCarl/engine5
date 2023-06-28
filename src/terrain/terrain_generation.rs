@@ -98,7 +98,7 @@ fn oscillating_hills_generator(
                 file: TerrainFile::new(),
                 transform: Transform::default(),
                 global_transform: GlobalTransform::default(),
-                visibility: Visibility { is_visible: true },
+                visibility: Visibility::Inherited,
                 computed_visibility: ComputedVisibility::default(),
             },
             SingleFilledChunk {

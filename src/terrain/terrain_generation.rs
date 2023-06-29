@@ -1,7 +1,7 @@
-use std::sync::Arc;
-
+use anyhow::{Context, Result};
 use bevy::{math::Vec3Swizzles, prelude::*};
 use ordered_float::NotNan;
+use std::sync::Arc;
 
 use crate::{
     physics::{Cylinder, Position, SpatialHashOffset, Velocity},
@@ -25,7 +25,7 @@ fn empty_world_generator(
     chunk_position: &ChunkPosition,
     _context: &EmptyWorld,
     commands: &mut Commands,
-) -> Option<Chunk> {
+) -> Result<Option<Chunk>> {
     // Nothing, absolutely nothing!
     if chunk_position.index == ChunkIndex::ZERO {
         let middle = Chunk::CHUNK_DIAMETER / 2;
@@ -38,7 +38,7 @@ fn empty_world_generator(
         );
     }
 
-    None
+    Ok(None)
 }
 
 #[derive(Component)]
@@ -50,7 +50,7 @@ fn flat_world_generator(
     chunk_position: &ChunkPosition,
     context: &FlatWorld,
     commands: &mut Commands,
-) -> Option<Chunk> {
+) -> Result<Option<Chunk>> {
     if chunk_position.index.y == 0 {
         let mut chunk = Chunk::new(None);
 
@@ -72,9 +72,9 @@ fn flat_world_generator(
             );
         }
 
-        Some(chunk)
+        Ok(Some(chunk))
     } else {
-        None
+        Ok(None)
     }
 }
 
@@ -90,7 +90,7 @@ fn oscillating_hills_generator(
     chunk_position: &ChunkPosition,
     context: &OscillatingHills,
     commands: &mut Commands,
-) -> Option<Chunk> {
+) -> Result<Option<Chunk>> {
     if chunk_position.index == ChunkIndex::new(-1, 1, 0) {
         commands.spawn((
             TerrainSpaceBundle {
@@ -99,7 +99,8 @@ fn oscillating_hills_generator(
                     translation: Vec3::new(-24.0, 32.0, 0.0),
                     rotation: 0.0,
                 },
-                file: TerrainStorage::open_local(&context.database, "spinning_chunk").unwrap(), // TODO we need to switch to some kind of error state. TODO we need to generate names rather than hard-code them.
+                file: TerrainStorage::open_local(&context.database, "spinning_chunk")
+                    .context("Failed to create storage for moving terrain.")?, // TODO we need to generate names rather than hard-code them.
                 transform: Transform::default(),
                 global_transform: GlobalTransform::default(),
                 visibility: Visibility::Inherited,
@@ -144,13 +145,13 @@ fn oscillating_hills_generator(
             let middle = Chunk::CHUNK_DIAMETER / 2;
 
             let height = calculate_height_for_index(IVec2::splat(middle));
-            // create_player(
-            //     commands,
-            //     Position {
-            //         translation: Vec3::new(middle as f32, height, middle as f32),
-            //         rotation: 0.0,
-            //     },
-            // );
+            create_player(
+                commands,
+                Position {
+                    translation: Vec3::new(middle as f32, height, middle as f32),
+                    rotation: 0.0,
+                },
+            );
         }
 
         if chunk_position.index == ChunkIndex::new(0, 0, 1) {
@@ -171,9 +172,9 @@ fn oscillating_hills_generator(
             ));
         }
 
-        Some(chunk)
+        Ok(Some(chunk))
     } else {
-        None
+        Ok(None)
     }
 }
 
@@ -189,7 +190,7 @@ fn checker_board_generator(
     chunk_position: &ChunkPosition,
     context: &CheckerBoard,
     commands: &mut Commands,
-) -> Option<Chunk> {
+) -> Result<Option<Chunk>> {
     if chunk_position.index.y == 0 {
         let mut chunk = Chunk::new(None);
 
@@ -233,9 +234,9 @@ fn checker_board_generator(
             ));
         }
 
-        Some(chunk)
+        Ok(Some(chunk))
     } else {
-        None
+        Ok(None)
     }
 }
 
@@ -248,7 +249,7 @@ fn single_filled_chunk_generator(
     chunk_position: &ChunkPosition,
     context: &SingleFilledChunk,
     _commands: &mut Commands,
-) -> Option<Chunk> {
+) -> Result<Option<Chunk>> {
     if chunk_position.index == ChunkIndex::ZERO || chunk_position.index == ChunkIndex::new(1, 0, 0)
     {
         let mut chunk = Chunk::new(None);
@@ -257,15 +258,15 @@ fn single_filled_chunk_generator(
             *block = Some(context.block);
         }
 
-        Some(chunk)
+        Ok(Some(chunk))
     } else {
-        None
+        Ok(None)
     }
 }
 
 fn new_terrain_generator<C, F>(app: &mut App, generator: F)
 where
-    F: Fn(&ChunkPosition, &C, &mut Commands) -> Option<Chunk> + Send + Sync + 'static,
+    F: Fn(&ChunkPosition, &C, &mut Commands) -> Result<Option<Chunk>> + Send + Sync + 'static,
     C: Component,
 {
     type ToGenerateQuery<'a, 'b, 'c> = Query<
@@ -280,37 +281,38 @@ where
         ),
     >;
 
-    app.add_system(
-        move |mut commands: Commands,
-              mut terrain_spaces: Query<(&mut TerrainSpace, &C)>,
-              to_generate: ToGenerateQuery| {
-            // First, generate all the terrain.
-            // TODO the generation calls should be done outside of the ECS so that this system becomes non-blocking.
-            to_generate.for_each(
-                |(entity_id, position, parent, _to_generate, _without_chunk)| {
-                    if let Ok((mut terrain_space, context)) = terrain_spaces.get_mut(parent.get()) {
-                        let chunk = generator(position, context, &mut commands);
+    let system = move |mut commands: Commands,
+                       mut terrain_spaces: Query<(&mut TerrainSpace, &C)>,
+                       to_generate: ToGenerateQuery|
+          -> Result<()> {
+        // First, generate all the terrain.
+        // TODO the generation calls should be done outside of the ECS so that this system becomes non-blocking.
+        for (entity_id, position, parent, _to_generate, _without_chunk) in to_generate.iter() {
+            if let Ok((mut terrain_space, context)) = terrain_spaces.get_mut(parent.get()) {
+                let chunk = generator(position, context, &mut commands)?;
 
-                        let mut entity = commands.entity(entity_id);
+                let mut entity = commands.entity(entity_id);
 
-                        entity.remove::<ToGenerate>().insert((
-                            UpdateMesh, // TODO this should probably be controlled by some kind of mobile entity that actually loads terrain.
-                            position.as_transform(),
-                            SpatialHashOffset {
-                                translation: Vec3::new(8.0, 0.0, 8.0),
-                            },
-                            ToSave, // We just went through the effort to generate it, might as well save it while we're at it.
-                        ));
+                entity.remove::<ToGenerate>().insert((
+                    UpdateMesh, // TODO this should probably be controlled by some kind of mobile entity that actually loads terrain.
+                    position.as_transform(),
+                    SpatialHashOffset {
+                        translation: Vec3::new(8.0, 0.0, 8.0),
+                    },
+                    ToSave, // We just went through the effort to generate it, might as well save it while we're at it.
+                ));
 
-                        if let Some(chunk) = chunk {
-                            entity.insert(chunk);
-                            terrain_space.non_empty_chunks.insert(entity_id);
-                        }
-                    }
-                },
-            );
-        },
-    );
+                if let Some(chunk) = chunk {
+                    entity.insert(chunk);
+                    terrain_space.non_empty_chunks.insert(entity_id);
+                }
+            }
+        }
+
+        Ok(())
+    };
+
+    app.add_system(system.pipe(crate::error_handler));
 }
 
 pub fn register_terrain_generators(app: &mut App) {

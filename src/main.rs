@@ -1,9 +1,9 @@
-use std::{path::Path, sync::Arc};
-
+use anyhow::{Context, Result};
 use bevy::prelude::*;
 use bevy_prototype_debug_lines::DebugLinesPlugin;
 use physics::{Position, Velocity};
 use player::create_player;
+use std::{path::Path, sync::Arc};
 use terrain::{
     BlockRegistry, BlockTag, OscillatingHills, TerrainSpace, TerrainSpaceBundle, TerrainStorage,
 };
@@ -45,17 +45,19 @@ impl Plugin for Engine5 {
                 .after(terrain::TerrainPlugin)
                 .before(Engine5),
         );
-        app.add_startup_system(setup.in_set(Engine5));
+        app.add_startup_system(setup.pipe(error_handler).in_set(Engine5));
     }
 }
 
-fn setup(mut commands: Commands, block_registry: Res<BlockRegistry>) {
+fn setup(mut commands: Commands, block_registry: Res<BlockRegistry>) -> Result<()> {
     let default_tag = BlockTag::try_from("core:default").unwrap();
     let default_data = block_registry.get_by_tag(&default_tag).unwrap();
     let default_block = default_data.spawn();
 
-    let world_database =
-        Arc::new(sled::open(Path::new(file_paths::SAVE_DIRECTORY).join("test")).unwrap()); //  FIXME we need an error state.
+    let world_database = Arc::new(
+        sled::open(Path::new(file_paths::SAVE_DIRECTORY).join("test"))
+            .context("Failed to open or create database for world.")?,
+    );
 
     commands.spawn((
         TerrainSpaceBundle {
@@ -64,7 +66,8 @@ fn setup(mut commands: Commands, block_registry: Res<BlockRegistry>) {
                 translation: Vec3::ZERO,
                 rotation: 0.0,
             },
-            file: TerrainStorage::open_local(&world_database, "overworld").unwrap(), // FIXME we need an error state.
+            file: TerrainStorage::open_local(&world_database, "overworld")
+                .context("Failed to open namespace for overworld terrain.")?,
             transform: Transform::default(),
             global_transform: GlobalTransform::default(),
             visibility: Visibility::Inherited,
@@ -98,4 +101,13 @@ fn setup(mut commands: Commands, block_registry: Res<BlockRegistry>) {
             rotation: 0.0,
         },
     );
+
+    Ok(())
+}
+
+pub fn error_handler(In(result): In<anyhow::Result<()>>) {
+    if let Err(error) = result {
+        log::error!("Fatal Error: {:?}", error);
+        std::process::exit(1);
+    }
 }

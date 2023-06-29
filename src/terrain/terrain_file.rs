@@ -1,5 +1,5 @@
+use anyhow::{Context, Result};
 use bevy::prelude::*;
-use thiserror::Error;
 
 use crate::physics::SpatialHashOffset;
 
@@ -8,18 +8,6 @@ use super::{
 };
 
 pub const CHUNK_TIME_TO_SAVE: usize = 60 * 5;
-
-#[derive(Error, Debug, PartialEq, Eq)]
-pub enum Error {
-    #[error("Fail to open namespace: {0}")]
-    OpenNamespace(sled::Error),
-
-    #[error("Fail to write chunk into database: {0}")]
-    WriteChunk(sled::Error),
-
-    #[error("Fail to read chunk from database: {0}")]
-    ReadChunk(sled::Error),
-}
 
 #[derive(Component)]
 #[component(storage = "SparseSet")]
@@ -32,21 +20,23 @@ pub enum TerrainStorage {
 }
 
 impl TerrainStorage {
-    pub fn open_local(database: &sled::Db, namespace: impl Into<String>) -> Result<Self, Error> {
+    pub fn open_local(database: &sled::Db, namespace: impl Into<String>) -> Result<Self> {
         let tree = database
             .open_tree(namespace.into())
-            .map_err(Error::OpenNamespace)?;
+            .context("Could not find or create namespace for terrain within database.")?;
 
         Ok(Self::Local { tree })
     }
 
-    pub fn read_chunk(&self, position: &ChunkPosition) -> Result<Option<Chunk>, Error> {
+    pub fn read_chunk(&self, position: &ChunkPosition) -> Result<Option<Chunk>> {
         match self {
             TerrainStorage::None => Ok(None),
             TerrainStorage::Local { tree } => {
                 let key = position.to_database_key();
 
-                let value = tree.get(key).map_err(Error::ReadChunk)?;
+                let value = tree
+                    .get(key)
+                    .context("Failed to read chunk from database.")?;
 
                 if let Some(value) = value {
                     Ok(Some(Chunk::deserialize(&value)))
@@ -57,7 +47,7 @@ impl TerrainStorage {
         }
     }
 
-    pub fn write_chunk(&self, chunk: &Chunk, position: &ChunkPosition) -> Result<(), Error> {
+    pub fn write_chunk(&self, chunk: &Chunk, position: &ChunkPosition) -> Result<()> {
         match self {
             TerrainStorage::None => Ok(()), // We don't save it so we just do nothing.
             TerrainStorage::Local { tree } => {
@@ -65,8 +55,10 @@ impl TerrainStorage {
                 let mut value = Vec::new();
                 chunk.serialize(&mut value);
 
-                tree.insert(key, value).map_err(Error::WriteChunk)?;
-                tree.flush().map_err(Error::WriteChunk)?;
+                tree.insert(key, value)
+                    .context("Failed to insert terrain chunk into database.")?;
+                tree.flush()
+                    .context("Failed to flush terrain chunk to database.")?;
 
                 Ok(())
             }
@@ -96,15 +88,14 @@ fn load_terrain(
     mut commands: Commands,
     mut space: Query<(&TerrainStorage, &mut TerrainSpace)>,
     mut to_load: ToLoadQuery,
-) {
+) -> Result<()> {
     for (entity, parent, position, _to_load, _without_chunk) in to_load.iter_mut() {
         // This chunk will no longer need to be loaded when we're done, so remove the marker.
         let mut entity = commands.entity(entity);
         entity.remove::<ToLoad>();
 
         if let Ok((storage, mut terrain_space)) = space.get_mut(parent.get()) {
-            if let Some(chunk) = storage.read_chunk(position).unwrap() {
-                // TODO switch to error state on failure.
+            if let Some(chunk) = storage.read_chunk(position)? {
                 // Sweet, add that into the world.
                 entity.insert((
                     chunk,
@@ -126,6 +117,8 @@ fn load_terrain(
             entity.insert(ToGenerate);
         }
     }
+
+    Ok(())
 }
 
 /// Save terrain to a file.
@@ -138,6 +131,7 @@ fn save_terrain(
         if let Ok(storage) = storage.get(this_storage.get()) {
             if let Err(error) = storage.write_chunk(chunk, position) {
                 // Crashing while saving would be very bad, so just log the error.
+                // We don't remove the "ToSave" tag so that we can try again the next frame (yes, this will spam the log)
                 log::error!("Failed to save chunk: {:?}", error);
             } else {
                 // We were successful. Remove that save marker so we don't start saving every frame.
@@ -204,7 +198,7 @@ fn save_timer_trigger(
 }
 
 pub fn register_terrain_files(app: &mut App) {
-    app.add_system(load_terrain);
+    app.add_system(load_terrain.pipe(crate::error_handler));
     app.add_system(save_terrain);
     app.add_system(save_timer_start.before(super::terrain_time_tick));
     app.add_system(

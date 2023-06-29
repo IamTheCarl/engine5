@@ -1,11 +1,11 @@
-use std::collections::HashMap;
-use std::time::Duration;
-
+use anyhow::Result;
 use bevy::ecs::event::{Events, ManualEventReader};
 use bevy::input::mouse;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, PrimaryWindow};
 use ordered_float::NotNan;
+use std::collections::HashMap;
+use std::time::Duration;
 
 /// Currently just a modified version of https://crates.io/crates/bevy_flycam.
 ///
@@ -227,7 +227,7 @@ fn place_block(
     mut players: Query<(&mut BlockPlacementContext, &RayTerrainIntersectionList)>,
     mut terrain_spaces: Query<&mut TerrainSpace>,
     mut terrain: Query<&mut Chunk>,
-) {
+) -> Result<()> {
     fn place_block(
         ray: &RayTerrainIntersectionList,
         terrain_spaces: &mut Query<&mut TerrainSpace>,
@@ -282,11 +282,9 @@ fn place_block(
         }
     }
 
-    // FIXME this shouldn't just panic when it fails.
     // TODO this should be based on the player's inventory selection.
     let block = block_registry
-        .get_by_tag(&BlockTag::try_from("core:default").unwrap())
-        .unwrap()
+        .get_by_tag(&BlockTag::try_from("core:default")?)?
         .spawn();
 
     if let Ok(window) = windows.get_single() {
@@ -328,6 +326,8 @@ fn place_block(
             }
         }
     }
+
+    Ok(())
 }
 
 #[derive(Debug, Component)]
@@ -473,7 +473,7 @@ impl Plugin for PlayerPlugin {
             .add_system(player_turn.after(update_input_state))
             .add_system(player_move.after(update_input_state))
             .add_system(update_input_state) // TODO should happen before movement update.
-            .add_system(place_block)
+            .add_system(place_block.pipe(crate::error_handler))
             .add_system(remove_block)
             .add_system(cursor_grab);
     }

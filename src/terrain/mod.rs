@@ -1,3 +1,4 @@
+use anyhow::{anyhow, bail, Context, Result};
 use bevy::{
     asset::{AssetPath, LoadState},
     pbr::{StandardMaterialFlags, StandardMaterialUniform},
@@ -14,7 +15,6 @@ use bevy::{
     },
 };
 use std::{borrow::Cow, collections::HashMap, num::NonZeroU16, ops::Range, str::FromStr};
-use thiserror::Error;
 
 pub mod terrain_file;
 pub use terrain_file::TerrainStorage;
@@ -175,33 +175,6 @@ pub struct BlockTag<'a> {
     block_name: Cow<'a, str>,
 }
 
-#[derive(Error, Debug)]
-pub enum BlockTagError<'a> {
-    #[error("Failed to parse block tag: {0}")]
-    ParseError(#[from] BlockTagParseError),
-
-    #[error("A block with this tag already exists in the library.")]
-    AlreadyExists,
-
-    #[error("A block with the tag `{0}` could not be found.")]
-    NotFound(BlockTag<'a>),
-}
-
-#[derive(Error, Debug, PartialEq, Eq)]
-pub enum BlockTagParseError {
-    #[error("Could not find separating colon.")]
-    NoColon,
-
-    #[error("Could not parse block namespace from block tag.")]
-    MissingNamespace,
-
-    #[error("Could not parse block name from block tag.")]
-    MissingBlockName,
-
-    #[error("Found too many components in block name.")]
-    TooManyComponents,
-}
-
 impl<'a> BlockTag<'a> {
     pub fn to_static(&self) -> BlockTag<'static> {
         BlockTag {
@@ -210,26 +183,26 @@ impl<'a> BlockTag<'a> {
         }
     }
 
-    fn get_parts(s: &str) -> Result<(&str, &str), BlockTagParseError> {
+    fn get_parts(s: &str) -> Result<(&str, &str)> {
         if s.contains(':') {
             let mut iter = s.split(':');
             let namespace = iter
                 .next()
                 .filter(|s| !s.is_empty())
-                .map_or(Err(BlockTagParseError::MissingNamespace), Ok)?;
+                .context("Could not parse block namespace from block tag.")?;
 
             let block_name = iter
                 .next()
                 .filter(|s| !s.is_empty())
-                .map_or(Err(BlockTagParseError::MissingBlockName), Ok)?;
+                .context("Could not parse block name from block tag.")?;
 
             if iter.next().is_some() {
-                Err(BlockTagParseError::TooManyComponents)
+                bail!("Found too many components in block name.")
             } else {
                 Ok((namespace, block_name))
             }
         } else {
-            Err(BlockTagParseError::NoColon)
+            bail!("Could not find separating colon.")
         }
     }
 }
@@ -241,7 +214,7 @@ impl<'a> std::fmt::Display for BlockTag<'a> {
 }
 
 impl<'a> FromStr for BlockTag<'a> {
-    type Err = BlockTagParseError;
+    type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (namespace, block_name) = Self::get_parts(s)?;
@@ -254,7 +227,7 @@ impl<'a> FromStr for BlockTag<'a> {
 }
 
 impl<'a> TryFrom<&'a str> for BlockTag<'a> {
-    type Error = BlockTagParseError;
+    type Error = anyhow::Error;
 
     fn try_from(s: &'a str) -> Result<Self, Self::Error> {
         let (namespace, block_name) = Self::get_parts(s)?;
@@ -272,30 +245,15 @@ fn block_tag() {
     assert_eq!(tag.namespace.as_ref(), "game");
     assert_eq!(tag.block_name.as_ref(), "block");
 
-    assert_eq!(BlockTag::from_str(""), Err(BlockTagParseError::NoColon));
-    assert_eq!(BlockTag::from_str("game"), Err(BlockTagParseError::NoColon));
+    assert!(BlockTag::from_str("").is_err());
+    assert!(BlockTag::from_str("game").is_err());
 
-    assert_eq!(
-        BlockTag::from_str(":"),
-        Err(BlockTagParseError::MissingNamespace)
-    );
-    assert_eq!(
-        BlockTag::from_str(":block"),
-        Err(BlockTagParseError::MissingNamespace)
-    );
-    assert_eq!(
-        BlockTag::from_str("game:"),
-        Err(BlockTagParseError::MissingBlockName)
-    );
+    assert!(BlockTag::from_str(":").is_err());
+    assert!(BlockTag::from_str(":block").is_err());
+    assert!(BlockTag::from_str("game:").is_err());
 
-    assert_eq!(
-        BlockTag::from_str("game:block:"),
-        Err(BlockTagParseError::TooManyComponents)
-    );
-    assert_eq!(
-        BlockTag::from_str("game:block:entity"),
-        Err(BlockTagParseError::TooManyComponents)
-    );
+    assert!(BlockTag::from_str("game:block:").is_err());
+    assert!(BlockTag::from_str("game:block:entity").is_err());
 }
 
 #[derive(Resource)]
@@ -305,7 +263,7 @@ pub struct BlockRegistry {
 }
 
 impl BlockRegistry {
-    pub fn load(terrain_texture: &TerrainTextureManager) -> Result<Self, BlockTagError<'static>> {
+    pub fn load(terrain_texture: &TerrainTextureManager) -> Result<Self> {
         let mut registry = Self {
             block_data: Vec::new(),
             block_tags: HashMap::new(),
@@ -363,11 +321,11 @@ impl BlockRegistry {
         tag: BlockTag<'static>,
         name: impl Into<String>,
         faces: BlockFaces,
-    ) -> Result<(), BlockTagError<'static>> {
+    ) -> Result<()> {
         // We need to report an error if an insertion isn't done, so this will stay an error if an insertion doesn't happen.
-        let mut result = Err(BlockTagError::AlreadyExists);
+        let mut block_found = false;
         self.block_tags.entry(tag).or_insert_with(|| {
-            result = Ok(()); // We inserted! That means we can return Ok.
+            block_found = true; // We inserted! That means we can return Ok.
 
             let _name = name.into();
 
@@ -377,17 +335,23 @@ impl BlockRegistry {
             id
         });
 
-        result
+        if block_found {
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "A block with this tag already exists in the library."
+            ))
+        }
     }
 
-    pub fn get_by_tag(&self, tag: &BlockTag) -> Result<&BlockData, BlockTagError> {
+    pub fn get_by_tag(&self, tag: &BlockTag) -> Result<&BlockData> {
         let id = self
             .block_tags
             .get(tag)
-            .ok_or_else(|| BlockTagError::NotFound(tag.to_static()))?;
+            .with_context(|| format!("A block with the tag `{}` could not be found.", tag))?;
         self.block_data
             .get(id.get() as usize - 1)
-            .ok_or_else(|| BlockTagError::NotFound(tag.to_static()))
+            .with_context(|| format!("A block with the tag `{}` could not be found.", tag))
     }
 
     pub fn get(&self, block: &Block) -> Option<&BlockData> {
@@ -1088,7 +1052,7 @@ impl TerrainTextureManager {
                 Option<AssetPath<'static>>,
             ),
         >,
-    ) -> Self {
+    ) -> Result<Self> {
         // format.pixel_size() // TODO validate pixel format of images.
         let mut image_handles = Vec::new();
         let mut image_paths = HashMap::new();
@@ -1125,8 +1089,7 @@ impl TerrainTextureManager {
         }
 
         if image_handles.is_empty() {
-            // FIXME should switch to an error state.
-            panic!("No terrain images were provided.");
+            bail!("No terrain images were provided.");
         }
 
         let dimension = Extent3d {
@@ -1146,7 +1109,7 @@ impl TerrainTextureManager {
         );
         placeholder_image.reinterpret_stacked_2d_as_array(2);
 
-        Self {
+        Ok(Self {
             loading_state: TerrainLoadingState::Loading {
                 image_handles,
                 size,
@@ -1162,7 +1125,7 @@ impl TerrainTextureManager {
             occlusion_image_handle: image_resources.add(placeholder_image.clone()),
             normal_image_handle: image_resources.add(placeholder_image),
             image_paths,
-        }
+        })
     }
 
     pub fn get_image_index(&self, name: &str) -> u16 {
@@ -1185,14 +1148,14 @@ fn terrain_texture_loading(
     mut images: ResMut<Assets<Image>>,
     terrain_material: ResMut<TerrainMaterialHandle>,
     mut terrain_material_assets: ResMut<Assets<TerrainMaterial>>,
-) {
+) -> Result<()> {
     fn process_image(
         image_handle_container: &mut ImageSource,
         final_image_data: &mut Vec<u8>,
         size: &Extent3d,
         asset_server: &Res<AssetServer>,
         images: &mut ResMut<Assets<Image>>,
-    ) -> bool {
+    ) -> Result<bool> {
         match image_handle_container {
             ImageSource::Handle(image_handle) => {
                 let load_state = asset_server.get_load_state(image_handle.clone());
@@ -1201,26 +1164,24 @@ fn terrain_texture_loading(
                     LoadState::Loaded => {
                         let image = images
                             .remove(image_handle.clone())
-                            .expect("Image wasn't actually loaded."); // FIXME we need an error state in this game.
+                            .context("Image wasn't actually loaded.")?;
                         *image_handle_container = ImageSource::Loaded; // Mark that it's been transferred over.
 
                         // We need all textures to be the same size. Make sure to enforce that.
                         if image.texture_descriptor.size != *size {
-                            // FIXME this should switch us to an error state.
                             // TODO list the culprit.
-                            panic!("All textures must be of the same size and format.");
+                            bail!("All textures must be of the same size and format.");
                         }
 
                         final_image_data.extend(image.data);
 
-                        true
+                        Ok(true)
                     }
                     LoadState::Failed => {
-                        // FIXME this should switch us to an error state.
                         // TODO list the culprit.
-                        panic!("Failed to load a terrain texture.");
+                        bail!("Failed to load a terrain texture.");
                     }
-                    _ => false,
+                    _ => Ok(false),
                 }
             }
             ImageSource::Blank(fill) => {
@@ -1233,9 +1194,9 @@ fn terrain_texture_loading(
                         .flat_map(|(byte, _index)| byte),
                 );
 
-                true
+                Ok(true)
             }
-            ImageSource::Loaded => true,
+            ImageSource::Loaded => Ok(true),
         }
     }
 
@@ -1246,14 +1207,13 @@ fn terrain_texture_loading(
         final_image_handle: &Handle<Image>,
         final_image_data: Vec<u8>,
         terrain_material_image_handle: &mut Option<Handle<Image>>,
-    ) {
+    ) -> Result<()> {
         let mut pre_size = true_size; // Copies.
         pre_size.height *= num_layers;
 
-        // FIXME switch to an error state.
         let image = images
             .get_mut(final_image_handle)
-            .expect("Texture image was not initially created.");
+            .context("Texture image was not initially created.")?;
 
         *image = Image::new(
             pre_size,
@@ -1264,6 +1224,8 @@ fn terrain_texture_loading(
         image.reinterpret_stacked_2d_as_array(num_layers);
 
         *terrain_material_image_handle = Some(final_image_handle.clone());
+
+        Ok(())
     }
 
     if let TerrainLoadingState::Loading {
@@ -1286,35 +1248,35 @@ fn terrain_texture_loading(
                 size,
                 &asset_server,
                 &mut images,
-            );
+            )?;
             ready &= process_image(
                 &mut image_set.emissive,
                 emissive_image_data,
                 size,
                 &asset_server,
                 &mut images,
-            );
+            )?;
             ready &= process_image(
                 &mut image_set.metallic,
                 metallic_image_data,
                 size,
                 &asset_server,
                 &mut images,
-            );
+            )?;
             ready &= process_image(
                 &mut image_set.occlusion,
                 occlusion_image_data,
                 size,
                 &asset_server,
                 &mut images,
-            );
+            )?;
             ready &= process_image(
                 &mut image_set.normal,
                 normal_image_data,
                 size,
                 &asset_server,
                 &mut images,
-            );
+            )?;
 
             // Bail out early so we can guarantee the loading order.
             if !ready {
@@ -1349,7 +1311,7 @@ fn terrain_texture_loading(
                     &texture.color_image_handle,
                     final_color_image_data,
                     &mut terrain_material.base_color_texture,
-                );
+                )?;
 
                 finalize_image(
                     size,
@@ -1358,7 +1320,7 @@ fn terrain_texture_loading(
                     &texture.emissive_image_handle,
                     emissive_image_data,
                     &mut terrain_material.emissive_texture,
-                );
+                )?;
 
                 finalize_image(
                     size,
@@ -1367,7 +1329,7 @@ fn terrain_texture_loading(
                     &texture.metallic_image_handle,
                     metallic_image_data,
                     &mut terrain_material.metallic_roughness_texture,
-                );
+                )?;
 
                 finalize_image(
                     size,
@@ -1376,7 +1338,7 @@ fn terrain_texture_loading(
                     &texture.occlusion_image_handle,
                     occlusion_image_data,
                     &mut terrain_material.occlusion_texture,
-                );
+                )?;
 
                 finalize_image(
                     size,
@@ -1385,14 +1347,16 @@ fn terrain_texture_loading(
                     &texture.normal_image_handle,
                     final_normal_image_data,
                     &mut terrain_material.normal_map_texture,
-                );
+                )?;
 
                 log::info!("Terrain data loaded and ready.");
             } else {
-                panic!("Texture was not loading."); // FIXME This should change to an error state.
+                bail!("Texture was not loading.");
             }
         }
     }
+
+    Ok(())
 }
 
 pub type ChunkIndex = IVec3;
@@ -1463,7 +1427,7 @@ fn terrain_setup(
     asset_server: Res<AssetServer>,
     mut image_resources: ResMut<Assets<Image>>,
     mut terrain_material_assets: ResMut<Assets<TerrainMaterial>>,
-) {
+) -> anyhow::Result<()> {
     // For terrain rendering.
     let terrain_texture = TerrainTextureManager::new(
         &asset_server,
@@ -1507,7 +1471,7 @@ fn terrain_setup(
             ),
         ]
         .drain(..),
-    );
+    )?;
 
     let block_registry = BlockRegistry::load(&terrain_texture).unwrap();
     // let stone_tag = BlockTag::try_from("core:stone").unwrap();
@@ -1629,6 +1593,8 @@ fn terrain_setup(
     //         rotational: 0.5,
     //     },
     // ));
+
+    Ok(())
 }
 
 #[derive(Component)]
@@ -1660,10 +1626,14 @@ impl Plugin for TerrainPlugin {
         app.add_plugin(MaterialPlugin::<TerrainMaterial>::default());
 
         app.configure_set(TerrainPlugin);
-        app.add_startup_system(terrain_setup.in_set(TerrainPlugin));
+        app.add_startup_system(
+            terrain_setup
+                .pipe(crate::error_handler)
+                .in_set(TerrainPlugin),
+        );
 
         app.add_system(generate_chunk_mesh);
-        app.add_system(terrain_texture_loading);
+        app.add_system(terrain_texture_loading.pipe(crate::error_handler));
 
         app.add_system(terrain_time_tick.in_schedule(CoreSchedule::FixedUpdate));
 

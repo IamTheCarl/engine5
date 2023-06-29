@@ -258,7 +258,6 @@ pub fn check_for_intersections(
     }
 }
 
-// TODO eventually this should become unnecessary.
 pub fn debug_render(
     rays: Query<&mut RayTerrainIntersectionList>,
     terrain_spaces: Query<&Position>,

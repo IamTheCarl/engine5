@@ -1,7 +1,7 @@
 use super::{
-    terrain_file::{TerrainFile, ToLoad},
+    terrain_file::{TerrainStorage, ToLoad, ToSave},
     Block, Chunk, ChunkIndex, ChunkPosition, GlobalBlockCoordinate, LocalBlockCoordinate,
-    PreChunkBundle,
+    PreChunkBundle, TerrainTime,
 };
 use crate::physics::Position;
 use bevy::{
@@ -10,7 +10,7 @@ use bevy::{
 };
 use std::collections::{HashMap, HashSet};
 
-const CHUNK_TIME_TO_LIVE_MS: usize = 5;
+pub const CHUNK_TIME_TO_LIVE_TICKS: usize = 30;
 
 #[derive(Component)]
 pub struct LoadsTerrain {
@@ -23,13 +23,8 @@ pub struct LoadAllTerrain;
 
 #[derive(Component)]
 struct ActiveTerrainTimer {
-    // How many ticks are we to keep it alive for.
+    /// How many ticks are we to keep it alive for.
     deadline: usize,
-}
-
-#[derive(Resource)]
-struct TerrainTime {
-    time: usize,
 }
 
 #[derive(Component, Default)]
@@ -181,7 +176,7 @@ fn block_index_calculation() {
 pub struct TerrainSpaceBundle {
     pub terrain_space: TerrainSpace,
     pub position: Position,
-    pub file: TerrainFile,
+    pub file: TerrainStorage,
     pub transform: Transform,
     pub global_transform: GlobalTransform,
     pub visibility: Visibility,
@@ -196,7 +191,7 @@ impl Default for TerrainSpaceBundle {
                 translation: Vec3::ZERO,
                 rotation: 0.0,
             },
-            file: TerrainFile::new(), // TODO I need a way to set this to None.
+            file: TerrainStorage::None,
             transform: Default::default(),
             global_transform: Default::default(),
             visibility: Default::default(),
@@ -210,7 +205,7 @@ fn load_all_terrain(
     mut spaces: Query<(
         Entity,
         &mut TerrainSpace,
-        &TerrainFile,
+        &TerrainStorage,
         With<LoadAllTerrain>,
     )>,
 ) {
@@ -231,10 +226,10 @@ fn load_all_terrain(
 fn load_terrain(
     mut commands: Commands,
     terrain_loaders: Query<(&Position, &LoadsTerrain)>,
-    mut terrain_spaces: Query<(Entity, &Position, &mut TerrainSpace, With<TerrainFile>)>,
+    mut terrain_spaces: Query<(Entity, &Position, &mut TerrainSpace, With<TerrainStorage>)>,
     terrain_time: Res<TerrainTime>,
 ) {
-    let despawn_deadline = terrain_time.time + CHUNK_TIME_TO_LIVE_MS;
+    let despawn_deadline = terrain_time.time + CHUNK_TIME_TO_LIVE_TICKS;
 
     for (space_entity, space_position, mut space, _terrain_file) in terrain_spaces.iter_mut() {
         for (loader_position, loads_terrain) in terrain_loaders.iter() {
@@ -267,38 +262,61 @@ fn load_terrain(
     }
 }
 
-fn clean_up_chunks(
-    mut commands: Commands,
-    chunks: Query<(
-        Entity,
-        With<Chunk>,
-        &ActiveTerrainTimer,
-        &ChunkPosition,
-        &Parent,
-    )>,
-    mut terrain_spaces: Query<&mut TerrainSpace>,
-    mut terrain_time: ResMut<TerrainTime>,
-) {
-    for (chunk_entity, _chunk, timer, position, terrain_space) in chunks.iter() {
-        if timer.deadline <= terrain_time.time {
-            // Your time has come. It is time to die.
-            let mut space = terrain_spaces
-                .get_mut(terrain_space.get())
-                .expect("Chunk without a space found.");
+#[derive(Component)]
+#[component(storage = "SparseSet")]
+pub struct ToDelete;
 
-            space.loaded_terrain.remove(&position.index);
-            space.non_empty_chunks.remove(&chunk_entity);
-            commands.entity(chunk_entity).despawn();
+fn mark_chunk_for_save_and_delete(
+    mut commands: Commands,
+    chunks: Query<(Entity, With<Chunk>, &ActiveTerrainTimer)>,
+    terrain_time: Res<TerrainTime>,
+) {
+    for (chunk_entity, _chunk, timer) in chunks.iter() {
+        if timer.deadline <= terrain_time.time {
+            commands
+                .entity(chunk_entity)
+                .remove::<ActiveTerrainTimer>()
+                .insert((ToSave, ToDelete));
         }
     }
+}
 
-    terrain_time.time += 1;
+type DeleteChunksQuery<'a, 'b, 'c, 'd> = Query<
+    'a,
+    'b,
+    (
+        Entity,
+        With<ToDelete>,
+        Without<ToSave>,
+        &'c ChunkPosition,
+        &'d Parent,
+    ),
+>;
+
+fn delete_chunks(
+    mut commands: Commands,
+    chunks: DeleteChunksQuery,
+    mut terrain_spaces: Query<&mut TerrainSpace>,
+) {
+    for (chunk_entity, _with_to_delete, _without_to_save, position, terrain_space) in chunks.iter()
+    {
+        // Your time has come. It is time to die.
+        let mut space = terrain_spaces
+            .get_mut(terrain_space.get())
+            .expect("Chunk without a space found.");
+
+        space.loaded_terrain.remove(&position.index);
+        space.non_empty_chunks.remove(&chunk_entity);
+        commands.entity(chunk_entity).despawn();
+    }
 }
 
 #[derive(Component)]
 #[component(storage = "SparseSet")]
 pub struct Initialized;
 
+/// Just loads the first chunk to get the whole chunk loading.
+/// This will probably be replaced with something more robust later.
 fn bootstrap_terrain_space(
     mut commands: Commands,
     mut spaces: Query<(
@@ -309,7 +327,7 @@ fn bootstrap_terrain_space(
     )>,
     terrain_time: Res<TerrainTime>,
 ) {
-    let despawn_deadline = terrain_time.time + CHUNK_TIME_TO_LIVE_MS;
+    let despawn_deadline = terrain_time.time + CHUNK_TIME_TO_LIVE_TICKS;
 
     for (space_entity, mut space, _without_initialized, _without_load_all_terrain) in
         spaces.iter_mut()
@@ -348,6 +366,14 @@ pub fn register_terrain_space(app: &mut App) {
     // We don't run this after `load_all_terrain` because that terrain doesn't dynamically unload.
     app.configure_set(UnloadTerrain.after(LoadTerrain));
 
-    app.insert_resource(FixedTime::new_from_secs(0.1))
-        .add_system(clean_up_chunks.in_set(UnloadTerrain));
+    app.add_system(
+        delete_chunks
+            .before(super::terrain_time_tick)
+            .in_set(UnloadTerrain),
+    );
+    app.add_system(
+        mark_chunk_for_save_and_delete
+            .before(delete_chunks)
+            .in_set(UnloadTerrain),
+    );
 }

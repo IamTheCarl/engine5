@@ -1,14 +1,19 @@
+use std::{path::Path, sync::Arc};
+
 use bevy::prelude::*;
 use bevy_prototype_debug_lines::DebugLinesPlugin;
 use physics::{Position, Velocity};
+use player::create_player;
 use terrain::{
-    BlockRegistry, BlockTag, OscillatingHills, TerrainFile, TerrainSpace, TerrainSpaceBundle,
+    BlockRegistry, BlockTag, OscillatingHills, TerrainSpace, TerrainSpaceBundle, TerrainStorage,
 };
 // use bevy_flycam::PlayerPlugin;
 
 pub mod physics;
 pub mod player;
 pub mod terrain;
+
+pub mod file_paths;
 
 fn main() {
     App::new()
@@ -49,6 +54,9 @@ fn setup(mut commands: Commands, block_registry: Res<BlockRegistry>) {
     let default_data = block_registry.get_by_tag(&default_tag).unwrap();
     let default_block = default_data.spawn();
 
+    let world_database =
+        Arc::new(sled::open(Path::new(file_paths::SAVE_DIRECTORY).join("test")).unwrap()); //  FIXME we need an error state.
+
     commands.spawn((
         TerrainSpaceBundle {
             terrain_space: TerrainSpace::default(),
@@ -56,7 +64,7 @@ fn setup(mut commands: Commands, block_registry: Res<BlockRegistry>) {
                 translation: Vec3::ZERO,
                 rotation: 0.0,
             },
-            file: TerrainFile::new(),
+            file: TerrainStorage::open_local(&world_database, "overworld").unwrap(), // FIXME we need an error state.
             transform: Transform::default(),
             global_transform: GlobalTransform::default(),
             visibility: Visibility::Inherited,
@@ -66,6 +74,7 @@ fn setup(mut commands: Commands, block_registry: Res<BlockRegistry>) {
             block: default_block,
             rate: 512,
             depth: 16,
+            database: world_database,
         },
         // FlatWorld {
         //     block: default_block,
@@ -81,4 +90,12 @@ fn setup(mut commands: Commands, block_registry: Res<BlockRegistry>) {
             rotational: 0.0,
         },
     ));
+
+    create_player(
+        &mut commands,
+        Position {
+            translation: Vec3::new(8.0, 24.0, 8.0),
+            rotation: 0.0,
+        },
+    );
 }

@@ -17,7 +17,7 @@ use std::{borrow::Cow, collections::HashMap, num::NonZeroU16, ops::Range, str::F
 use thiserror::Error;
 
 pub mod terrain_file;
-pub use terrain_file::TerrainFile;
+pub use terrain_file::TerrainStorage;
 
 pub mod terrain_generation;
 pub use terrain_generation::*;
@@ -26,6 +26,15 @@ pub mod terrain_space;
 pub use terrain_space::{
     LoadAllTerrain, LoadTerrain, LoadsTerrain, TerrainSpace, TerrainSpaceBundle,
 };
+
+#[derive(Resource)]
+pub struct TerrainTime {
+    time: usize,
+}
+
+fn terrain_time_tick(mut terrain_time: ResMut<TerrainTime>) {
+    terrain_time.time += 1;
+}
 
 type BlockID = NonZeroU16;
 pub type GlobalBlockCoordinate = IVec3;
@@ -621,6 +630,40 @@ impl Chunk {
         Self {
             blocks: [[[block; Self::CHUNK_DIAMETER as usize]; Self::CHUNK_DIAMETER as usize];
                 Self::CHUNK_DIAMETER as usize],
+        }
+    }
+
+    pub fn deserialize(buffer: &[u8]) -> Self {
+        let mut blocks = [[[None; Self::CHUNK_DIAMETER as usize]; Self::CHUNK_DIAMETER as usize];
+            Self::CHUNK_DIAMETER as usize];
+
+        let block_iter = blocks
+            .iter_mut()
+            .flat_map(|array| array.iter_mut())
+            .flat_map(|array| array.iter_mut());
+
+        for (block_memory, block_bytes_reference) in
+            block_iter.zip(buffer.chunks((BlockID::BITS / 8) as usize))
+        {
+            let mut block_bytes = [0; (BlockID::BITS / 8) as usize];
+            block_bytes.copy_from_slice(block_bytes_reference);
+            let block_id = u16::from_le_bytes(block_bytes);
+
+            *block_memory = BlockID::new(block_id).map(|id| Block { id });
+        }
+
+        Self { blocks }
+    }
+
+    pub fn serialize(&self, buffer: &mut Vec<u8>) {
+        for (_position, block) in self.iter() {
+            let block_id = match block {
+                Some(block_id) => block_id.id.get(),
+                None => 0,
+            };
+            let block_id = block_id.to_le_bytes();
+
+            buffer.extend(block_id.iter());
         }
     }
 
@@ -1369,6 +1412,30 @@ impl ChunkPosition {
     pub fn as_block_coordinate(&self) -> GlobalBlockCoordinate {
         self.index * IVec3::splat(Chunk::CHUNK_DIAMETER)
     }
+
+    pub fn to_database_key(&self) -> [u8; 12] {
+        let x = self.index.x.to_be_bytes();
+        let y = self.index.y.to_be_bytes();
+        let z = self.index.z.to_be_bytes();
+
+        [
+            x[0], x[1], x[2], x[3], y[0], y[1], y[2], y[3], z[0], z[1], z[2], z[3],
+        ]
+    }
+
+    pub fn from_database_key(key: [u8; 12]) -> Self {
+        let x = [key[0], key[1], key[2], key[3]];
+        let y = [key[4], key[5], key[6], key[7]];
+        let z = [key[8], key[9], key[10], key[11]];
+
+        let x = i32::from_be_bytes(x);
+        let y = i32::from_be_bytes(y);
+        let z = i32::from_be_bytes(z);
+
+        Self {
+            index: IVec3::new(x, y, z),
+        }
+    }
 }
 
 // It's everything a chunk needs, except the chunk.
@@ -1597,6 +1664,8 @@ impl Plugin for TerrainPlugin {
 
         app.add_system(generate_chunk_mesh);
         app.add_system(terrain_texture_loading);
+
+        app.add_system(terrain_time_tick.in_schedule(CoreSchedule::FixedUpdate));
 
         terrain_file::register_terrain_files(app);
         terrain_generation::register_terrain_generators(app);

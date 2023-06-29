@@ -1,14 +1,17 @@
+use std::sync::Arc;
+
 use bevy::{math::Vec3Swizzles, prelude::*};
 use ordered_float::NotNan;
 
 use crate::{
     physics::{Cylinder, Position, SpatialHashOffset, Velocity},
     player::create_player,
+    terrain::terrain_file::ToSave,
 };
 
 use super::{
-    Block, Chunk, ChunkIndex, ChunkPosition, LocalBlockCoordinate, TerrainFile, TerrainSpace,
-    TerrainSpaceBundle, UpdateMesh,
+    Block, Chunk, ChunkIndex, ChunkPosition, LocalBlockCoordinate, TerrainSpace,
+    TerrainSpaceBundle, TerrainStorage, UpdateMesh,
 };
 
 #[derive(Component)]
@@ -80,6 +83,7 @@ pub struct OscillatingHills {
     pub block: Block,
     pub rate: i32,
     pub depth: i32,
+    pub database: Arc<sled::Db>,
 }
 
 fn oscillating_hills_generator(
@@ -95,7 +99,7 @@ fn oscillating_hills_generator(
                     translation: Vec3::new(-24.0, 32.0, 0.0),
                     rotation: 0.0,
                 },
-                file: TerrainFile::new(),
+                file: TerrainStorage::open_local(&context.database, "spinning_chunk").unwrap(), // TODO we need to switch to some kind of error state. TODO we need to generate names rather than hard-code them.
                 transform: Transform::default(),
                 global_transform: GlobalTransform::default(),
                 visibility: Visibility::Inherited,
@@ -140,13 +144,13 @@ fn oscillating_hills_generator(
             let middle = Chunk::CHUNK_DIAMETER / 2;
 
             let height = calculate_height_for_index(IVec2::splat(middle));
-            create_player(
-                commands,
-                Position {
-                    translation: Vec3::new(middle as f32, height, middle as f32),
-                    rotation: 0.0,
-                },
-            );
+            // create_player(
+            //     commands,
+            //     Position {
+            //         translation: Vec3::new(middle as f32, height, middle as f32),
+            //         rotation: 0.0,
+            //     },
+            // );
         }
 
         if chunk_position.index == ChunkIndex::new(0, 0, 1) {
@@ -295,6 +299,7 @@ where
                             SpatialHashOffset {
                                 translation: Vec3::new(8.0, 0.0, 8.0),
                             },
+                            ToSave, // We just went through the effort to generate it, might as well save it while we're at it.
                         ));
 
                         if let Some(chunk) = chunk {

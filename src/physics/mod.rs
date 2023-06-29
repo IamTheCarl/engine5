@@ -510,8 +510,10 @@ impl Plugin for PhysicsPlugin {
         app.add_system(add_debug_mesh_cylinders.in_set(PhysicsPlugin));
         app.add_system(remove_debug_mesh_cylinders.in_set(PhysicsPlugin));
 
+        // TODO we should consider tieing this to a fixed time step.
         app.add_system(update_movement.in_set(PhysicsPlugin));
 
+        // TODO we should take advantage of the "Modified" tag so we only do collision checks on things that actually move.
         app.configure_set(CollisionCheck.after(update_movement).in_set(PhysicsPlugin));
         app.add_system(cylinder_to_cylinder::check_for_intersections.in_set(CollisionCheck));
         app.add_system(cylinder_to_terrain::check_for_intersections.in_set(CollisionCheck));

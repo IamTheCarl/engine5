@@ -1,19 +1,11 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use bevy::prelude::*;
 use bevy_prototype_debug_lines::DebugLinesPlugin;
-use physics::{Position, Velocity};
-use player::create_player;
-use std::{path::Path, sync::Arc};
-use terrain::{
-    BlockRegistry, BlockTag, OscillatingHills, TerrainSpace, TerrainSpaceBundle, TerrainStorage,
-};
-// use bevy_flycam::PlayerPlugin;
-
-pub mod physics;
-pub mod player;
-pub mod terrain;
+use std::path::Path;
+use world::terrain::BlockRegistry;
 
 pub mod file_paths;
+pub mod world;
 
 fn main() {
     App::new()
@@ -33,16 +25,14 @@ impl Engine5 {
 
 impl Plugin for Engine5 {
     fn build(&self, app: &mut App) {
-        app.add_plugin(terrain::TerrainPlugin);
-        app.add_plugin(physics::PhysicsPlugin);
-        app.add_plugin(player::PlayerPlugin);
+        app.add_plugin(world::WorldPlugin);
         app.add_plugin(DebugLinesPlugin::default());
         // TODO enable DBand dithering once you have control of the camera.
 
-        app.configure_set(Engine5.after(terrain::TerrainPlugin));
+        app.configure_set(Engine5.after(world::terrain::TerrainPlugin));
         app.add_startup_system(
             apply_system_buffers
-                .after(terrain::TerrainPlugin)
+                .after(world::terrain::TerrainPlugin)
                 .before(Engine5),
         );
         app.add_startup_system(setup.pipe(error_handler).in_set(Engine5));
@@ -50,57 +40,21 @@ impl Plugin for Engine5 {
 }
 
 fn setup(mut commands: Commands, block_registry: Res<BlockRegistry>) -> Result<()> {
-    let default_tag = BlockTag::try_from("core:default").unwrap();
-    let default_data = block_registry.get_by_tag(&default_tag).unwrap();
-    let default_block = default_data.spawn();
+    // TODO make this accessible from a menu or terminal.
+    commands.insert_resource(DebugRenderSettings {
+        cylinders: true,
+        cylinder_terrain_checks: false,
+        hashing_center_point: false,
+        cylinder_cylinder_checks: false,
+        terrain_terrain_checks: false,
+        terrain_ray_casts: false,
+    });
 
-    let world_database = Arc::new(
-        sled::open(Path::new(file_paths::SAVE_DIRECTORY).join("test"))
-            .context("Failed to open or create database for world.")?,
-    );
-
-    commands.spawn((
-        TerrainSpaceBundle {
-            terrain_space: TerrainSpace::default(),
-            position: Position {
-                translation: Vec3::ZERO,
-                rotation: 0.0,
-            },
-            file: TerrainStorage::open_local(&world_database, "overworld")
-                .context("Failed to open namespace for overworld terrain.")?,
-            transform: Transform::default(),
-            global_transform: GlobalTransform::default(),
-            visibility: Visibility::Inherited,
-            computed_visibility: ComputedVisibility::default(),
-        },
-        OscillatingHills {
-            block: default_block,
-            rate: 512,
-            depth: 16,
-            database: world_database,
-        },
-        // FlatWorld {
-        //     block: default_block,
-        // },
-        // CheckerBoard {
-        //     even_block: default_block,
-        //     odd_block: default_block,
-        //     even_height: 1,
-        //     odd_height: 3,
-        // },
-        Velocity {
-            translation: Vec3::ZERO,
-            rotational: 0.0,
-        },
-    ));
-
-    create_player(
+    world::spawn_world(
         &mut commands,
-        Position {
-            translation: Vec3::new(8.0, 24.0, 8.0),
-            rotation: 0.0,
-        },
-    );
+        &block_registry,
+        Path::new(file_paths::SAVE_DIRECTORY).join("test"),
+    )?;
 
     Ok(())
 }
@@ -108,6 +62,16 @@ fn setup(mut commands: Commands, block_registry: Res<BlockRegistry>) -> Result<(
 pub fn error_handler(In(result): In<anyhow::Result<()>>) {
     if let Err(error) = result {
         log::error!("Fatal Error: {:?}", error);
-        std::process::exit(1);
+        std::process::exit(1); // TODO I'd like a more graceful shutdown. One that saves the world and displays an error message in the window.
     }
+}
+
+#[derive(Resource)]
+pub struct DebugRenderSettings {
+    cylinders: bool,
+    cylinder_terrain_checks: bool,
+    hashing_center_point: bool,
+    cylinder_cylinder_checks: bool,
+    terrain_terrain_checks: bool,
+    terrain_ray_casts: bool,
 }

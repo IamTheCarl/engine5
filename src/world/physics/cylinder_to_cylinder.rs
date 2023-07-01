@@ -3,7 +3,9 @@ use std::collections::HashSet;
 use bevy::{math::Vec3Swizzles, prelude::*};
 use bevy_prototype_debug_lines::DebugLines;
 
-use super::{Cylinder, DebugRenderSettings, Position, SpatialHash, SpatialObjectTracker};
+use crate::world::spatial_entities::{SpatialHash, SpatialObjectTracker};
+
+use super::{Cylinder, DebugRenderSettings, Position};
 
 pub(super) fn check_for_intersections(
     mut cylinders: Query<(Entity, &SpatialHash, &mut Position, &Cylinder)>,

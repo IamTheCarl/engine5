@@ -1,17 +1,21 @@
 use anyhow::{Context, Result};
 use bevy::prelude::*;
 
-use crate::physics::SpatialHashOffset;
+use crate::world::spatial_entities::SpatialHashOffset;
 
 use super::{
-    terrain_generation::ToGenerate, Chunk, ChunkPosition, TerrainSpace, TerrainTime, UpdateMesh,
+    super::generation::GenerateTerrain, Chunk, ChunkPosition, TerrainSpace, TerrainTime, UpdateMesh,
 };
 
 pub const CHUNK_TIME_TO_SAVE: usize = 60 * 5;
 
 #[derive(Component)]
 #[component(storage = "SparseSet")]
-pub struct ToLoad;
+pub struct ToLoadTerrain;
+
+#[derive(Component)]
+#[component(storage = "SparseSet")]
+pub struct ToSaveTerrain;
 
 #[derive(Component)]
 pub enum TerrainStorage {
@@ -78,7 +82,7 @@ type ToLoadQuery<'a, 'b, 'c, 'd> = Query<
         Entity,
         &'c Parent,
         &'d ChunkPosition,
-        With<ToLoad>,
+        With<ToLoadTerrain>,
         Without<Chunk>,
     ),
 >;
@@ -92,7 +96,7 @@ fn load_terrain(
     for (entity, parent, position, _to_load, _without_chunk) in to_load.iter_mut() {
         // This chunk will no longer need to be loaded when we're done, so remove the marker.
         let mut entity = commands.entity(entity);
-        entity.remove::<ToLoad>();
+        entity.remove::<ToLoadTerrain>();
 
         if let Ok((storage, mut terrain_space)) = space.get_mut(parent.get()) {
             if let Some(chunk) = storage.read_chunk(position)? {
@@ -109,12 +113,12 @@ fn load_terrain(
                 terrain_space.non_empty_chunks.insert(entity.id());
             } else {
                 // Looks like it wasn't in the storage.
-                entity.insert(ToGenerate);
+                entity.insert(GenerateTerrain);
             }
         } else {
             // Looks like we couldn't get the storage for it. Generate it.
             log::warn!("Failed to get storage for terrain chunk.");
-            entity.insert(ToGenerate);
+            entity.insert(GenerateTerrain);
         }
     }
 
@@ -125,7 +129,7 @@ fn load_terrain(
 fn save_terrain(
     mut commands: Commands,
     storage: Query<&TerrainStorage>,
-    terrain: Query<(Entity, &Parent, &ChunkPosition, &Chunk, With<ToSave>)>,
+    terrain: Query<(Entity, &Parent, &ChunkPosition, &Chunk, With<ToSaveTerrain>)>,
 ) {
     for (entity, this_storage, position, chunk, _to_save) in terrain.iter() {
         if let Ok(storage) = storage.get(this_storage.get()) {
@@ -135,7 +139,7 @@ fn save_terrain(
                 log::error!("Failed to save chunk: {:?}", error);
             } else {
                 // We were successful. Remove that save marker so we don't start saving every frame.
-                commands.entity(entity).remove::<ToSave>();
+                commands.entity(entity).remove::<ToSaveTerrain>();
             }
         }
     }
@@ -147,19 +151,15 @@ struct SaveTimer {
     deadline: usize,
 }
 
-#[derive(Component)]
-#[component(storage = "SparseSet")]
-pub struct ToSave;
-
 type SaveTimerStartTerrainQuery<'a, 'b> = Query<
     'a,
     'b,
     (
         Entity,
         With<Chunk>,
-        Without<ToLoad>,
-        Without<ToGenerate>,
-        Without<ToSave>,
+        Without<ToLoadTerrain>,
+        Without<GenerateTerrain>,
+        Without<ToSaveTerrain>,
     ),
     Changed<Chunk>,
 >;
@@ -192,7 +192,10 @@ fn save_timer_trigger(
     for (entity, _chunk, save_timer) in terrain.iter() {
         if save_timer.deadline <= terrain_time.time {
             // Okay good, remove that timer so we don't start saving every frame.
-            commands.entity(entity).remove::<SaveTimer>().insert(ToSave);
+            commands
+                .entity(entity)
+                .remove::<SaveTimer>()
+                .insert(ToSaveTerrain);
         }
     }
 }

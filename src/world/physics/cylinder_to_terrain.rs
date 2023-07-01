@@ -1,9 +1,12 @@
 use bevy::{math::Vec3Swizzles, prelude::*};
 use bevy_prototype_debug_lines::DebugLines;
 
-use crate::terrain::{Chunk, ChunkPosition, LocalBlockCoordinate, TerrainSpace};
+use crate::world::{
+    spatial_entities::SpatialHash,
+    terrain::{Chunk, ChunkPosition, LocalBlockCoordinate, TerrainSpace},
+};
 
-use super::{Cylinder, DebugRenderSettings, Position, SpatialHash};
+use super::{Cylinder, DebugRenderSettings, Position};
 
 pub(super) fn check_for_intersections(
     mut cylinders: Query<(

@@ -14,13 +14,12 @@ use bevy::{
         texture::Volume,
     },
 };
-use std::{borrow::Cow, collections::HashMap, num::NonZeroU16, ops::Range, str::FromStr};
+use std::{
+    borrow::Cow, collections::HashMap, mem::size_of, num::NonZeroU16, ops::Range, str::FromStr,
+};
 
-pub mod terrain_file;
-pub use terrain_file::TerrainStorage;
-
-pub mod terrain_generation;
-pub use terrain_generation::*;
+pub mod storage;
+pub use storage::TerrainStorage;
 
 pub mod terrain_space;
 pub use terrain_space::{
@@ -607,9 +606,9 @@ impl Chunk {
             .flat_map(|array| array.iter_mut());
 
         for (block_memory, block_bytes_reference) in
-            block_iter.zip(buffer.chunks((BlockID::BITS / 8) as usize))
+            block_iter.zip(buffer.chunks(size_of::<BlockID>()))
         {
-            let mut block_bytes = [0; (BlockID::BITS / 8) as usize];
+            let mut block_bytes = [0; size_of::<BlockID>()];
             block_bytes.copy_from_slice(block_bytes_reference);
             let block_id = u16::from_le_bytes(block_bytes);
 
@@ -1474,37 +1473,6 @@ fn terrain_setup(
     )?;
 
     let block_registry = BlockRegistry::load(&terrain_texture).unwrap();
-    // let stone_tag = BlockTag::try_from("core:stone").unwrap();
-    // let stone_data = block_registry.get_by_tag(&stone_tag).unwrap();
-    // let stone_block = stone_data.spawn();
-    // let dirt_tag = BlockTag::try_from("core:dirt").unwrap();
-    // let dirt_data = block_registry.get_by_tag(&dirt_tag).unwrap();
-    // let dirt_block = dirt_data.spawn();
-    // let default_tag = BlockTag::try_from("core:default").unwrap();
-    // let default_data = block_registry.get_by_tag(&default_tag).unwrap();
-    // let default_block = default_data.spawn();
-
-    // let mut hump_chunk = Chunk::new(Some(default_block));
-    // for (position, block) in hump_chunk.iter_mut() {
-    //     let position = position.as_vec3();
-
-    //     let height = ((position.x / 16.0) * std::f64::consts::PI as f32).sin()
-    //         * ((position.z / 16.0) * std::f64::consts::PI as f32).sin()
-    //         * 16.0;
-    //     if position.y > height {
-    //         *block = None;
-    //     }
-    //     //  else if (position.x % 2f32) == 0f32 {
-    //     //     chunk
-    //     //         .set_block_local(
-    //     //             BlockLocalCoordinate::new(x as i8, y as i8, z as i8),
-    //     //             Some(dirt_block),
-    //     //         )
-    //     //         .ok();
-    //     // }
-    // }
-
-    // let box_chunk = Chunk::new(Some(default_block));
 
     let mut terrain_material = TerrainMaterial::new(&terrain_texture);
     terrain_material.reflectance = 0.0;
@@ -1513,86 +1481,6 @@ fn terrain_setup(
     commands.insert_resource(block_registry);
     commands.insert_resource(TerrainMaterialHandle(terrain_material_handle));
     commands.insert_resource(terrain_texture);
-
-    // commands.spawn((
-    //     hump_chunk.clone(),
-    //     Position {
-    //         translation: Vec3::new(0.0, 0.0, 0.0),
-    //         rotation: 0.0,
-    //     },
-    //     SpatialHashOffset {
-    //         translation: Vec3::new(8.0, 0.0, 8.0),
-    //     },
-    // ));
-    // commands.spawn((
-    //     hump_chunk.clone(),
-    //     Position {
-    //         translation: Vec3::new(0.0, 0.0, 16.0),
-    //         rotation: 0.0,
-    //     },
-    //     SpatialHashOffset {
-    //         translation: Vec3::new(8.0, 0.0, 8.0),
-    //     },
-    // ));
-
-    // commands.spawn((
-    //     box_chunk.clone(),
-    //     Position {
-    //         translation: Vec3::new(-16.0, 0.0, 0.0),
-    //         rotation: 0.0,
-    //     },
-    //     SpatialHashOffset {
-    //         translation: Vec3::new(8.0, 0.0, 8.0),
-    //     },
-    // ));
-    // commands.spawn((
-    //     box_chunk,
-    //     Position {
-    //         translation: Vec3::new(-16.0, 0.0, 16.0),
-    //         rotation: 0.0,
-    //     },
-    //     SpatialHashOffset {
-    //         translation: Vec3::new(8.0, 0.0, 8.0),
-    //     },
-    // ));
-
-    // commands.spawn((
-    //     hump_chunk.clone(),
-    //     Position {
-    //         translation: Vec3::new(16.0, 0.0, 0.0),
-    //         rotation: std::f64::consts::FRAC_PI_4 as f32,
-    //     },
-    //     SpatialHashOffset {
-    //         translation: Vec3::new(8.0, 0.0, 8.0),
-    //     },
-    // ));
-    // commands.spawn((
-    //     hump_chunk.clone(),
-    //     Position {
-    //         translation: Vec3::new(16.0, 0.0, 0.0)
-    //             + Quat::from_rotation_y(std::f64::consts::FRAC_PI_4 as f32)
-    //                 * Vec3::new(16.0, 0.0, 0.0),
-    //         rotation: std::f64::consts::FRAC_PI_4 as f32,
-    //     },
-    //     SpatialHashOffset {
-    //         translation: Vec3::new(8.0, 0.0, 8.0),
-    //     },
-    // ));
-
-    // commands.spawn((
-    //     hump_chunk,
-    //     Position {
-    //         translation: Vec3::new(-32.0, 0.0, 0.0),
-    //         rotation: std::f64::consts::FRAC_PI_4 as f32,
-    //     },
-    //     SpatialHashOffset {
-    //         translation: Vec3::new(8.0, 0.0, 8.0),
-    //     },
-    //     Velocity {
-    //         translation: Vec3::ZERO,
-    //         rotational: 0.5,
-    //     },
-    // ));
 
     Ok(())
 }
@@ -1637,8 +1525,7 @@ impl Plugin for TerrainPlugin {
 
         app.add_system(terrain_time_tick.in_schedule(CoreSchedule::FixedUpdate));
 
-        terrain_file::register_terrain_files(app);
-        terrain_generation::register_terrain_generators(app);
+        storage::register_terrain_files(app);
         terrain_space::register_terrain_space(app);
     }
 }

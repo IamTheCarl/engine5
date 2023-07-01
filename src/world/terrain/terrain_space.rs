@@ -1,9 +1,9 @@
 use super::{
-    terrain_file::{TerrainStorage, ToLoad, ToSave},
+    storage::{TerrainStorage, ToLoadTerrain, ToSaveTerrain},
     Block, Chunk, ChunkIndex, ChunkPosition, GlobalBlockCoordinate, LocalBlockCoordinate,
     PreChunkBundle, TerrainTime,
 };
-use crate::physics::Position;
+use crate::world::{physics::Position, spatial_entities::storage::ToLoadSpatial};
 use bevy::{
     ecs::query::{ReadOnlyWorldQuery, WorldQuery},
     prelude::*,
@@ -30,7 +30,7 @@ struct ActiveTerrainTimer {
 #[derive(Component, Default)]
 pub struct TerrainSpace {
     loaded_terrain: HashMap<ChunkIndex, Entity>,
-    pub(super) non_empty_chunks: HashSet<Entity>,
+    pub(crate) non_empty_chunks: HashSet<Entity>,
 }
 
 impl TerrainSpace {
@@ -68,7 +68,8 @@ impl TerrainSpace {
                         chunk_position,
                         ..Default::default()
                     },
-                    ToLoad, // Mark that this terrain needs to be loaded.
+                    ToLoadTerrain, // Mark that this terrain needs to be loaded.
+                    ToLoadSpatial,
                 ));
                 entity.set_parent(space_entity);
 
@@ -276,7 +277,7 @@ fn mark_chunk_for_save_and_delete(
             commands
                 .entity(chunk_entity)
                 .remove::<ActiveTerrainTimer>()
-                .insert((ToSave, ToDelete));
+                .insert((ToSaveTerrain, ToDelete));
         }
     }
 }
@@ -287,7 +288,7 @@ type DeleteChunksQuery<'a, 'b, 'c, 'd> = Query<
     (
         Entity,
         With<ToDelete>,
-        Without<ToSave>,
+        Without<ToSaveTerrain>,
         &'c ChunkPosition,
         &'d Parent,
     ),

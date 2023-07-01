@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy_prototype_debug_lines::DebugLines;
 
-use crate::terrain::{Chunk, ChunkPosition, TerrainSpace};
+use crate::world::terrain::{Chunk, ChunkPosition, TerrainSpace};
 
 use super::{ComponentIterator, DebugRenderSettings, Position};
 

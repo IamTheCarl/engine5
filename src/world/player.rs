@@ -9,10 +9,10 @@ use std::time::Duration;
 
 /// Currently just a modified version of https://crates.io/crates/bevy_flycam.
 ///
-use crate::physics::{
+use crate::world::physics::{
     Cylinder, Position, RayCast, RayTerrainIntersection, RayTerrainIntersectionList, Velocity,
 };
-use crate::terrain::{
+use crate::world::terrain::{
     Block, BlockRegistry, BlockTag, Chunk, LoadsTerrain, TerrainSpace, UpdateMesh,
 };
 
@@ -68,7 +68,7 @@ fn initial_grab_cursor(mut windows: Query<&mut Window, With<PrimaryWindow>>) {
 }
 
 /// Spawns the `Camera3dBundle` to be controlled
-pub fn create_player(commands: &mut Commands, position: Position) {
+pub fn create_player(commands: &mut Commands, world: Entity, position: Position) {
     commands
         .spawn((
             Cylinder {
@@ -82,6 +82,7 @@ pub fn create_player(commands: &mut Commands, position: Position) {
             MovementControl,
             LoadsTerrain { radius: 8 },
         ))
+        .set_parent(world)
         .with_children(|parent| {
             parent
                 .spawn((

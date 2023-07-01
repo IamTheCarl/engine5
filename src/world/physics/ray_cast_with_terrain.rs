@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use bevy_prototype_debug_lines::DebugLines;
 
 use super::{calculate_global_transform, DebugRenderSettings, Position, RayCast};
-use crate::terrain::{Chunk, ChunkPosition, GlobalBlockCoordinate, TerrainSpace};
+use crate::world::terrain::{Chunk, ChunkPosition, GlobalBlockCoordinate, TerrainSpace};
 
 #[derive(Component, Default)]
 pub struct RayTerrainIntersectionList {

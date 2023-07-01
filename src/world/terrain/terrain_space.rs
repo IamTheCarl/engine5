@@ -3,7 +3,10 @@ use super::{
     Block, Chunk, ChunkIndex, ChunkPosition, GlobalBlockCoordinate, LocalBlockCoordinate,
     PreChunkBundle, TerrainTime,
 };
-use crate::world::{physics::Position, spatial_entities::storage::ToLoadSpatial};
+use crate::world::{
+    physics::Position,
+    spatial_entities::storage::{Storable, ToLoadSpatial},
+};
 use bevy::{
     ecs::query::{ReadOnlyWorldQuery, WorldQuery},
     prelude::*,
@@ -178,27 +181,11 @@ pub struct TerrainSpaceBundle {
     pub terrain_space: TerrainSpace,
     pub position: Position,
     pub file: TerrainStorage,
+    pub storable: Storable,
     pub transform: Transform,
     pub global_transform: GlobalTransform,
     pub visibility: Visibility,
     pub computed_visibility: ComputedVisibility,
-}
-
-impl Default for TerrainSpaceBundle {
-    fn default() -> Self {
-        Self {
-            terrain_space: Default::default(),
-            position: Position {
-                translation: Vec3::ZERO,
-                rotation: 0.0,
-            },
-            file: TerrainStorage::None,
-            transform: Default::default(),
-            global_transform: Default::default(),
-            visibility: Default::default(),
-            computed_visibility: Default::default(),
-        }
-    }
 }
 
 fn load_all_terrain(

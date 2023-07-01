@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use bevy::{ecs::system::EntityCommands, prelude::*};
+use bevy::prelude::*;
 use std::{collections::HashMap, mem::size_of};
 
 use crate::world::{generation::GenerateSpatial, terrain::ChunkPosition};
@@ -19,7 +19,7 @@ pub struct Storable {
     id: TracerId,
 }
 
-#[derive(Component)]
+#[derive(Resource)]
 pub struct SpatialEntityStorage {
     tracers_to_entities: HashMap<TracerId, Entity>,
     entities_to_tracers: HashMap<Entity, TracerId>,
@@ -39,7 +39,7 @@ impl SpatialEntityStorage {
         })
     }
 
-    pub fn insert_tracer_into_entity(&mut self, entity: &mut EntityCommands) -> Result<()> {
+    pub fn new_storable_component(&mut self) -> Result<Storable> {
         // Start by getting a valid entity ID.
         let tracer_id = self
             .database
@@ -71,9 +71,7 @@ impl SpatialEntityStorage {
         // Why do we do it this way? Because an entity can also be loaded from a file, and that would bypass this bit of code.
         // I'd rather not have copies of this in multiple places so we'll just have one system to do both jobs.
 
-        entity.insert(Storable { id: tracer_id });
-
-        Ok(())
+        Ok(Storable { id: tracer_id })
     }
 
     /// Gets the Entity ID for a traceable object.
@@ -83,63 +81,31 @@ impl SpatialEntityStorage {
     }
 }
 
-fn adopt_children(
-    mut commands: Commands,
-    untracked_children: Query<(Entity, With<Parent>, Without<Storable>)>,
-    mut entity_tracers: Query<(&Children, &mut SpatialEntityStorage)>,
-) -> Result<()> {
-    for (children, mut tracer) in entity_tracers.iter_mut() {
-        for child in children.iter() {
-            if let Ok((child_entity_id, _with_parent, _without_traceable)) =
-                untracked_children.get(*child)
-            {
-                // It appears to be one of our children.
-                tracer.insert_tracer_into_entity(&mut commands.entity(child_entity_id))?;
-            }
-        }
-    }
-
-    Ok(())
-}
-
 fn new_tracings(
-    new_tracings: Query<(Entity, &Parent, &Storable), Changed<Storable>>,
-    mut storage: Query<&mut SpatialEntityStorage>,
+    new_tracings: Query<(Entity, &Storable), Changed<Storable>>,
+    storage: Option<ResMut<SpatialEntityStorage>>,
 ) {
-    for (entity_id, world, traceable) in new_tracings.iter() {
-        let mut entity_tracker = storage
-            .get_mut(world.get())
-            .expect("Failed to get world for entity.");
+    if let Some(mut storage) = storage {
+        for (entity_id, traceable) in new_tracings.iter() {
+            let tracer_id = traceable.id;
 
-        let tracer_id = traceable.id;
-
-        entity_tracker
-            .tracers_to_entities
-            .insert(tracer_id, entity_id);
-        entity_tracker
-            .entities_to_tracers
-            .insert(entity_id, tracer_id);
+            storage.tracers_to_entities.insert(tracer_id, entity_id);
+            storage.entities_to_tracers.insert(entity_id, tracer_id);
+        }
     }
 }
 
 fn clean_up_tracings(
-    children: Query<&Parent>,
     mut removed: RemovedComponents<Storable>,
-    mut storage: Query<&mut SpatialEntityStorage>,
+    storage: Option<ResMut<SpatialEntityStorage>>,
 ) {
-    for entity_id in removed.iter() {
-        let world = children
-            .get(entity_id)
-            .expect("Failed to get world for entity.");
-
-        let mut entity_tracker = storage
-            .get_mut(world.get())
-            .expect("Failed to get world for entity.");
-
-        if let Some(tracker_id) = entity_tracker.entities_to_tracers.remove(&entity_id) {
-            entity_tracker.tracers_to_entities.remove(&tracker_id);
-        } else {
-            log::warn!("Removed traceable without an associated entity.");
+    if let Some(mut storage) = storage {
+        for entity_id in removed.iter() {
+            if let Some(tracker_id) = storage.entities_to_tracers.remove(&entity_id) {
+                storage.tracers_to_entities.remove(&tracker_id);
+            } else {
+                log::warn!("Removed traceable without an associated entity.");
+            }
         }
     }
 }
@@ -147,7 +113,7 @@ fn clean_up_tracings(
 fn load_chunk(
     mut commands: Commands,
     to_load: Query<(Entity, &ChunkPosition, With<ToLoadSpatial>)>,
-    mut _storage: Query<&mut SpatialEntityStorage>,
+    _storage: Option<ResMut<SpatialEntityStorage>>,
 ) {
     for (entity, _position, _with_to_load_spatial) in to_load.iter() {
         // TODO implement loading.
@@ -161,7 +127,7 @@ fn load_chunk(
 fn save_chunk(
     mut commands: Commands,
     to_save: Query<(Entity, &ChunkPosition, With<ToSaveSpatial>)>,
-    mut _storage: Query<&mut SpatialEntityStorage>,
+    _storage: Option<ResMut<SpatialEntityStorage>>,
 ) {
     for (entity, _position, _with_to_load_spatial) in to_save.iter() {
         // TODO implement saving.
@@ -172,7 +138,6 @@ fn save_chunk(
 pub(super) fn register_storage(app: &mut App) {
     app.add_system(new_tracings);
     app.add_system(clean_up_tracings);
-    app.add_system(adopt_children.pipe(crate::error_handler));
     app.add_system(load_chunk);
     app.add_system(save_chunk);
 }

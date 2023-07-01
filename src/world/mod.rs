@@ -32,49 +32,44 @@ pub fn spawn_world(
     let overworld_storage = TerrainStorage::open_local(&world_database, "overworld")
         .context("Failed to open namespace for overworld terrain.")?;
 
-    let world = commands
-        .spawn((
-            TransformBundle::default(),
-            VisibilityBundle::default(),
-            SpatialEntityStorage::new(&world_database)?,
-        ))
-        .id();
+    let mut storage = SpatialEntityStorage::new(&world_database)?;
 
-    commands
-        .spawn((
-            TerrainSpaceBundle {
-                terrain_space: TerrainSpace::default(),
-                position: Position {
-                    translation: Vec3::ZERO,
-                    rotation: 0.0,
-                },
-                file: overworld_storage,
-                transform: Transform::default(),
-                global_transform: GlobalTransform::default(),
-                visibility: Visibility::Inherited,
-                computed_visibility: ComputedVisibility::default(),
-            },
-            generation::OscillatingHills {
-                block: default_block,
-                rate: 512,
-                depth: 16,
-                database: world_database,
-            },
-            // generation::FlatWorld {
-            //     block: default_block,
-            // },
-            // generation::CheckerBoard {
-            //     even_block: default_block,
-            //     odd_block: default_block,
-            //     even_height: 1,
-            //     odd_height: 3,
-            // },
-            Velocity {
+    commands.spawn((
+        TerrainSpaceBundle {
+            terrain_space: TerrainSpace::default(),
+            position: Position {
                 translation: Vec3::ZERO,
-                rotational: 0.0,
+                rotation: 0.0,
             },
-        ))
-        .set_parent(world);
+            file: overworld_storage,
+            storable: storage.new_storable_component()?,
+            transform: Transform::default(),
+            global_transform: GlobalTransform::default(),
+            visibility: Visibility::Inherited,
+            computed_visibility: ComputedVisibility::default(),
+        },
+        generation::OscillatingHills {
+            block: default_block,
+            rate: 512,
+            depth: 16,
+            database: world_database,
+        },
+        // generation::FlatWorld {
+        //     block: default_block,
+        // },
+        // generation::CheckerBoard {
+        //     even_block: default_block,
+        //     odd_block: default_block,
+        //     even_height: 1,
+        //     odd_height: 3,
+        // },
+        Velocity {
+            translation: Vec3::ZERO,
+            rotational: 0.0,
+        },
+    ));
+
+    commands.insert_resource(storage);
 
     Ok(())
 }

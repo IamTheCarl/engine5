@@ -16,6 +16,8 @@ use crate::world::terrain::{
     Block, BlockRegistry, BlockTag, Chunk, LoadsTerrain, TerrainSpace, UpdateMesh,
 };
 
+use super::spatial_entities::storage::SpatialEntityStorage;
+
 /// Keeps track of mouse motion events, pitch, and yaw
 #[derive(Resource, Default)]
 struct InputState {
@@ -68,7 +70,11 @@ fn initial_grab_cursor(mut windows: Query<&mut Window, With<PrimaryWindow>>) {
 }
 
 /// Spawns the `Camera3dBundle` to be controlled
-pub fn create_player(commands: &mut Commands, world: Entity, position: Position) {
+pub fn create_player(
+    commands: &mut Commands,
+    storage: &mut SpatialEntityStorage,
+    position: Position,
+) {
     commands
         .spawn((
             Cylinder {
@@ -82,7 +88,6 @@ pub fn create_player(commands: &mut Commands, world: Entity, position: Position)
             MovementControl,
             LoadsTerrain { radius: 8 },
         ))
-        .set_parent(world)
         .with_children(|parent| {
             parent
                 .spawn((

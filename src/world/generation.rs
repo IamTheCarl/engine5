@@ -8,9 +8,12 @@ use crate::{
     world::{spatial_entities::storage::ToSaveSpatial, terrain::storage::ToSaveTerrain},
 };
 
-use super::terrain::{
-    Block, Chunk, ChunkIndex, ChunkPosition, LocalBlockCoordinate, TerrainSpace,
-    TerrainSpaceBundle, TerrainStorage, UpdateMesh,
+use super::{
+    spatial_entities::storage::SpatialEntityStorage,
+    terrain::{
+        Block, Chunk, ChunkIndex, ChunkPosition, LocalBlockCoordinate, TerrainSpace,
+        TerrainSpaceBundle, TerrainStorage, UpdateMesh,
+    },
 };
 
 #[derive(Component)]
@@ -33,7 +36,7 @@ impl WorldGenerator for EmptyWorld {
     fn generate_spatial(
         &self,
         chunk_position: &ChunkPosition,
-        world: Entity,
+        storage: &mut SpatialEntityStorage,
         commands: &mut Commands,
     ) -> Result<()> {
         // Spawn a player.
@@ -41,7 +44,7 @@ impl WorldGenerator for EmptyWorld {
             let middle = Chunk::CHUNK_DIAMETER / 2;
             create_player(
                 commands,
-                world,
+                storage,
                 Position {
                     translation: Vec3::new(middle as f32, middle as f32, middle as f32),
                     rotation: 0.0,
@@ -79,14 +82,14 @@ impl WorldGenerator for FlatWorld {
     fn generate_spatial(
         &self,
         chunk_position: &ChunkPosition,
-        world: Entity,
+        storage: &mut SpatialEntityStorage,
         commands: &mut Commands,
     ) -> Result<()> {
         if chunk_position.index == ChunkIndex::ZERO {
             let middle = Chunk::CHUNK_DIAMETER / 2;
             create_player(
                 commands,
-                world,
+                storage,
                 Position {
                     translation: Vec3::new(middle as f32, 1.0, middle as f32),
                     rotation: 0.0,
@@ -143,34 +146,33 @@ impl WorldGenerator for OscillatingHills {
     fn generate_spatial(
         &self,
         chunk_position: &ChunkPosition,
-        world: Entity,
+        storage: &mut SpatialEntityStorage,
         commands: &mut Commands,
     ) -> Result<()> {
         let base_offset = chunk_position.as_block_coordinate().xz();
 
         if chunk_position.index == ChunkIndex::new(-1, 1, 0) {
-            commands
-                .spawn((
-                    TerrainSpaceBundle {
-                        terrain_space: TerrainSpace::default(),
-                        position: Position {
-                            translation: Vec3::new(-24.0, 32.0, 0.0),
-                            rotation: 0.0,
-                        },
-                        file: TerrainStorage::open_local(&self.database, "spinning_chunk")
-                            .context("Failed to create storage for moving terrain.")?, // TODO we need to generate names rather than hard-code them.
-                        transform: Transform::default(),
-                        global_transform: GlobalTransform::default(),
-                        visibility: Visibility::Inherited,
-                        computed_visibility: ComputedVisibility::default(),
+            commands.spawn((
+                TerrainSpaceBundle {
+                    terrain_space: TerrainSpace::default(),
+                    position: Position {
+                        translation: Vec3::new(-24.0, 32.0, 0.0),
+                        rotation: 0.0,
                     },
-                    SingleFilledChunk { block: self.block },
-                    Velocity {
-                        translation: Vec3::new(0.0, 0.0, 0.0),
-                        rotational: 0.2,
-                    },
-                ))
-                .set_parent(world);
+                    file: TerrainStorage::open_local(&self.database, "spinning_chunk")
+                        .context("Failed to create storage for moving terrain.")?, // TODO we need to generate names rather than hard-code them.
+                    storable: storage.new_storable_component()?,
+                    transform: Transform::default(),
+                    global_transform: GlobalTransform::default(),
+                    visibility: Visibility::Inherited,
+                    computed_visibility: ComputedVisibility::default(),
+                },
+                SingleFilledChunk { block: self.block },
+                Velocity {
+                    translation: Vec3::new(0.0, 0.0, 0.0),
+                    rotational: 0.2,
+                },
+            ));
         }
 
         if chunk_position.index == ChunkIndex::ZERO {
@@ -179,7 +181,7 @@ impl WorldGenerator for OscillatingHills {
             let height = self.calculate_height_for_index(base_offset, IVec2::splat(middle));
             create_player(
                 commands,
-                world,
+                storage,
                 Position {
                     translation: Vec3::new(middle as f32, height, middle as f32),
                     rotation: 0.0,
@@ -202,6 +204,7 @@ impl WorldGenerator for OscillatingHills {
                     translation: Vec3::new(0.0, height, 24.0),
                     rotation: 0.0,
                 },
+                storage.new_storable_component()?,
             ));
         }
 
@@ -250,7 +253,7 @@ impl WorldGenerator for CheckerBoard {
     fn generate_spatial(
         &self,
         chunk_position: &ChunkPosition,
-        world: Entity,
+        storage: &mut SpatialEntityStorage,
         commands: &mut Commands,
     ) -> Result<()> {
         let (_new_block, height) = self.get_block_and_height(chunk_position);
@@ -259,7 +262,7 @@ impl WorldGenerator for CheckerBoard {
             let middle = Chunk::CHUNK_DIAMETER / 2;
             create_player(
                 commands,
-                world,
+                storage,
                 Position {
                     translation: Vec3::new(middle as f32, height as f32, middle as f32),
                     rotation: 0.0,
@@ -279,6 +282,7 @@ impl WorldGenerator for CheckerBoard {
                     translation: Vec3::new(0.0, height as f32, 24.0),
                     rotation: 0.0,
                 },
+                storage.new_storable_component()?,
             ));
         }
 
@@ -311,7 +315,7 @@ impl WorldGenerator for SingleFilledChunk {
     fn generate_spatial(
         &self,
         _chunk_position: &ChunkPosition,
-        _world: Entity,
+        _storage: &mut SpatialEntityStorage,
         _commands: &mut Commands,
     ) -> Result<()> {
         Ok(())
@@ -338,19 +342,22 @@ where
 
     // System to generate spatial entities.
     let system = move |mut commands: Commands,
-                       mut terrain_spaces: Query<(&Parent, &G)>,
-                       to_generate: GenerateEntitiesQuery|
+                       mut terrain_spaces: Query<&G>,
+                       to_generate: GenerateEntitiesQuery,
+                       storage: Option<ResMut<SpatialEntityStorage>>|
           -> Result<()> {
-        // TODO the generation calls should be done outside of the ECS so that this system becomes non-blocking.
-        for (entity_id, position, parent, _to_generate) in to_generate.iter() {
-            if let Ok((world, generator)) = terrain_spaces.get_mut(parent.get()) {
-                generator.generate_spatial(position, world.get(), &mut commands)?;
+        if let Some(mut storage) = storage {
+            // TODO the generation calls should be done outside of the ECS so that this system becomes non-blocking.
+            for (entity_id, position, parent, _to_generate) in to_generate.iter() {
+                if let Ok(generator) = terrain_spaces.get_mut(parent.get()) {
+                    generator.generate_spatial(position, &mut storage, &mut commands)?;
 
-                let mut entity = commands.entity(entity_id);
+                    let mut entity = commands.entity(entity_id);
 
-                entity.remove::<GenerateSpatial>().insert((
-                    ToSaveSpatial, // We just went through the effort to generate it, might as well save it while we're at it.
-                ));
+                    entity.remove::<GenerateSpatial>().insert((
+                        ToSaveSpatial, // We just went through the effort to generate it, might as well save it while we're at it.
+                    ));
+                }
             }
         }
 
@@ -396,7 +403,7 @@ pub trait WorldGenerator {
     fn generate_spatial(
         &self,
         chunk_position: &ChunkPosition,
-        world: Entity,
+        storage: &mut SpatialEntityStorage,
         commands: &mut Commands,
     ) -> Result<()>;
 }

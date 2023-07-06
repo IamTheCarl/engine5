@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use bevy::{math::Vec3Swizzles, prelude::*};
-use ordered_float::NotNan;
 
 use crate::{
     world::physics::{Cylinder, Position, Velocity},
@@ -49,7 +48,7 @@ impl WorldGenerator for EmptyWorld {
                     translation: Vec3::new(middle as f32, middle as f32, middle as f32),
                     rotation: 0.0,
                 },
-            );
+            )?;
         }
 
         Ok(())
@@ -94,7 +93,7 @@ impl WorldGenerator for FlatWorld {
                     translation: Vec3::new(middle as f32, 1.0, middle as f32),
                     rotation: 0.0,
                 },
-            );
+            )?;
         }
 
         Ok(())
@@ -161,7 +160,7 @@ impl WorldGenerator for OscillatingHills {
                     },
                     file: TerrainStorage::open_local(&self.database, "spinning_chunk")
                         .context("Failed to create storage for moving terrain.")?, // TODO we need to generate names rather than hard-code them.
-                    storable: storage.new_storable_component()?,
+                    // storable: storage.new_storable_component("dynamic_chunk")?,
                     transform: Transform::default(),
                     global_transform: GlobalTransform::default(),
                     visibility: Visibility::Inherited,
@@ -186,7 +185,7 @@ impl WorldGenerator for OscillatingHills {
                     translation: Vec3::new(middle as f32, height, middle as f32),
                     rotation: 0.0,
                 },
-            );
+            )?;
         }
 
         if chunk_position.index == ChunkIndex::new(0, 0, 1) {
@@ -195,8 +194,8 @@ impl WorldGenerator for OscillatingHills {
 
             commands.spawn((
                 Cylinder {
-                    height: NotNan::new(1.0).unwrap(),
-                    radius: NotNan::new(2.0).unwrap(),
+                    height: 1.0,
+                    radius: 2.0,
                 },
                 Velocity::default(),
                 Transform::default(),
@@ -204,7 +203,7 @@ impl WorldGenerator for OscillatingHills {
                     translation: Vec3::new(0.0, height, 24.0),
                     rotation: 0.0,
                 },
-                storage.new_storable_component()?,
+                storage.new_storable_component("test_cylinder")?,
             ));
         }
 
@@ -267,14 +266,14 @@ impl WorldGenerator for CheckerBoard {
                     translation: Vec3::new(middle as f32, height as f32, middle as f32),
                     rotation: 0.0,
                 },
-            );
+            )?;
         }
 
         if chunk_position.index == ChunkIndex::new(0, 0, 1) {
             commands.spawn((
                 Cylinder {
-                    height: NotNan::new(1.0).unwrap(),
-                    radius: NotNan::new(2.0).unwrap(),
+                    height: 1.0,
+                    radius: 2.0,
                 },
                 Velocity::default(),
                 Transform::default(),
@@ -282,7 +281,7 @@ impl WorldGenerator for CheckerBoard {
                     translation: Vec3::new(0.0, height as f32, 24.0),
                     rotation: 0.0,
                 },
-                storage.new_storable_component()?,
+                storage.new_storable_component("test_cylinder")?,
             ));
         }
 

@@ -15,7 +15,8 @@ use std::collections::{HashMap, HashSet};
 
 pub const CHUNK_TIME_TO_LIVE_TICKS: usize = 30;
 
-#[derive(Component)]
+#[derive(Component, Reflect, Default)]
+#[reflect(Component)]
 pub struct LoadsTerrain {
     pub radius: i32,
 }
@@ -181,7 +182,7 @@ pub struct TerrainSpaceBundle {
     pub terrain_space: TerrainSpace,
     pub position: Position,
     pub file: TerrainStorage,
-    pub storable: Storable,
+    // pub storable: Storable, // FIXME we can't store this yet with the current system. Implement that later.
     pub transform: Transform,
     pub global_transform: GlobalTransform,
     pub visibility: Visibility,

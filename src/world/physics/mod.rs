@@ -11,7 +11,8 @@ pub use ray_cast_with_terrain::{
 };
 mod terrain_to_terrain;
 
-#[derive(Component)]
+#[derive(Component, Reflect, Default)]
+#[reflect(Component)]
 pub struct RayCast {
     pub direction: Vec3,
     pub length: f32,
@@ -91,7 +92,7 @@ impl<Component: Copy> Iterator for ComponentIterator<Component> {
 // TODO this is probably a pretty clunky way to render the cylinders. I just made it because I didn't have debug lines at the time.
 #[derive(Resource)]
 struct MeshCollection {
-    cylinders: HashMap<Cylinder, Handle<Mesh>>,
+    cylinders: HashMap<(NotNan<f32>, NotNan<f32>), Handle<Mesh>>,
 }
 
 impl MeshCollection {
@@ -104,10 +105,13 @@ impl MeshCollection {
     fn get_cylinder(
         &mut self,
         meshes: &mut ResMut<Assets<Mesh>>,
-        cylinder: Cylinder,
+        cylinder: &Cylinder,
     ) -> Handle<Mesh> {
         self.cylinders
-            .entry(cylinder)
+            .entry((
+                NotNan::new(cylinder.height).expect("Cylinder height was NaN"),
+                NotNan::new(cylinder.radius).expect("Cylinder radius was NaN"),
+            ))
             .or_insert_with(|| {
                 let mut mesh = Mesh::new(PrimitiveTopology::LineList);
                 let mut vertices = Vec::new();
@@ -116,8 +120,8 @@ impl MeshCollection {
                 const FULL_ROTATION: f32 = std::f64::consts::PI as f32 * 2.0;
                 const ROTATION_SLICE: f32 = FULL_ROTATION / INDEXES as f32;
 
-                let diameter = *cylinder.radius;
-                let height = *cylinder.height;
+                let diameter = cylinder.radius;
+                let height = cylinder.height;
 
                 let angle = -ROTATION_SLICE;
                 let mut previous_position = (angle.cos() * diameter, angle.sin() * diameter);
@@ -150,7 +154,8 @@ impl MeshCollection {
 #[derive(Resource)]
 struct DebugShaderMaterial(Handle<StandardMaterial>);
 
-#[derive(Component, Default, Debug)]
+#[derive(Component, Reflect, Default, Debug)]
+#[reflect(Component)]
 pub struct Velocity {
     pub translation: Vec3,
     pub rotational: f32,
@@ -179,10 +184,11 @@ impl Position {
     }
 }
 
-#[derive(Component, Debug, Hash, PartialEq, Eq, Clone, Copy)]
+#[derive(Component, Reflect, Debug, Default)]
+#[reflect(Component)]
 pub struct Cylinder {
-    pub height: NotNan<f32>,
-    pub radius: NotNan<f32>,
+    pub height: f32,
+    pub radius: f32,
 }
 
 fn add_debug_mesh_cylinders(
@@ -197,7 +203,7 @@ fn add_debug_mesh_cylinders(
         let material = &debug_shader_material.0;
 
         for (entity, cylinder, _) in cylinders.iter() {
-            let mesh = mesh_collections.get_cylinder(&mut meshes, *cylinder);
+            let mesh = mesh_collections.get_cylinder(&mut meshes, cylinder);
             commands.entity(entity).insert((
                 mesh,
                 material.clone(),

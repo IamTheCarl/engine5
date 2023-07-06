@@ -6,13 +6,14 @@ use bevy_prototype_debug_lines::DebugLines;
 use super::{calculate_global_transform, DebugRenderSettings, Position, RayCast};
 use crate::world::terrain::{Chunk, ChunkPosition, GlobalBlockCoordinate, TerrainSpace};
 
-#[derive(Component, Default)]
+#[derive(Component, Reflect, Default)]
+#[reflect(Component)]
 pub struct RayTerrainIntersectionList {
     pub contact_limit: Option<NonZeroUsize>,
     pub contacts: HashMap<Entity, Vec<RayTerrainIntersection>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Reflect, FromReflect)]
 pub enum RayTerrainIntersectionType {
     Entry,
     Tunneled,
@@ -21,7 +22,7 @@ pub enum RayTerrainIntersectionType {
 
 /// An intersection with terrain.
 /// All values are local to the terrain space.
-#[derive(Debug)]
+#[derive(Debug, Reflect, FromReflect)]
 pub struct RayTerrainIntersection {
     pub distance: f32,
     pub intersection_type: RayTerrainIntersectionType,

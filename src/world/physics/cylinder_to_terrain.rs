@@ -69,12 +69,12 @@ pub(super) fn check_for_intersections(
                     let contained = block_index == localized_cylinder_position.floor();
 
                     // It's possible for this block column to have collisions.
-                    if collision_depth <= *cylinder.radius || contained
+                    if collision_depth <= cylinder.radius || contained
                     // Or this block containers us.
                     {
                         // We can calculate what would happen on the XZ plane for all blocks in the column.
                         let collision_xz_normal =
-                            collision_vector.normalize() * *cylinder.radius - collision_vector;
+                            collision_vector.normalize() * cylinder.radius - collision_vector;
 
                         // Used for debug later.
                         let block_side_direction = collision_xz_normal.normalize();
@@ -107,7 +107,7 @@ pub(super) fn check_for_intersections(
                                 .is_some()
                                 && ((block_index_float.y + 1.0) > localized_cylinder_position.y
                                     && block_index_float.y
-                                        < (localized_cylinder_position.y + *cylinder.height))
+                                        < (localized_cylinder_position.y + cylinder.height))
                             {
                                 // There is a block to collide with. The question is, how do we respond?
 
@@ -117,7 +117,7 @@ pub(super) fn check_for_intersections(
                                 {
                                     1.0 - (localized_cylinder_position.y - block_index.y as f32)
                                 } else {
-                                    -(*cylinder.height
+                                    -(cylinder.height
                                         - (block_index.y as f32 - localized_cylinder_position.y))
                                 };
 

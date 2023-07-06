@@ -3,7 +3,6 @@ use bevy::ecs::event::{Events, ManualEventReader};
 use bevy::input::mouse;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, PrimaryWindow};
-use ordered_float::NotNan;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -16,7 +15,7 @@ use crate::world::terrain::{
     Block, BlockRegistry, BlockTag, Chunk, LoadsTerrain, TerrainSpace, UpdateMesh,
 };
 
-use super::spatial_entities::storage::SpatialEntityStorage;
+use super::spatial_entities::storage::{BootstrapEntityInfo, SaveWithParent, SpatialEntityStorage};
 
 /// Keeps track of mouse motion events, pitch, and yaw
 #[derive(Resource, Default)]
@@ -43,7 +42,8 @@ impl Default for MovementSettings {
     }
 }
 
-#[derive(Component)]
+#[derive(Component, Reflect, Default)]
+#[reflect(Component)]
 pub struct MovementControl;
 
 /// Grabs/ungrabs mouse cursor
@@ -74,12 +74,12 @@ pub fn create_player(
     commands: &mut Commands,
     storage: &mut SpatialEntityStorage,
     position: Position,
-) {
+) -> Result<()> {
     commands
         .spawn((
             Cylinder {
-                height: NotNan::new(2.5).unwrap(),
-                radius: NotNan::new(0.3).unwrap(),
+                height: 2.5,
+                radius: 0.3,
             },
             position,
             Velocity::default(),
@@ -87,6 +87,8 @@ pub fn create_player(
             GlobalTransform::default(),
             MovementControl,
             LoadsTerrain { radius: 8 },
+            storage
+                .new_bootstrapped_storable_component(BootstrapEntityInfo::LocalPlayer, "player")?,
         ))
         .with_children(|parent| {
             parent
@@ -94,6 +96,7 @@ pub fn create_player(
                     Transform::from_translation(Vec3::new(0.0, 2.0, 0.0)),
                     GlobalTransform::default(),
                     MovementControl,
+                    SaveWithParent,
                 ))
                 .with_children(|parent| {
                     parent.spawn((
@@ -111,9 +114,12 @@ pub fn create_player(
                         },
                         BlockPlacementContext::default(),
                         BlockRemovalContext::default(),
+                        SaveWithParent,
                     ));
                 });
         });
+
+    Ok(())
 }
 
 /// Handles keyboard input and movement
@@ -208,7 +214,8 @@ fn player_turn(state: Res<InputState>, mut query: Query<(&mut Position, With<Mov
     }
 }
 
-#[derive(Debug, Component)]
+#[derive(Debug, Component, Reflect)]
+#[reflect(Component)]
 struct BlockPlacementContext {
     timer: Timer,
     button_held: bool,
@@ -336,7 +343,8 @@ fn place_block(
     Ok(())
 }
 
-#[derive(Debug, Component)]
+#[derive(Debug, Component, Reflect)]
+#[reflect(Component)]
 struct BlockRemovalContext {
     timer: Timer,
     button_held: bool,

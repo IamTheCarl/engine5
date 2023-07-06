@@ -13,7 +13,7 @@ use terrain::{BlockRegistry, BlockTag, TerrainSpace, TerrainSpaceBundle, Terrain
 
 pub mod generation;
 
-use self::spatial_entities::storage::SpatialEntityStorage;
+use self::spatial_entities::storage::{BootstrapEntityInfo, SpatialEntityStorage};
 
 pub fn spawn_world(
     commands: &mut Commands,
@@ -42,7 +42,10 @@ pub fn spawn_world(
                 rotation: 0.0,
             },
             file: overworld_storage,
-            storable: storage.new_storable_component()?,
+            // storable: storage.new_bootstrapped_storable_component(
+            //     BootstrapEntityInfo::GlobalTerrain,
+            //     "global_terrain",
+            // )?,
             transform: Transform::default(),
             global_transform: GlobalTransform::default(),
             visibility: Visibility::Inherited,

@@ -8,15 +8,18 @@ use bevy_prototype_debug_lines::DebugLines;
 
 use crate::DebugRenderSettings;
 
-use super::{physics::Position, terrain::Chunk};
+use super::{
+    physics::Position,
+    terrain::{Chunk, ChunkIndex},
+};
 
 pub mod storage;
 
 // TODO experiment with storing entities by archtype.
 #[derive(Resource)]
-pub struct SpatialObjectTracker(HashMap<SpatialHash, HashSet<Entity>>);
+pub struct SpatialEntityTracker(HashMap<SpatialHash, HashSet<Entity>>);
 
-impl SpatialObjectTracker {
+impl SpatialEntityTracker {
     fn add_entity(&mut self, spatial_hash: SpatialHash, entity: Entity) {
         self.0
             .entry(spatial_hash)
@@ -35,7 +38,7 @@ impl SpatialObjectTracker {
         }
     }
 
-    pub(self) fn get_cell_entities(&self, spatial_hash: &SpatialHash) -> Option<&HashSet<Entity>> {
+    pub fn get_cell_entities(&self, spatial_hash: &SpatialHash) -> Option<&HashSet<Entity>> {
         self.0.get(spatial_hash)
     }
 
@@ -94,6 +97,16 @@ pub struct SpatialHash {
     z: i16,
 }
 
+impl From<ChunkIndex> for SpatialHash {
+    fn from(value: ChunkIndex) -> Self {
+        Self {
+            x: value.x as i16,
+            y: value.y as i16,
+            z: value.z as i16,
+        }
+    }
+}
+
 #[derive(Component, Debug)]
 pub struct SpatialHashOffset {
     pub translation: Vec3,
@@ -111,7 +124,7 @@ fn insert_spatial_hash(
 fn handle_removed_spatial_hash_entities(
     mut removals: RemovedComponents<SpatialHash>,
     spatial_objects: Query<&SpatialHash>,
-    mut spatial_object_tracker: ResMut<SpatialObjectTracker>,
+    mut spatial_object_tracker: ResMut<SpatialEntityTracker>,
 ) {
     for entity in removals.iter() {
         let spatial_hash = spatial_objects
@@ -123,7 +136,7 @@ fn handle_removed_spatial_hash_entities(
 
 fn update_spatial_hash_entities(
     mut spatial_objects: Query<(Entity, &Position, &mut SpatialHash), Without<SpatialHashOffset>>,
-    mut spatial_object_tracker: ResMut<SpatialObjectTracker>,
+    mut spatial_object_tracker: ResMut<SpatialEntityTracker>,
     debug_render_settings: Res<DebugRenderSettings>,
     mut lines: ResMut<DebugLines>,
 ) {
@@ -155,7 +168,11 @@ fn update_spatial_hash_entities(
         }
 
         // An update is actually needed.
-        if old_hash != *spatial_hash {
+        if old_hash != *spatial_hash
+            || spatial_object_tracker
+                .get_cell_entities(&spatial_hash)
+                .map_or(true, |entity_set| !entity_set.contains(&entity))
+        {
             spatial_object_tracker.remove_entity(old_hash, entity);
             spatial_object_tracker.add_entity(*spatial_hash, entity);
         }
@@ -164,7 +181,7 @@ fn update_spatial_hash_entities(
 
 fn update_spatial_hash_entities_with_offset(
     mut spatial_objects: Query<(Entity, &Position, &SpatialHashOffset, &mut SpatialHash)>,
-    mut spatial_object_tracker: ResMut<SpatialObjectTracker>,
+    mut spatial_object_tracker: ResMut<SpatialEntityTracker>,
     debug_render_settings: Res<DebugRenderSettings>,
     mut lines: ResMut<DebugLines>,
 ) {
@@ -199,7 +216,11 @@ fn update_spatial_hash_entities_with_offset(
         }
 
         // An update is actually needed.
-        if old_hash != *spatial_hash {
+        if old_hash != *spatial_hash
+            || spatial_object_tracker
+                .get_cell_entities(&spatial_hash)
+                .map_or(true, |entity_set| !entity_set.contains(&entity))
+        {
             spatial_object_tracker.remove_entity(old_hash, entity);
             spatial_object_tracker.add_entity(*spatial_hash, entity);
         }
@@ -222,7 +243,7 @@ impl Plugin for SpatialEntityPlugin {
                 terrain_ray_casts: false,
             });
 
-            commands.insert_resource(SpatialObjectTracker(HashMap::new()));
+            commands.insert_resource(SpatialEntityTracker(HashMap::new()));
         });
 
         app.add_system(insert_spatial_hash.in_set(SpatialEntityPlugin));

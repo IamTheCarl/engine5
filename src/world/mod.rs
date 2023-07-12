@@ -13,7 +13,7 @@ use terrain::{BlockRegistry, BlockTag, TerrainSpace, TerrainSpaceBundle, Terrain
 
 pub mod generation;
 
-use self::spatial_entities::storage::{BootstrapEntityInfo, SpatialEntityStorage};
+use self::spatial_entities::storage::SpatialEntityStorage;
 
 pub fn spawn_world(
     commands: &mut Commands,
@@ -32,11 +32,11 @@ pub fn spawn_world(
     let overworld_storage = TerrainStorage::open_local(&world_database, "overworld")
         .context("Failed to open namespace for overworld terrain.")?;
 
-    let mut storage = SpatialEntityStorage::new(&world_database)?;
+    let storage = SpatialEntityStorage::new(&world_database)?;
 
     commands.spawn((
         TerrainSpaceBundle {
-            terrain_space: TerrainSpace::default(),
+            terrain_space: TerrainSpace::global(),
             position: Position {
                 translation: Vec3::ZERO,
                 rotation: 0.0,

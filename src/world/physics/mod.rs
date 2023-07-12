@@ -1,6 +1,7 @@
 use crate::{world::terrain::LoadTerrain, DebugRenderSettings};
 use bevy::{prelude::*, render::render_resource::PrimitiveTopology};
 use ordered_float::NotNan;
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, num::NonZeroUsize};
 
 mod cylinder_to_cylinder;
@@ -154,14 +155,14 @@ impl MeshCollection {
 #[derive(Resource)]
 struct DebugShaderMaterial(Handle<StandardMaterial>);
 
-#[derive(Component, Reflect, Default, Debug)]
+#[derive(Component, Reflect, Default, Serialize, Deserialize, Debug, Clone)]
 #[reflect(Component)]
 pub struct Velocity {
     pub translation: Vec3,
     pub rotational: f32,
 }
 
-#[derive(Component, Debug)]
+#[derive(Component, Serialize, Deserialize, Debug, Clone)]
 pub struct Position {
     pub translation: Vec3,
     pub rotation: f32,

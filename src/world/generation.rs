@@ -3,12 +3,12 @@ use bevy::{math::Vec3Swizzles, prelude::*};
 
 use crate::{
     world::physics::{Cylinder, Position, Velocity},
-    world::{player::create_player, spatial_entities::SpatialHashOffset},
-    world::{spatial_entities::storage::ToSaveSpatial, terrain::storage::ToSaveTerrain},
+    world::terrain::storage::ToSaveTerrain,
+    world::{player::PlayerEntity, spatial_entities::SpatialHashOffset},
 };
 
 use super::{
-    spatial_entities::storage::SpatialEntityStorage,
+    spatial_entities::storage::{SpatialEntityStorage, ToSaveSpatial},
     terrain::{
         Block, Chunk, ChunkIndex, ChunkPosition, LocalBlockCoordinate, TerrainSpace,
         TerrainSpaceBundle, TerrainStorage, UpdateMesh,
@@ -17,11 +17,11 @@ use super::{
 
 #[derive(Component)]
 #[component(storage = "SparseSet")]
-pub struct GenerateTerrain;
+pub struct ToGenerateTerrain;
 
 #[derive(Component)]
 #[component(storage = "SparseSet")]
-pub struct GenerateSpatial;
+pub struct ToGenerateSpatial;
 
 #[derive(Component)]
 pub struct EmptyWorld;
@@ -41,7 +41,7 @@ impl WorldGenerator for EmptyWorld {
         // Spawn a player.
         if chunk_position.index == ChunkIndex::ZERO {
             let middle = Chunk::CHUNK_DIAMETER / 2;
-            create_player(
+            PlayerEntity::spawn(
                 commands,
                 storage,
                 Position {
@@ -86,7 +86,7 @@ impl WorldGenerator for FlatWorld {
     ) -> Result<()> {
         if chunk_position.index == ChunkIndex::ZERO {
             let middle = Chunk::CHUNK_DIAMETER / 2;
-            create_player(
+            PlayerEntity::spawn(
                 commands,
                 storage,
                 Position {
@@ -178,7 +178,7 @@ impl WorldGenerator for OscillatingHills {
             let middle = Chunk::CHUNK_DIAMETER / 2;
 
             let height = self.calculate_height_for_index(base_offset, IVec2::splat(middle));
-            create_player(
+            PlayerEntity::spawn(
                 commands,
                 storage,
                 Position {
@@ -203,7 +203,8 @@ impl WorldGenerator for OscillatingHills {
                     translation: Vec3::new(0.0, height, 24.0),
                     rotation: 0.0,
                 },
-                storage.new_storable_component("test_cylinder")?,
+                // storage.new_storable_component()?,
+                ToSaveSpatial,
             ));
         }
 
@@ -259,7 +260,7 @@ impl WorldGenerator for CheckerBoard {
 
         if chunk_position.index == ChunkIndex::ZERO {
             let middle = Chunk::CHUNK_DIAMETER / 2;
-            create_player(
+            PlayerEntity::spawn(
                 commands,
                 storage,
                 Position {
@@ -281,7 +282,8 @@ impl WorldGenerator for CheckerBoard {
                     translation: Vec3::new(0.0, height as f32, 24.0),
                     rotation: 0.0,
                 },
-                storage.new_storable_component("test_cylinder")?,
+                // storage.new_storable_component()?,
+                ToSaveSpatial,
             ));
         }
 
@@ -332,12 +334,20 @@ where
             Entity,
             &'c ChunkPosition,
             &'c Parent,
-            With<GenerateTerrain>,
+            With<ToGenerateTerrain>,
             Without<Chunk>,
         ),
     >;
-    type GenerateEntitiesQuery<'a, 'b, 'c> =
-        Query<'a, 'b, (Entity, &'c ChunkPosition, &'c Parent, With<GenerateSpatial>)>;
+    type GenerateEntitiesQuery<'a, 'b, 'c> = Query<
+        'a,
+        'b,
+        (
+            Entity,
+            &'c ChunkPosition,
+            &'c Parent,
+            With<ToGenerateSpatial>,
+        ),
+    >;
 
     // System to generate spatial entities.
     let system = move |mut commands: Commands,
@@ -353,9 +363,7 @@ where
 
                     let mut entity = commands.entity(entity_id);
 
-                    entity.remove::<GenerateSpatial>().insert((
-                        ToSaveSpatial, // We just went through the effort to generate it, might as well save it while we're at it.
-                    ));
+                    entity.remove::<ToGenerateSpatial>();
                 }
             }
         }
@@ -376,7 +384,7 @@ where
 
                 let mut entity = commands.entity(entity_id);
 
-                entity.remove::<GenerateTerrain>().insert((
+                entity.remove::<ToGenerateTerrain>().insert((
                     UpdateMesh, // TODO this should probably be controlled by some kind of mobile entity that actually loads terrain.
                     position.as_transform(),
                     SpatialHashOffset {

@@ -10,36 +10,42 @@ use crate::DebugRenderSettings;
 
 use super::{
     physics::Position,
-    terrain::{Chunk, ChunkIndex},
+    terrain::{Chunk, ChunkIndex, ChunkPosition},
 };
 
 pub mod storage;
 
 // TODO experiment with storing entities by archtype.
 #[derive(Resource)]
-pub struct SpatialEntityTracker(HashMap<SpatialHash, HashSet<Entity>>);
+pub struct SpatialEntityTracker {
+    cell_entity_sets: HashMap<SpatialHash, HashSet<Entity>>,
+}
 
 impl SpatialEntityTracker {
+    pub fn iter_cells(&self) -> impl Iterator<Item = (&SpatialHash, &HashSet<Entity>)> {
+        self.cell_entity_sets.iter()
+    }
+
     fn add_entity(&mut self, spatial_hash: SpatialHash, entity: Entity) {
-        self.0
+        self.cell_entity_sets
             .entry(spatial_hash)
             .or_insert_with(HashSet::new)
             .insert(entity);
     }
 
     fn remove_entity(&mut self, spatial_hash: SpatialHash, entity: Entity) {
-        if let Some(cell) = self.0.get_mut(&spatial_hash) {
+        if let Some(cell) = self.cell_entity_sets.get_mut(&spatial_hash) {
             cell.remove(&entity);
 
             // If the cell is empty, remove it. Save some memory.
             if cell.is_empty() {
-                self.0.remove(&spatial_hash);
+                self.cell_entity_sets.remove(&spatial_hash);
             }
         }
     }
 
     pub fn get_cell_entities(&self, spatial_hash: &SpatialHash) -> Option<&HashSet<Entity>> {
-        self.0.get(spatial_hash)
+        self.cell_entity_sets.get(spatial_hash)
     }
 
     #[rustfmt::skip]
@@ -103,6 +109,28 @@ impl From<ChunkIndex> for SpatialHash {
             x: value.x as i16,
             y: value.y as i16,
             z: value.z as i16,
+        }
+    }
+}
+
+impl From<SpatialHash> for ChunkIndex {
+    fn from(val: SpatialHash) -> Self {
+        ChunkIndex::new(val.x as i32, val.y as i32, val.z as i32)
+    }
+}
+
+impl From<SpatialHash> for ChunkPosition {
+    fn from(val: SpatialHash) -> Self {
+        ChunkPosition { index: val.into() }
+    }
+}
+
+impl From<&ChunkPosition> for SpatialHash {
+    fn from(val: &ChunkPosition) -> Self {
+        Self {
+            x: val.index.x as i16,
+            y: val.index.y as i16,
+            z: val.index.z as i16,
         }
     }
 }
@@ -243,7 +271,9 @@ impl Plugin for SpatialEntityPlugin {
                 terrain_ray_casts: false,
             });
 
-            commands.insert_resource(SpatialEntityTracker(HashMap::new()));
+            commands.insert_resource(SpatialEntityTracker {
+                cell_entity_sets: HashMap::new(),
+            });
         });
 
         app.add_system(insert_spatial_hash.in_set(SpatialEntityPlugin));
@@ -251,6 +281,7 @@ impl Plugin for SpatialEntityPlugin {
         app.add_system(update_spatial_hash_entities_with_offset.in_set(SpatialEntityPlugin));
         app.add_system(
             handle_removed_spatial_hash_entities
+                .in_set(SpatialEntityPlugin)
                 .after(update_spatial_hash_entities)
                 .after(update_spatial_hash_entities_with_offset),
         );

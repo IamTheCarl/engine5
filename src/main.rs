@@ -66,7 +66,7 @@ pub fn error_handler(In(result): In<anyhow::Result<()>>) {
     }
 }
 
-#[derive(Resource)]
+#[derive(Resource, Reflect)]
 pub struct DebugRenderSettings {
     cylinders: bool,
     cylinder_terrain_checks: bool,

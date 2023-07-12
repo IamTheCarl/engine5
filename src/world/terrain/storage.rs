@@ -4,7 +4,8 @@ use bevy::prelude::*;
 use crate::world::spatial_entities::SpatialHashOffset;
 
 use super::{
-    super::generation::GenerateTerrain, Chunk, ChunkPosition, TerrainSpace, TerrainTime, UpdateMesh,
+    super::generation::ToGenerateTerrain, Chunk, ChunkPosition, TerrainSpace, TerrainTime,
+    UpdateMesh,
 };
 
 pub const CHUNK_TIME_TO_SAVE: usize = 60 * 5;
@@ -113,12 +114,12 @@ fn load_terrain(
                 terrain_space.non_empty_chunks.insert(entity.id());
             } else {
                 // Looks like it wasn't in the storage.
-                entity.insert(GenerateTerrain);
+                entity.insert(ToGenerateTerrain);
             }
         } else {
             // Looks like we couldn't get the storage for it. Generate it.
             log::warn!("Failed to get storage for terrain chunk.");
-            entity.insert(GenerateTerrain);
+            entity.insert(ToGenerateTerrain);
         }
     }
 
@@ -158,7 +159,7 @@ type SaveTimerStartTerrainQuery<'a, 'b> = Query<
         Entity,
         With<Chunk>,
         Without<ToLoadTerrain>,
-        Without<GenerateTerrain>,
+        Without<ToGenerateTerrain>,
         Without<ToSaveTerrain>,
     ),
     Changed<Chunk>,

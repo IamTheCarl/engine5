@@ -1,24 +1,21 @@
 use anyhow::{Context, Result};
 use bevy::{
-    ecs::{entity::EntityMap, system::SystemState},
+    ecs::query::{ReadOnlyWorldQuery, WorldQuery},
     prelude::*,
-    scene::serde::{SceneDeserializer, SceneSerializer},
 };
-use bincode::Options;
-use serde::{de::DeserializeSeed, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
-    borrow::Cow,
     collections::{HashMap, HashSet},
     mem::size_of,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    },
 };
 
-use crate::world::{
-    generation::GenerateSpatial,
-    terrain::{Chunk, ChunkPosition},
-};
+use crate::world::{generation::ToGenerateSpatial, terrain::ChunkPosition};
 
-use super::{SpatialEntityTracker, SpatialHash};
+use super::SpatialEntityTracker;
 
 #[derive(Component)]
 #[component(storage = "SparseSet")]
@@ -30,20 +27,17 @@ pub struct ToSaveSpatial;
 
 #[derive(Component)]
 #[component(storage = "SparseSet")]
-pub struct SaveWithParent;
+pub struct ToUnloadSpatial;
+
+#[derive(Component)]
+#[component(storage = "SparseSet")]
+pub struct ToDeleteSpatial;
 
 type TracerId = u64;
 
-#[derive(Component, Reflect, Clone, Default)]
-#[reflect(Component)]
+#[derive(Component)]
 pub struct Storable {
     id: TracerId,
-    bootstrap: BootstrapEntityInfo,
-    type_name: Cow<'static, str>,
-}
-
-pub trait SpatialEntity {
-    fn load(commands: &mut Commands) -> Result<()>;
 }
 
 #[derive(Serialize, Deserialize, Reflect, Clone, Copy, Debug)]
@@ -59,6 +53,11 @@ impl Default for BootstrapEntityInfo {
     }
 }
 
+struct BootstrapList {
+    bootstrap_entities: HashMap<TracerId, BootstrapEntityInfo>,
+    bootstrap_entities_modified: bool,
+}
+
 #[derive(Resource)]
 pub struct SpatialEntityStorage {
     tracers_to_entities: HashMap<TracerId, Entity>,
@@ -67,8 +66,7 @@ pub struct SpatialEntityStorage {
     spatial_hash_storage: sled::Tree,
     spatial_entities_storage: sled::Tree,
 
-    bootstrap_entities: HashMap<TracerId, BootstrapEntityInfo>,
-    bootstrap_entities_modified: bool,
+    bootstrap_list: Mutex<BootstrapList>,
     bootstrap_complete: AtomicBool,
 }
 
@@ -89,8 +87,10 @@ impl SpatialEntityStorage {
                 .open_tree("spatial_hash")
                 .context("Failed to open tree for chunk entities.")?,
             spatial_entities_storage,
-            bootstrap_entities,
-            bootstrap_entities_modified: false,
+            bootstrap_list: Mutex::new(BootstrapList {
+                bootstrap_entities,
+                bootstrap_entities_modified: false,
+            }),
             bootstrap_complete: AtomicBool::new(false),
         })
     }
@@ -106,42 +106,39 @@ impl SpatialEntityStorage {
             let bootstrap = bincode::deserialize(&bootstrap)
                 .context("Failed to deserialize chunk entity list from database.")?;
 
-            dbg!(&bootstrap);
-
             Ok(bootstrap)
         } else {
             Ok(HashMap::new())
         }
     }
 
-    fn save_bootstrap_entities_list(&mut self) -> Result<()> {
-        if self.bootstrap_entities_modified {
-            let bootstrap_bytes = bincode::serialize(&self.bootstrap_entities)
+    fn save_bootstrap_entities_list(&self) -> Result<()> {
+        let mut bootstrap_list = self
+            .bootstrap_list
+            .lock()
+            .expect("Bootstrap list has been poisoned!");
+
+        if bootstrap_list.bootstrap_entities_modified {
+            let bootstrap_bytes = bincode::serialize(&bootstrap_list.bootstrap_entities)
                 .context("Failed to serialize bootstrap entity list.")?;
             self.spatial_entities_storage
                 .insert(b"bootstrap_entities", bootstrap_bytes)
                 .context("Failed to write bootstrap entity list to database.")?;
 
-            self.bootstrap_entities_modified = false;
+            bootstrap_list.bootstrap_entities_modified = false;
         }
 
         Ok(())
     }
 
-    pub fn new_storable_component(
-        &mut self,
-        type_name: impl Into<Cow<'static, str>>,
-    ) -> Result<Storable> {
-        self.new_bootstrapped_storable_component(BootstrapEntityInfo::NonBootstrap, type_name)
-    }
-
-    pub fn new_bootstrapped_storable_component(
-        &mut self,
-        bootstrap: BootstrapEntityInfo,
-        type_name: impl Into<Cow<'static, str>>,
-    ) -> Result<Storable> {
-        let type_name = type_name.into();
-
+    pub fn new_storable_component<E, S, D, Q, RQ>(&self) -> Result<Storable>
+    where
+        E: SpatialEntity<S, D, Q, RQ>,
+        S: Serialize,
+        D: DeserializeOwned,
+        Q: WorldQuery,
+        RQ: ReadOnlyWorldQuery,
+    {
         // Start by getting a valid entity ID.
         let tracer_id = self
             .database
@@ -172,61 +169,33 @@ impl SpatialEntityStorage {
         // We do not store the tracings here. A system will handle that later.
         // Why do we do it this way? Because an entity can also be loaded from a file, and that would bypass this bit of code.
         // I'd rather not have copies of this in multiple places so we'll just have one system to do both jobs.
-
-        dbg!(tracer_id, bootstrap, &type_name);
-        match bootstrap {
+        match E::bootstrapping() {
             BootstrapEntityInfo::NonBootstrap => {}
             _ => {
-                self.bootstrap_entities.insert(tracer_id, bootstrap);
-                self.bootstrap_entities_modified = true;
+                let mut bootstrap_list = self
+                    .bootstrap_list
+                    .lock()
+                    .expect("Bootstrap list has been poisoned!");
+                bootstrap_list
+                    .bootstrap_entities
+                    .insert(tracer_id, E::bootstrapping());
+                bootstrap_list.bootstrap_entities_modified = true;
             }
         }
 
-        Ok(Storable {
-            id: tracer_id,
-            bootstrap,
-            type_name,
-        })
+        Ok(Storable { id: tracer_id })
     }
 
-    pub fn load_entity(
-        &self,
-        type_registry: &AppTypeRegistry,
-        tracer_id: u64,
-    ) -> Result<Option<DynamicScene>> {
-        if !self.tracers_to_entities.contains_key(&tracer_id) {
-            let tracer_key = tracer_id.to_be_bytes();
-
-            let entity_bytes = self
-                .spatial_entities_storage
-                .get(tracer_key)?
-                .context("Entity was not present in database.")?;
-
-            let mut bincode_deserializer = bincode::Deserializer::from_slice(
-                &entity_bytes,
-                bincode::DefaultOptions::new()
-                    .with_fixint_encoding()
-                    .allow_trailing_bytes(),
-            );
-            let scene_deserializer = SceneDeserializer {
-                type_registry: &type_registry.read(),
-            };
-
-            let dynamic_scene = scene_deserializer
-                .deserialize(&mut bincode_deserializer)
-                .context("Failed to deserialize entity.")?;
-
-            Ok(Some(dynamic_scene))
-        } else {
-            // The entity has already been loaded.
-            Ok(None)
+    pub fn delete_entity(&self, trace_id: TracerId) {
+        // FIXME that this will leave a reference to the entity in the terrain chunk. That's okay for now, it's invalidated and won't cause a crash.
+        // It will eventually be cleaned up when it's not spawned, but it will print error messages.
+        {
+            let mut bootstrap_list = self
+                .bootstrap_list
+                .lock()
+                .expect("Bootstrap list is poisoned!");
+            bootstrap_list.bootstrap_entities.remove(&trace_id);
         }
-    }
-
-    pub fn delete_entity(&mut self, trace_id: TracerId) {
-        // Note that this will leave a reference to the entity in the terrain chunk. That's okay, it's invalidated and won't cause a crash.
-        // It will eventually be cleaned up when it's not spawned.
-        self.bootstrap_entities.remove(&trace_id);
         if let Err(error) = self.spatial_entities_storage.remove(trace_id.to_be_bytes()) {
             log::warn!("Failed to delete entity {}: {:?}", trace_id, error);
         }
@@ -276,116 +245,43 @@ fn clean_up_tracings(
     }
 }
 
-type LoadSystemState<'a, 'b, 'c> = SystemState<(
-    Commands<'a, 'b>,
-    Query<'a, 'b, (Entity, &'c ChunkPosition, With<ToLoadSpatial>)>,
-    Option<Res<'a, SpatialEntityStorage>>,
-    Res<'a, AppTypeRegistry>,
-)>;
-
-#[derive(Resource)]
-struct CachedLoadSystemState {
-    state: LoadSystemState<'static, 'static, 'static>,
-}
-
-fn load_chunk(world: &mut World) {
-    fn load_spatial_hash(
-        position: &ChunkPosition,
-        storage: &SpatialEntityStorage,
-    ) -> Result<Option<Vec<TracerId>>> {
-        let chunk_position_encoding = position.to_database_key();
-
-        let entity_set_bytes = storage
-            .spatial_hash_storage
-            .get(chunk_position_encoding)
-            .context("Failed to read chunk entity list from database.")?;
-
-        if let Some(entity_set_bytes) = entity_set_bytes {
-            let entity_set = bincode::deserialize(&entity_set_bytes)
-                .context("Failed to deserialize chunk entity list from database.")?;
-
-            Ok(Some(entity_set))
-        } else {
-            Ok(None)
+fn save_bootstrap_entity_list(storage: Option<Res<SpatialEntityStorage>>) {
+    if let Some(storage) = storage {
+        if let Err(error) = storage.save_bootstrap_entities_list() {
+            log::error!("Failed to save bootstrap entities list: {:?}", error);
         }
     }
+}
 
-    world.resource_scope(|world, mut system_state: Mut<CachedLoadSystemState>| {
-        let (mut commands, to_load, storage, type_registry) = system_state.state.get_mut(world);
-
-        if let Some(storage) = storage {
-            let mut dynamic_scenes = Vec::new();
-
-            for (entity, position, _with_to_load_spatial) in to_load.iter() {
-                let mut chunk_entity_commands = commands.entity(entity);
-                chunk_entity_commands.remove::<ToLoadSpatial>();
-
-                match load_spatial_hash(position, &storage) {
-                    Ok(Some(tracer_set)) => {
-                        for tracer_id in tracer_set {
-                            match storage.load_entity(&type_registry, tracer_id) {
-                                Ok(Some(dynamic_scene)) => {
-                                    dynamic_scenes.push((tracer_id, position.index, dynamic_scene))
-                                }
-                                Ok(None) => {} // The entity was already loaded.
-                                Err(error) => log::error!(
-                                    "Failed to load entity {} in chunk {}: {:?}",
-                                    tracer_id,
-                                    position.index,
-                                    error
-                                ),
-                            }
-                        }
-                    }
-                    Ok(None) => {
-                        // There was no error but no data has been saved to the database.
-                        // We need to generate the chunk.
-                        chunk_entity_commands.insert(GenerateSpatial);
-                    }
-                    Err(error) => {
-                        log::error!(
-                            "Failed to load entity list for chunk {}: {:?}",
-                            position.index,
-                            error
-                        );
-                        chunk_entity_commands.insert(GenerateSpatial);
-                    }
-                }
-            }
-
-            for (tracer_id, position, dynamic_scene) in dynamic_scenes {
-                if let Err(error) = dynamic_scene.write_to_world(world, &mut EntityMap::default()) {
-                    log::error!(
-                        "Failed to spawn spatial entity {} in chunk {}: {:?}",
-                        tracer_id,
-                        position,
-                        error
-                    );
+fn bootstrap_entities(
+    mut commands: Commands,
+    storage: Option<Res<SpatialEntityStorage>>,
+    serialization_manager: Res<EntitySerializationManager>,
+) {
+    if let Some(storage) = storage {
+        if !storage.bootstrap_complete.swap(true, Ordering::SeqCst) {
+            let bootstrap_list = storage
+                .bootstrap_list
+                .lock()
+                .expect("Bootstrap list has been poisoned!");
+            for tracer_id in bootstrap_list.bootstrap_entities.keys() {
+                if let Err(error) =
+                    serialization_manager.load_entity(*tracer_id, &storage, &mut commands)
+                {
+                    log::error!("Failed to load entity {}: {:?}", tracer_id, error);
                 }
             }
         }
-
-        system_state.state.apply(world);
-    });
+    }
 }
 
-type SaveSystemState<'a, 'b, 'c, 'd, 'e> = SystemState<(
-    Commands<'a, 'b>,
-    Query<'a, 'b, (Entity, &'c ChunkPosition, With<ToSaveSpatial>)>,
-    Query<'a, 'b, (Entity, &'d Storable)>,
-    Query<'a, 'b, &'e Children>,
-    Query<'a, 'b, (Entity, With<SaveWithParent>)>,
-    Option<Res<'a, SpatialEntityStorage>>,
-    Res<'a, SpatialEntityTracker>,
-    Res<'a, AppTypeRegistry>,
-)>;
-
-#[derive(Resource)]
-struct CachedSaveSystemState {
-    state: SaveSystemState<'static, 'static, 'static, 'static, 'static>,
-}
-
-fn save_chunk(world: &mut World) {
+fn save_spatial_hashes(
+    mut commands: Commands,
+    spatial_entity_tracker: Res<SpatialEntityTracker>,
+    spatial_entities: Query<(Entity, &Storable)>,
+    chunks: Query<(Entity, &ChunkPosition), With<ToSaveSpatial>>,
+    storage: Option<Res<SpatialEntityStorage>>,
+) {
     fn save_spatial_hash(
         entity_set: &HashSet<Entity>,
         spatial_entities: &Query<(Entity, &Storable)>,
@@ -417,240 +313,234 @@ fn save_chunk(world: &mut World) {
         Ok(())
     }
 
-    world.resource_scope(|world, mut system_state: Mut<CachedSaveSystemState>| {
-        let (mut commands, chunks_to_save, spatial_entities, children, to_save_with_parents, storage, spatial_tracking, type_registry) =
-            system_state.state.get(world);
+    if let Some(storage) = storage {
+        for (chunk_entity, chunk_position) in chunks.iter() {
+            commands.entity(chunk_entity).remove::<ToSaveSpatial>();
 
-        if let Some(storage) = storage {
-            for (chunk_entity, position, _with_to_save_spatial) in chunks_to_save.iter() {
-                commands.entity(chunk_entity).remove::<ToSaveSpatial>();
-                if let Some(entity_set) =
-                    spatial_tracking.get_cell_entities(&SpatialHash::from(position.index))
+            if let Some(entity_set) =
+                spatial_entity_tracker.get_cell_entities(&chunk_position.into())
+            {
+                if let Err(error) =
+                    save_spatial_hash(entity_set, &spatial_entities, chunk_position, &storage)
                 {
-                    match save_spatial_hash(entity_set, &spatial_entities, position, &storage) {
-                        Ok(_) => {
-                            // We would skip saving the entities if we can't even save a reference to them.
-                            // I want to avoid garbage data that we can never clean up ending up in the database.
-                            for cell_entity in entity_set.iter() {
-                                // dbg!(cell_entity);
-                                if let Ok((entity, storable)) = spatial_entities.get(*cell_entity) {
-                                    let mut builder = DynamicSceneBuilder::from_world(world);
-                                    dbg!(entity);
-                                    builder.extract_entity(entity);
-
-
-                                    for descendant in children.iter_descendants(entity) {
-                                        if let Ok((descendant, _with_save_with_parent)) = to_save_with_parents.get(descendant) {
-                                            builder.extract_entity(descendant);
-                                        }
-                                    }
-
-                                    let dynamic_scene = builder.build();
-
-                                    dbg!(entity, storable.id, &storable.type_name);
-
-                                    for entity in dynamic_scene.entities.iter() {
-                                        dbg!(entity.entity);
-                                        for component in entity.components.iter() {
-                                            dbg!(component.type_name(), component);
-                                        }
-                                    }
-
-                                    let mut serialized_data = Vec::new();
-
-                                    let mut bincode_serializer = bincode::Serializer::new(
-                                        &mut serialized_data,
-                                        bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes(),
-                                    );
-
-                                    let scene_serializer =
-                                        SceneSerializer::new(&dynamic_scene, &type_registry);
-
-                                    if let Err(error) = scene_serializer.serialize(&mut bincode_serializer) {
-                                        log::error!(
-                                            "Failed to serialize spatial entity {} in chunk {}: {:?}",
-                                            storable.id,
-                                            position.index,
-                                            error
-                                        );
-                                        continue;
-                                    }
-
-                                    if let Err(error) = storage
-                                        .spatial_entities_storage
-                                        .insert(storable.id.to_be_bytes(), serialized_data)
-                                    {
-                                        log::error!(
-                                            "Failed to write spatial entity {} in chunk {} to database: {:?}",
-                                            storable.id,
-                                            position.index,
-                                            error
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                        Err(error) => log::error!(
-                            "Failed to save spatial entity hashes for chunk {}: {:?}",
-                            position.index,
-                            error
-                        ),
-                    }
-                } else {
-                    match save_spatial_hash(&HashSet::new(), &spatial_entities, position, &storage) {
-                        Ok(_) => {
-                            // Cool, just wanted to make sure we don't regenerate it again later.
-                        }
-                        Err(error) => log::error!(
-                            "Failed to save spatial entity hashes for chunk {}: {:?}",
-                            position.index,
-                            error
-                        ),
-                    }
+                    log::error!(
+                        "Failed to save spatial hash for position {}: {:?}",
+                        chunk_position.index,
+                        error
+                    );
                 }
             }
-
-            if let Err(error) = storage.spatial_entities_storage.flush() {
-                log::error!("Failed to flush spatial entity storage: {:?}", error);
-            }
-        }
-
-        system_state.state.apply(world);
-    });
-}
-
-fn save_bootstrap_entity_list(storage: Option<ResMut<SpatialEntityStorage>>) {
-    if let Some(mut storage) = storage {
-        if let Err(error) = storage.save_bootstrap_entities_list() {
-            log::error!("Failed to save bootstrap entities list: {:?}", error);
         }
     }
 }
 
-type BootstrapEntitiesSystemState<'a> = SystemState<(
-    Option<Res<'a, SpatialEntityStorage>>,
-    Res<'a, AppTypeRegistry>,
-)>;
+pub type EntityTypeId = u16;
 
-#[derive(Resource)]
-struct CachedBootstrapEntitiesSystemState {
-    state: BootstrapEntitiesSystemState<'static>,
+pub trait SpatialEntity<S: Serialize, D: DeserializeOwned, Q: WorldQuery, RQ: ReadOnlyWorldQuery> {
+    fn type_id() -> EntityTypeId;
+    fn load(context: D, storage: &SpatialEntityStorage, commands: &mut Commands) -> Result<()>;
+    fn save<'a>(
+        query: <<Q as WorldQuery>::ReadOnly as WorldQuery>::Item<'a>,
+    ) -> (Entity, &'a Storable, S);
+
+    fn bootstrapping() -> BootstrapEntityInfo {
+        BootstrapEntityInfo::default()
+    }
 }
 
-fn bootstrap_entities(world: &mut World) {
-    world.resource_scope(
-        |world, mut system_state: Mut<CachedBootstrapEntitiesSystemState>| {
-            let (storage, type_registry) = system_state.state.get_mut(world);
+#[derive(Resource)]
+pub struct EntitySerializationManager {
+    #[allow(clippy::type_complexity)]
+    entity_loaders: HashMap<
+        EntityTypeId,
+        &'static (dyn Fn(TracerId, &SpatialEntityStorage, &[u8], &mut Commands) -> Result<()>
+                      + Sync),
+    >,
+}
 
-            if let Some(storage) = storage {
-                if !storage.bootstrap_complete.swap(true, Ordering::SeqCst) {
-                    let mut entity_map = EntityMap::default();
-                    let mut dynamic_scenes = Vec::new();
+impl EntitySerializationManager {
+    pub fn register<E, S, D, Q, RQ>(app: &mut App)
+    where
+        E: SpatialEntity<S, D, Q, RQ>,
+        S: Serialize,
+        D: DeserializeOwned,
+        Q: WorldQuery + 'static,
+        RQ: ReadOnlyWorldQuery + 'static,
+    {
+        // Create a custom system just to save this kind of entity.
+        app.add_system(
+            |mut commands: Commands,
+             storage: Option<Res<SpatialEntityStorage>>,
+             query: Query<Q, RQ>| {
+                {
+                    if let Some(storage) = storage {
+                        for to_save in query.iter() {
+                            let (entity, storable, serializable_form) = E::save(to_save);
+                            commands.entity(entity).remove::<ToSaveSpatial>();
 
-                    for tracer_id in storage.bootstrap_entities.keys() {
-                        match storage.load_entity(&type_registry, *tracer_id) {
-                            Ok(Some(dynamic_scene)) => {
-                                dynamic_scenes.push((*tracer_id, dynamic_scene))
-                            }
-                            Ok(None) => {} // The entity was already loaded.
-                            Err(error) => {
+                            let mut bytes: Vec<u8> = Vec::new();
+                            bytes.extend(E::type_id().to_le_bytes().iter());
+
+                            if let Err(error) =
+                                bincode::serialize_into(&mut bytes, &serializable_form)
+                            {
                                 log::error!(
-                                    "Failed to load spatial entity {} for bootstrapping: {:?}",
-                                    tracer_id,
+                                    "Failed to serialize entity {} of type {}: {:?}",
+                                    storable.id,
+                                    E::type_id(),
+                                    error
+                                );
+                            }
+
+                            if let Err(error) = storage
+                                .spatial_entities_storage
+                                .insert(storable.id.to_be_bytes(), bytes)
+                            {
+                                log::error!(
+                                    "Failed to write entity {} of type {} to database: {:?}",
+                                    storable.id,
+                                    E::type_id(),
                                     error
                                 );
                             }
                         }
                     }
+                }
+            },
+        );
 
-                    for (tracer_id, dynamic_scene) in dynamic_scenes {
-                        dbg!(tracer_id);
+        app.add_startup_system(
+            |mut serialization_manager: ResMut<EntitySerializationManager>| {
+                let is_not_duplicate = serialization_manager
+                    .entity_loaders
+                    .insert(
+                        E::type_id(),
+                        &|tracer_id, storage: &SpatialEntityStorage, bytes, commands| {
+                            let deserialized = bincode::deserialize(bytes).with_context(|| {
+                                format!(
+                                    "Failed to deserialize entity {} of type {}",
+                                    tracer_id,
+                                    E::type_id(),
+                                )
+                            })?;
 
-                        for entity in dynamic_scene.entities.iter() {
-                            dbg!(entity.entity);
-                            for component in entity.components.iter() {
-                                dbg!(component.type_name(), component);
+                            E::load(deserialized, storage, commands)?;
+
+                            Ok(())
+                        },
+                    )
+                    .is_none();
+                assert!(is_not_duplicate, "Duplicate entity type ID detected.");
+            },
+        );
+    }
+
+    fn load_entity(
+        &self,
+        tracer_id: TracerId,
+        storage: &SpatialEntityStorage,
+        commands: &mut Commands,
+    ) -> Result<()> {
+        let bytes = storage
+            .spatial_entities_storage
+            .get(tracer_id.to_be_bytes())
+            .context("Failed to read from database.")?
+            .context("Failed to find entity in database.")?;
+
+        const TYPE_LENGTH: usize = std::mem::size_of::<EntityTypeId>();
+        let mut type_id = [0u8; TYPE_LENGTH];
+        type_id.copy_from_slice(
+            bytes
+                .get(..TYPE_LENGTH)
+                .context("Unexpected end of data.")?,
+        );
+        let type_id = EntityTypeId::from_be_bytes(type_id);
+        let payload = &bytes[TYPE_LENGTH..];
+
+        let entity_loader = self
+            .entity_loaders
+            .get(&type_id)
+            .with_context(|| format!("No entity registered for type {}.", type_id))?;
+
+        entity_loader(tracer_id, storage, payload, commands)?;
+
+        Ok(())
+    }
+}
+
+fn load_entities(
+    mut commands: Commands,
+    terrain_chunks: Query<(Entity, &ChunkPosition), With<ToLoadSpatial>>,
+    storage: Option<Res<SpatialEntityStorage>>,
+    serialization_manager: Res<EntitySerializationManager>,
+) {
+    fn load_spatial_hash(
+        position: &ChunkPosition,
+        storage: &SpatialEntityStorage,
+    ) -> Result<Option<Vec<TracerId>>> {
+        let chunk_position_encoding = position.to_database_key();
+
+        let entity_set_bytes = storage
+            .spatial_hash_storage
+            .get(chunk_position_encoding)
+            .context("Failed to read chunk entity list from database.")?;
+
+        if let Some(entity_set_bytes) = entity_set_bytes {
+            let entity_set = bincode::deserialize(&entity_set_bytes)
+                .context("Failed to deserialize chunk entity list from database.")?;
+
+            Ok(Some(entity_set))
+        } else {
+            Ok(None)
+        }
+    }
+
+    if let Some(storage) = storage {
+        for (entity, chunk_position) in terrain_chunks.iter() {
+            match load_spatial_hash(chunk_position, &storage) {
+                Ok(spatial_hash) => {
+                    if let Some(entities) = spatial_hash {
+                        // We now have a list of tracer IDs for entities that belong in this chunk.
+
+                        for tracer_id in entities {
+                            if let Err(error) = serialization_manager.load_entity(
+                                tracer_id,
+                                &storage,
+                                &mut commands,
+                            ) {
+                                log::error!("Failed to load entity {}: {:?}", tracer_id, error);
                             }
                         }
-
-                        if let Err(error) = dynamic_scene.write_to_world(world, &mut entity_map) {
-                            log::error!(
-                                "Failed to bootstrap spatial entity {}: {:?}",
-                                tracer_id,
-                                error
-                            );
-                        }
+                    } else {
+                        // Looks like we have to generate it.
+                        commands.entity(entity).insert(ToGenerateSpatial);
                     }
                 }
+                Err(error) => log::error!(
+                    "Failed to load spatial hash for chunk {}: {:?}",
+                    chunk_position.index,
+                    error
+                ),
             }
-
-            system_state.state.apply(world);
-        },
-    );
-}
-
-const SAVE_INTERVAL_TICKS: usize = 60;
-
-#[derive(Resource)]
-struct EntitySaveTimer {
-    ticks_since_last_save: usize,
-}
-
-/// The timer went off, we need to mark the chunk as needing to be saved.
-fn save_timer_trigger(
-    mut commands: Commands,
-    chunks: Query<(Entity, With<Chunk>)>,
-    mut save_timer: ResMut<EntitySaveTimer>,
-) {
-    save_timer.ticks_since_last_save += 1;
-
-    if save_timer.ticks_since_last_save >= SAVE_INTERVAL_TICKS {
-        save_timer.ticks_since_last_save -= SAVE_INTERVAL_TICKS;
-
-        for (entity, _with_chunk) in chunks.iter() {
-            commands.entity(entity).insert(ToSaveSpatial);
         }
     }
 }
 
-pub(super) fn register_storage(app: &mut App) {
-    app.add_startup_system(|world: &mut World| {
-        let initial_state: SaveSystemState = SystemState::new(world);
-
-        // The system state is cached in a resource
-        world.insert_resource(CachedSaveSystemState {
-            state: initial_state,
-        });
-
-        let initial_state: LoadSystemState = SystemState::new(world);
-
-        // The system state is cached in a resource
-        world.insert_resource(CachedLoadSystemState {
-            state: initial_state,
-        });
-
-        let initial_state: BootstrapEntitiesSystemState = SystemState::new(world);
-
-        // The system state is cached in a resource
-        world.insert_resource(CachedBootstrapEntitiesSystemState {
-            state: initial_state,
-        });
-
-        world.insert_resource(EntitySaveTimer {
-            ticks_since_last_save: 0,
-        });
+fn setup(mut commands: Commands) {
+    commands.insert_resource(EntitySerializationManager {
+        entity_loaders: HashMap::new(),
     });
+}
+
+pub(super) fn register_storage(app: &mut App) {
+    app.add_startup_system(setup);
+    app.add_startup_system(apply_system_buffers.after(setup));
 
     app.add_system(new_tracings);
     app.add_system(clean_up_tracings);
-    app.add_system(load_chunk);
-    app.add_system(
-        save_chunk
-            .after(super::update_spatial_hash_entities)
-            .after(super::update_spatial_hash_entities_with_offset),
-    );
-    app.add_system(save_timer_trigger.before(save_chunk));
+    app.add_system(load_entities);
+    app.add_system(save_spatial_hashes);
 
-    app.add_system(save_bootstrap_entity_list.in_schedule(CoreSchedule::FixedUpdate));
-    app.add_system(bootstrap_entities.before(load_chunk));
+    app.add_system(save_bootstrap_entity_list);
+    app.add_system(bootstrap_entities);
 }

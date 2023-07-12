@@ -3,6 +3,7 @@ use bevy::ecs::event::{Events, ManualEventReader};
 use bevy::input::mouse;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, PrimaryWindow};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -15,7 +16,10 @@ use crate::world::terrain::{
     Block, BlockRegistry, BlockTag, Chunk, LoadsTerrain, TerrainSpace, UpdateMesh,
 };
 
-use super::spatial_entities::storage::{BootstrapEntityInfo, SaveWithParent, SpatialEntityStorage};
+use super::spatial_entities::storage::{
+    BootstrapEntityInfo, EntitySerializationManager, EntityTypeId, SpatialEntity,
+    SpatialEntityStorage, Storable, ToSaveSpatial,
+};
 
 /// Keeps track of mouse motion events, pitch, and yaw
 #[derive(Resource, Default)]
@@ -69,57 +73,122 @@ fn initial_grab_cursor(mut windows: Query<&mut Window, With<PrimaryWindow>>) {
     }
 }
 
-/// Spawns the `Camera3dBundle` to be controlled
-pub fn create_player(
-    commands: &mut Commands,
-    storage: &mut SpatialEntityStorage,
-    position: Position,
-) -> Result<()> {
-    commands
-        .spawn((
-            Cylinder {
-                height: 2.5,
-                radius: 0.3,
-            },
-            position,
-            Velocity::default(),
-            Transform::default(),
-            GlobalTransform::default(),
-            MovementControl,
-            LoadsTerrain { radius: 8 },
-            storage
-                .new_bootstrapped_storable_component(BootstrapEntityInfo::LocalPlayer, "player")?,
-        ))
-        .with_children(|parent| {
-            parent
-                .spawn((
-                    Transform::from_translation(Vec3::new(0.0, 2.0, 0.0)),
-                    GlobalTransform::default(),
-                    MovementControl,
-                    SaveWithParent,
-                ))
-                .with_children(|parent| {
-                    parent.spawn((
-                        Camera3dBundle {
-                            transform: Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
-                            ..Default::default()
-                        },
-                        RayCast {
-                            direction: Vec3::NEG_Z,
-                            length: 256.0,
-                        },
-                        RayTerrainIntersectionList {
-                            contact_limit: Some(std::num::NonZeroUsize::new(1).unwrap()),
-                            contacts: HashMap::new(),
-                        },
-                        BlockPlacementContext::default(),
-                        BlockRemovalContext::default(),
-                        SaveWithParent,
-                    ));
-                });
-        });
+#[derive(Serialize)]
+struct PlayerStorageSerialization<'a> {
+    velocity: &'a Velocity,
+    position: &'a Position,
+}
 
-    Ok(())
+#[derive(Deserialize)]
+struct PlayerStorageDeserialization {
+    velocity: Velocity,
+    position: Position,
+}
+
+#[derive(Component)]
+pub struct PlayerEntity;
+
+impl
+    SpatialEntity<
+        PlayerStorageSerialization<'_>,
+        PlayerStorageDeserialization,
+        (Entity, &Storable, &Position, &Velocity),
+        (),
+    > for PlayerEntity
+{
+    fn type_id() -> EntityTypeId {
+        0
+    }
+
+    fn load(
+        context: PlayerStorageDeserialization,
+        storage: &SpatialEntityStorage,
+        commands: &mut Commands,
+    ) -> Result<()> {
+        Self::spawn_internal(commands, storage, context)
+    }
+
+    fn save<'a>(
+        (entity, storable, position, velocity): (Entity, &'a Storable, &'a Position, &'a Velocity),
+    ) -> (Entity, &'a Storable, PlayerStorageSerialization<'a>) {
+        (
+            entity,
+            storable,
+            PlayerStorageSerialization { position, velocity },
+        )
+    }
+
+    fn bootstrapping() -> BootstrapEntityInfo {
+        BootstrapEntityInfo::LocalPlayer
+    }
+}
+
+impl PlayerEntity {
+    /// Spawns the `Camera3dBundle` to be controlled
+    pub fn spawn(
+        commands: &mut Commands,
+        storage: &SpatialEntityStorage,
+        position: Position,
+    ) -> Result<()> {
+        Self::spawn_internal(
+            commands,
+            storage,
+            PlayerStorageDeserialization {
+                velocity: Velocity::default(),
+                position,
+            },
+        )
+    }
+
+    fn spawn_internal(
+        commands: &mut Commands,
+        storage: &SpatialEntityStorage,
+        context: PlayerStorageDeserialization,
+    ) -> Result<()> {
+        commands
+            .spawn((
+                Cylinder {
+                    height: 2.5,
+                    radius: 0.3,
+                },
+                context.position,
+                context.velocity,
+                Transform::default(),
+                GlobalTransform::default(),
+                MovementControl,
+                LoadsTerrain { radius: 8 },
+                storage.new_storable_component::<PlayerEntity, _, _, _, _>()?,
+                ToSaveSpatial, // We want to save this as soon as its spawned.
+            ))
+            .with_children(|parent| {
+                parent
+                    .spawn((
+                        Transform::from_translation(Vec3::new(0.0, 2.0, 0.0)),
+                        GlobalTransform::default(),
+                        MovementControl,
+                    ))
+                    .with_children(|parent| {
+                        parent.spawn((
+                            Camera3dBundle {
+                                transform: Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
+                                ..Default::default()
+                            },
+                            RayCast {
+                                direction: Vec3::NEG_Z,
+                                length: 256.0,
+                            },
+                            RayTerrainIntersectionList {
+                                contact_limit: Some(std::num::NonZeroUsize::new(1).unwrap()),
+                                contacts: HashMap::new(),
+                            },
+                            BlockPlacementContext::default(),
+                            BlockRemovalContext::default(),
+                        ));
+                    });
+            });
+
+        Ok(())
+    }
 }
 
 /// Handles keyboard input and movement
@@ -490,5 +559,7 @@ impl Plugin for PlayerPlugin {
             .add_system(place_block.pipe(crate::error_handler))
             .add_system(remove_block)
             .add_system(cursor_grab);
+
+        EntitySerializationManager::register::<PlayerEntity, _, _, _, _>(app);
     }
 }

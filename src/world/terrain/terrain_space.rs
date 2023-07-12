@@ -3,10 +3,7 @@ use super::{
     Block, Chunk, ChunkIndex, ChunkPosition, GlobalBlockCoordinate, LocalBlockCoordinate,
     PreChunkBundle, TerrainTime,
 };
-use crate::world::{
-    physics::Position,
-    spatial_entities::storage::{Storable, ToLoadSpatial},
-};
+use crate::world::{physics::Position, spatial_entities::storage::ToLoadSpatial};
 use bevy::{
     ecs::query::{ReadOnlyWorldQuery, WorldQuery},
     prelude::*,
@@ -34,10 +31,18 @@ struct ActiveTerrainTimer {
 #[derive(Component, Default)]
 pub struct TerrainSpace {
     loaded_terrain: HashMap<ChunkIndex, Entity>,
+    is_global: bool,
     pub(crate) non_empty_chunks: HashSet<Entity>,
 }
 
 impl TerrainSpace {
+    pub fn global() -> Self {
+        Self {
+            is_global: true,
+            ..Default::default()
+        }
+    }
+
     pub fn num_non_empty_chunks(&self) -> usize {
         self.non_empty_chunks.len()
     }
@@ -73,8 +78,13 @@ impl TerrainSpace {
                         ..Default::default()
                     },
                     ToLoadTerrain, // Mark that this terrain needs to be loaded.
-                    ToLoadSpatial,
                 ));
+
+                if self.is_global {
+                    // Oh, we'll need to load spatial entities with that.
+                    entity.insert(ToLoadSpatial);
+                }
+
                 entity.set_parent(space_entity);
 
                 if let Some(despawn_deadline) = despawn_deadline {
@@ -253,9 +263,9 @@ fn load_terrain(
 
 #[derive(Component)]
 #[component(storage = "SparseSet")]
-pub struct ToDelete;
+pub struct ToUnloadTerrain;
 
-fn mark_chunk_for_save_and_delete(
+fn mark_chunk_for_save_and_unload(
     mut commands: Commands,
     chunks: Query<(Entity, With<Chunk>, &ActiveTerrainTimer)>,
     terrain_time: Res<TerrainTime>,
@@ -265,7 +275,7 @@ fn mark_chunk_for_save_and_delete(
             commands
                 .entity(chunk_entity)
                 .remove::<ActiveTerrainTimer>()
-                .insert((ToSaveTerrain, ToDelete));
+                .insert((ToSaveTerrain, ToUnloadTerrain));
         }
     }
 }
@@ -275,7 +285,7 @@ type DeleteChunksQuery<'a, 'b, 'c, 'd> = Query<
     'b,
     (
         Entity,
-        With<ToDelete>,
+        With<ToUnloadTerrain>,
         Without<ToSaveTerrain>,
         &'c ChunkPosition,
         &'d Parent,
@@ -361,7 +371,7 @@ pub fn register_terrain_space(app: &mut App) {
             .in_set(UnloadTerrain),
     );
     app.add_system(
-        mark_chunk_for_save_and_delete
+        mark_chunk_for_save_and_unload
             .before(delete_chunks)
             .in_set(UnloadTerrain),
     );

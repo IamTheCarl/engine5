@@ -363,7 +363,7 @@ where
 
                     let mut entity = commands.entity(entity_id);
 
-                    entity.remove::<ToGenerateSpatial>();
+                    entity.remove::<ToGenerateSpatial>().insert(ToSaveSpatial);
                 }
             }
         }

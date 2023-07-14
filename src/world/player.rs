@@ -17,8 +17,8 @@ use crate::world::terrain::{
 };
 
 use super::spatial_entities::storage::{
-    BootstrapEntityInfo, EntitySerializationManager, EntityTypeId, SpatialEntity,
-    SpatialEntityStorage, Storable, ToSaveSpatial,
+    BootstrapEntityInfo, DataLoader, DataSaver, EntitySerializationManager, EntityTypeId,
+    SpatialEntity, SpatialEntityStorage, Storable, ToSaveSpatial,
 };
 
 /// Keeps track of mouse motion events, pitch, and yaw
@@ -73,14 +73,8 @@ fn initial_grab_cursor(mut windows: Query<&mut Window, With<PrimaryWindow>>) {
     }
 }
 
-#[derive(Serialize)]
-struct PlayerStorageSerialization<'a> {
-    velocity: &'a Velocity,
-    position: &'a Position,
-}
-
 #[derive(Deserialize)]
-struct PlayerStorageDeserialization {
+struct PlayerEntityParameters {
     velocity: Velocity,
     position: Position,
 }
@@ -88,34 +82,30 @@ struct PlayerStorageDeserialization {
 #[derive(Component)]
 pub struct PlayerEntity;
 
-impl
-    SpatialEntity<
-        PlayerStorageSerialization<'_>,
-        PlayerStorageDeserialization,
-        (Entity, &Storable, &Position, &Velocity),
-        (),
-    > for PlayerEntity
-{
-    fn type_id() -> EntityTypeId {
-        0
+impl SpatialEntity<(Entity, &Storable, &Position, &Velocity), ()> for PlayerEntity {
+    const TYPE_ID: EntityTypeId = 0;
+
+    fn load(data_loader: DataLoader, commands: &mut Commands) -> Result<()> {
+        let (storable, parameters) = data_loader.load::<PlayerEntityParameters>()?;
+        Self::spawn_internal(commands, storable, parameters);
+        Ok(())
     }
 
-    fn load(
-        context: PlayerStorageDeserialization,
-        storage: &SpatialEntityStorage,
-        commands: &mut Commands,
-    ) -> Result<()> {
-        Self::spawn_internal(commands, storage, context)
-    }
+    fn save(
+        (entity, storable, position, velocity): (Entity, &Storable, &Position, &Velocity),
+        data_saver: DataSaver,
+    ) {
+        #[derive(Serialize)]
+        struct PlayerStorageSerialization<'a> {
+            velocity: &'a Velocity,
+            position: &'a Position,
+        }
 
-    fn save<'a>(
-        (entity, storable, position, velocity): (Entity, &'a Storable, &'a Position, &'a Velocity),
-    ) -> (Entity, &'a Storable, PlayerStorageSerialization<'a>) {
-        (
+        data_saver.save(
             entity,
             storable,
-            PlayerStorageSerialization { position, velocity },
-        )
+            &PlayerStorageSerialization { position, velocity },
+        );
     }
 
     fn bootstrapping() -> BootstrapEntityInfo {
@@ -130,34 +120,37 @@ impl PlayerEntity {
         storage: &SpatialEntityStorage,
         position: Position,
     ) -> Result<()> {
+        let storable = storage.new_storable_component::<PlayerEntity, _, _>()?;
+
         Self::spawn_internal(
             commands,
-            storage,
-            PlayerStorageDeserialization {
+            storable,
+            PlayerEntityParameters {
                 velocity: Velocity::default(),
                 position,
             },
-        )
+        );
+        Ok(())
     }
 
     fn spawn_internal(
         commands: &mut Commands,
-        storage: &SpatialEntityStorage,
-        context: PlayerStorageDeserialization,
-    ) -> Result<()> {
+        storable: Storable,
+        parameters: PlayerEntityParameters,
+    ) {
         commands
             .spawn((
                 Cylinder {
                     height: 2.5,
                     radius: 0.3,
                 },
-                context.position,
-                context.velocity,
+                parameters.position,
+                parameters.velocity,
                 Transform::default(),
                 GlobalTransform::default(),
                 MovementControl,
                 LoadsTerrain { radius: 8 },
-                storage.new_storable_component::<PlayerEntity, _, _, _, _>()?,
+                storable,
                 ToSaveSpatial, // We want to save this as soon as its spawned.
             ))
             .with_children(|parent| {
@@ -186,8 +179,6 @@ impl PlayerEntity {
                         ));
                     });
             });
-
-        Ok(())
     }
 }
 
@@ -560,6 +551,6 @@ impl Plugin for PlayerPlugin {
             .add_system(remove_block)
             .add_system(cursor_grab);
 
-        EntitySerializationManager::register::<PlayerEntity, _, _, _, _>(app);
+        EntitySerializationManager::register::<PlayerEntity, _, _>(app);
     }
 }

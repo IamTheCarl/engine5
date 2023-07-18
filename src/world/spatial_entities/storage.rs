@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use bevy::{ecs::query::WorldQuery, prelude::*};
+use bevy::{app::AppExit, ecs::query::WorldQuery, prelude::*};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -541,7 +541,7 @@ impl EntitySerializationManager {
             assert!(is_not_duplicate, "Duplicate entity type ID detected.");
         }
 
-        app.add_system(save_system::<E, Q>);
+        app.add_system(save_system::<E, Q>.in_set(SaveSystemSet));
         app.add_startup_system(load_setup_system::<E, Q>.in_set(SerializationSetup));
     }
 
@@ -653,8 +653,8 @@ struct EntitySaveTimer {
 }
 
 fn save_timer(
-    mut save_timer: ResMut<EntitySaveTimer>,
     mut commands: Commands,
+    mut save_timer: ResMut<EntitySaveTimer>,
     chunks: Query<Entity, With<ChunkPosition>>,
 ) {
     save_timer.time += 1;
@@ -668,8 +668,24 @@ fn save_timer(
     }
 }
 
+fn save_on_shutdown(
+    mut commands: Commands,
+    mut events: EventReader<AppExit>,
+    chunks: Query<Entity, With<ChunkPosition>>,
+) {
+    if events.iter().next().is_some() {
+        // Save! Save everything!
+        for chunk in chunks.iter() {
+            commands.entity(chunk).insert(ToSaveSpatial);
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Hash, Clone, SystemSet)]
 struct SerializationSetup;
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, SystemSet)]
+struct SaveSystemSet;
 
 fn setup(mut commands: Commands) {
     commands.insert_resource(EntitySerializationManager {
@@ -680,6 +696,9 @@ fn setup(mut commands: Commands) {
 }
 
 pub(super) fn register_storage(app: &mut App) {
+    app.configure_set(SaveSystemSet.in_base_set(CoreSet::PostUpdate));
+    app.configure_set(SerializationSetup);
+
     app.add_startup_system(setup);
     app.add_startup_system(apply_system_buffers.after(setup).before(SerializationSetup));
 
@@ -691,5 +710,14 @@ pub(super) fn register_storage(app: &mut App) {
     app.add_system(save_bootstrap_entity_list);
     app.add_system(bootstrap_entities);
 
-    app.add_system(save_timer.in_schedule(CoreSchedule::FixedUpdate));
+    app.add_system(
+        save_timer
+            .before(SaveSystemSet)
+            .in_schedule(CoreSchedule::FixedUpdate),
+    );
+    app.add_system(
+        save_on_shutdown
+            .before(SaveSystemSet)
+            .in_base_set(CoreSet::PostUpdate),
+    );
 }

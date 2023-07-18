@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use bevy::prelude::*;
+use bevy::{app::AppExit, prelude::*};
 
 use crate::world::spatial_entities::SpatialHashOffset;
 
@@ -130,9 +130,9 @@ fn load_terrain(
 fn save_terrain(
     mut commands: Commands,
     storage: Query<&TerrainStorage>,
-    terrain: Query<(Entity, &Parent, &ChunkPosition, &Chunk, With<ToSaveTerrain>)>,
+    terrain: Query<(Entity, &Parent, &ChunkPosition, &Chunk), With<ToSaveTerrain>>,
 ) {
-    for (entity, this_storage, position, chunk, _to_save) in terrain.iter() {
+    for (entity, this_storage, position, chunk) in terrain.iter() {
         if let Ok(storage) = storage.get(this_storage.get()) {
             if let Err(error) = storage.write_chunk(chunk, position) {
                 // Crashing while saving would be very bad, so just log the error.
@@ -187,10 +187,10 @@ fn save_timer_start(
 /// The timer went off, we need to mark the chunk as needing to be saved.
 fn save_timer_trigger(
     mut commands: Commands,
-    terrain: Query<(Entity, With<Chunk>, &SaveTimer)>,
+    terrain: Query<(Entity, &SaveTimer), With<Chunk>>,
     terrain_time: Res<TerrainTime>,
 ) {
-    for (entity, _chunk, save_timer) in terrain.iter() {
+    for (entity, save_timer) in terrain.iter() {
         if save_timer.deadline <= terrain_time.time {
             // Okay good, remove that timer so we don't start saving every frame.
             commands
@@ -201,13 +201,31 @@ fn save_timer_trigger(
     }
 }
 
+fn save_on_shutdown(
+    mut commands: Commands,
+    mut events: EventReader<AppExit>,
+    chunks: Query<Entity, With<Chunk>>,
+) {
+    if events.iter().next().is_some() {
+        // Save! Save everything!
+        for chunk in chunks.iter() {
+            commands.entity(chunk).insert(ToSaveTerrain);
+        }
+    }
+}
+
 pub fn register_terrain_files(app: &mut App) {
     app.add_system(load_terrain.pipe(crate::error_handler));
-    app.add_system(save_terrain);
+    app.add_system(save_terrain.in_base_set(CoreSet::PostUpdate));
     app.add_system(save_timer_start.before(super::terrain_time_tick));
     app.add_system(
         save_timer_trigger
             .after(save_timer_start)
             .before(save_terrain),
+    );
+    app.add_system(
+        save_on_shutdown
+            .before(save_terrain)
+            .in_base_set(CoreSet::PostUpdate),
     );
 }

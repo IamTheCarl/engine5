@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use terrain::{BlockRegistry, BlockTag};
 
+mod dynamic_terrain;
 pub mod generation;
 mod global_terrain;
 
@@ -71,5 +72,6 @@ impl Plugin for WorldPlugin {
 
         generation::setup_terrain_generation(app);
         global_terrain::setup(app);
+        dynamic_terrain::setup(app);
     }
 }

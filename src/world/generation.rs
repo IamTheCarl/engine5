@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use bevy::{math::Vec3Swizzles, prelude::*};
 use serde::{Deserialize, Serialize};
 
@@ -9,6 +9,7 @@ use crate::{
 };
 
 use super::{
+    dynamic_terrain::DynamicTerrainEntity,
     spatial_entities::storage::{EntityStorage, ToSaveSpatial},
     terrain::{
         Block, Chunk, ChunkIndex, ChunkPosition, LocalBlockCoordinate, TerrainSpace, UpdateMesh,
@@ -149,30 +150,22 @@ impl WorldGenerator for OscillatingHills {
     ) -> Result<()> {
         let base_offset = chunk_position.as_block_coordinate().xz();
 
-        // TODO we need to create a "DynamicTerrain" struct to manage this type of entity.
-        // if chunk_position.index == ChunkIndex::new(-1, 1, 0) {
-        //     let (storable, tree) = storage.new_storable_component_with_tree()?;
-
-        //     commands.spawn((
-        //         storable,
-        //         TerrainSpaceBundle {
-        //             terrain_space: TerrainSpace::local(SingleFilledChunk { block: self.block }),
-        //             position: Position {
-        //                 translation: Vec3::new(-24.0, 32.0, 0.0),
-        //                 rotation: 0.0,
-        //             },
-        //             storage: TerrainStorage::Local { tree },
-        //             transform: Transform::default(),
-        //             global_transform: GlobalTransform::default(),
-        //             visibility: Visibility::Inherited,
-        //             computed_visibility: ComputedVisibility::default(),
-        //         },
-        //         Velocity {
-        //             translation: Vec3::new(0.0, 0.0, 0.0),
-        //             rotational: 0.2,
-        //         },
-        //     ));
-        // }
+        if chunk_position.index == ChunkIndex::new(-1, 1, 0) {
+            DynamicTerrainEntity::spawn(
+                commands,
+                storage,
+                SingleFilledChunk { block: self.block },
+                Position {
+                    translation: Vec3::new(-24.0, 32.0, 0.0),
+                    rotation: 0.0,
+                },
+                Velocity {
+                    translation: Vec3::new(0.0, 0.0, 0.0),
+                    rotational: 0.2,
+                },
+            )
+            .context("Failed to spawn dynamic chunk.")?;
+        }
 
         if chunk_position.index == ChunkIndex::ZERO {
             let middle = Chunk::CHUNK_DIAMETER / 2;

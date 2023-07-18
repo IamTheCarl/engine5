@@ -121,7 +121,7 @@ impl EntityStorage {
             .context("Failed to read chunk entity list from database.")?;
 
         if let Some(bootstrap) = bootstrap {
-            let bootstrap = bincode::deserialize(&bootstrap)
+            let bootstrap = ciborium::from_reader(&*bootstrap)
                 .context("Failed to deserialize chunk entity list from database.")?;
 
             Ok(bootstrap)
@@ -137,7 +137,8 @@ impl EntityStorage {
             .expect("Bootstrap list has been poisoned!");
 
         if bootstrap_list.bootstrap_entities_modified {
-            let bootstrap_bytes = bincode::serialize(&bootstrap_list.bootstrap_entities)
+            let mut bootstrap_bytes = Vec::new();
+            ciborium::into_writer(&bootstrap_list.bootstrap_entities, &mut bootstrap_bytes)
                 .context("Failed to serialize bootstrap entity list.")?;
             self.spatial_entities_storage
                 .insert(b"bootstrap_entities", bootstrap_bytes)
@@ -346,7 +347,8 @@ fn save_spatial_hashes(
             tracer_set
         };
 
-        let tracer_set_bytes = bincode::serialize(&tracer_set)?;
+        let mut tracer_set_bytes = Vec::new();
+        ciborium::into_writer(&tracer_set, &mut tracer_set_bytes)?;
         let chunk_position_encoding = position.to_database_key();
 
         storage
@@ -401,7 +403,7 @@ impl<'a> DataLoader<'a> {
     pub fn load<D: DeserializeOwned>(self) -> Result<(Storable, D)> {
         Ok((
             Storable { id: self.tracer_id },
-            bincode::deserialize(self.bytes).with_context(|| {
+            ciborium::from_reader(self.bytes).with_context(|| {
                 format!(
                     "Failed to deserialize entity {} of type {}",
                     self.tracer_id, self.type_id,
@@ -412,7 +414,7 @@ impl<'a> DataLoader<'a> {
 
     pub fn load_with_tree<D: DeserializeOwned>(self) -> Result<(Storable, D, sled::Tree)> {
         let storable = Storable { id: self.tracer_id };
-        let deserialized = bincode::deserialize(self.bytes).with_context(|| {
+        let deserialized = ciborium::from_reader(self.bytes).with_context(|| {
             format!(
                 "Failed to deserialize entity {} of type {}",
                 self.tracer_id, self.type_id,
@@ -435,8 +437,8 @@ pub struct DataSaver<'a> {
 
 impl<'a> DataSaver<'a> {
     pub fn save<S: Serialize>(self, entity: Entity, storable: &Storable, to_serialize: &S) {
-        *self.result = bincode::serialize_into(self.storage, to_serialize)
-            .context("Failed to serialize entity");
+        *self.result =
+            ciborium::into_writer(to_serialize, self.storage).context("Failed to serialize entity");
         *self.tracer_id = storable.id;
         *self.entity = entity;
     }
@@ -602,7 +604,7 @@ fn load_entities(
             .context("Failed to read chunk entity list from database.")?;
 
         if let Some(entity_set_bytes) = entity_set_bytes {
-            let entity_set = bincode::deserialize(&entity_set_bytes)
+            let entity_set = ciborium::from_reader(&*entity_set_bytes)
                 .context("Failed to deserialize chunk entity list from database.")?;
 
             Ok(Some(entity_set))

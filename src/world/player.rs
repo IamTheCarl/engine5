@@ -82,9 +82,7 @@ struct PlayerEntityParameters {
 #[derive(Component)]
 pub struct PlayerEntity;
 
-impl SpatialEntity<(Entity, &Storable, &Position, &Velocity), (With<Self>, With<ToSaveSpatial>)>
-    for PlayerEntity
-{
+impl SpatialEntity<(Entity, &Storable, &Position, &Velocity)> for PlayerEntity {
     const TYPE_ID: EntityTypeId = 0;
     const BOOTSTRAP: BootstrapEntityInfo = BootstrapEntityInfo::LocalPlayer;
 
@@ -119,7 +117,7 @@ impl PlayerEntity {
         storage: &EntityStorage,
         position: Position,
     ) -> Result<()> {
-        let storable = storage.new_storable_component::<PlayerEntity, _, _>()?;
+        let storable = storage.new_storable_component::<PlayerEntity, _>()?;
 
         Self::spawn_internal(
             commands,
@@ -551,6 +549,6 @@ impl Plugin for PlayerPlugin {
             .add_system(remove_block)
             .add_system(cursor_grab);
 
-        EntitySerializationManager::register::<PlayerEntity, _, _>(app);
+        EntitySerializationManager::register::<PlayerEntity, _>(app);
     }
 }

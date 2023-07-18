@@ -20,7 +20,7 @@ pub struct GlobalTerrainParameters {
 #[derive(Component)]
 pub struct GlobalTerrainEntity;
 
-impl SpatialEntity<(Entity, &Storable, &TerrainSpace), With<Self>> for GlobalTerrainEntity {
+impl SpatialEntity<(Entity, &Storable, &TerrainSpace)> for GlobalTerrainEntity {
     const TYPE_ID: EntityTypeId = 1;
     const BOOTSTRAP: BootstrapEntityInfo = BootstrapEntityInfo::GlobalTerrain;
 
@@ -62,7 +62,7 @@ impl GlobalTerrainEntity {
         generator: impl Into<WorldGeneratorEnum>,
     ) -> Result<()> {
         let (storable, tree) =
-            storage.new_storable_component_with_tree::<GlobalTerrainEntity, _, _>()?;
+            storage.new_storable_component_with_tree::<GlobalTerrainEntity, _>()?;
 
         Self::spawn_internal(
             commands,
@@ -106,5 +106,5 @@ impl GlobalTerrainEntity {
 }
 
 pub fn setup(app: &mut App) {
-    EntitySerializationManager::register::<GlobalTerrainEntity, _, _>(app);
+    EntitySerializationManager::register::<GlobalTerrainEntity, _>(app);
 }

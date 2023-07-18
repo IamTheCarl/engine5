@@ -1,8 +1,5 @@
 use anyhow::{Context, Result};
-use bevy::{
-    ecs::query::{ReadOnlyWorldQuery, WorldQuery},
-    prelude::*,
-};
+use bevy::{ecs::query::WorldQuery, prelude::*};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -149,11 +146,10 @@ impl EntityStorage {
         Ok(())
     }
 
-    pub fn new_storable_component<E, Q, RQ>(&self) -> Result<Storable>
+    pub fn new_storable_component<E, Q>(&self) -> Result<Storable>
     where
-        E: SpatialEntity<Q, RQ>,
+        E: SpatialEntity<Q>,
         Q: WorldQuery,
-        RQ: ReadOnlyWorldQuery,
     {
         // Start by getting a valid entity ID.
         let tracer_id = self
@@ -202,13 +198,12 @@ impl EntityStorage {
         Ok(Storable { id: tracer_id })
     }
 
-    pub fn new_storable_component_with_tree<E, Q, RQ>(&self) -> Result<(Storable, sled::Tree)>
+    pub fn new_storable_component_with_tree<E, Q>(&self) -> Result<(Storable, sled::Tree)>
     where
-        E: SpatialEntity<Q, RQ>,
+        E: SpatialEntity<Q>,
         Q: WorldQuery,
-        RQ: ReadOnlyWorldQuery,
     {
-        let storable = self.new_storable_component::<E, Q, RQ>()?;
+        let storable = self.new_storable_component::<E, Q>()?;
         let tree_name = tree_name_for_entity(storable.id);
 
         let tree = self
@@ -446,8 +441,7 @@ impl<'a> DataSaver<'a> {
 
 pub type EntityTypeId = u16;
 
-// FIXME RQ isn't that useful, and forgetting to set it to require "ToSaveSpatial" can be disastrously bad for a hard drive. Just hard-code it at (With<Self>, With<ToSaveSpatial>).
-pub trait SpatialEntity<Q: WorldQuery, RQ: ReadOnlyWorldQuery> {
+pub trait SpatialEntity<Q: WorldQuery> {
     const TYPE_ID: EntityTypeId;
     const BOOTSTRAP: BootstrapEntityInfo = BootstrapEntityInfo::NonBootstrap;
 
@@ -465,20 +459,18 @@ pub struct EntitySerializationManager {
 }
 
 impl EntitySerializationManager {
-    pub fn register<E, Q, RQ>(app: &mut App)
+    pub fn register<E, Q>(app: &mut App)
     where
-        E: SpatialEntity<Q, RQ> + 'static,
+        E: SpatialEntity<Q> + Component + 'static,
         Q: WorldQuery + 'static,
-        RQ: ReadOnlyWorldQuery + 'static,
     {
-        fn save_system<E, Q, RQ>(
+        fn save_system<E, Q>(
             mut commands: Commands,
             storage: Option<Res<EntityStorage>>,
-            query: Query<Q, RQ>,
+            query: Query<Q, (With<E>, With<ToSaveSpatial>)>,
         ) where
-            E: SpatialEntity<Q, RQ>,
+            E: SpatialEntity<Q> + Component,
             Q: WorldQuery,
-            RQ: ReadOnlyWorldQuery,
         {
             if let Some(storage) = storage {
                 for to_save in query.iter() {
@@ -523,12 +515,10 @@ impl EntitySerializationManager {
             }
         }
 
-        fn load_setup_system<E, Q, RQ>(
-            mut serialization_manager: ResMut<EntitySerializationManager>,
-        ) where
-            E: SpatialEntity<Q, RQ>,
+        fn load_setup_system<E, Q>(mut serialization_manager: ResMut<EntitySerializationManager>)
+        where
+            E: SpatialEntity<Q>,
             Q: WorldQuery,
-            RQ: ReadOnlyWorldQuery,
         {
             let is_not_duplicate = serialization_manager
                 .entity_loaders
@@ -548,8 +538,8 @@ impl EntitySerializationManager {
             assert!(is_not_duplicate, "Duplicate entity type ID detected.");
         }
 
-        app.add_system(save_system::<E, Q, RQ>);
-        app.add_startup_system(load_setup_system::<E, Q, RQ>.in_set(SerializationSetup));
+        app.add_system(save_system::<E, Q>);
+        app.add_startup_system(load_setup_system::<E, Q>.in_set(SerializationSetup));
     }
 
     fn load_entity(

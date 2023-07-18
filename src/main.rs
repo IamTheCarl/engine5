@@ -50,7 +50,7 @@ fn setup(mut commands: Commands, block_registry: Res<BlockRegistry>) -> Result<(
         terrain_ray_casts: false,
     });
 
-    world::spawn_world(
+    world::open_world(
         &mut commands,
         &block_registry,
         Path::new(file_paths::SAVE_DIRECTORY).join("test"),

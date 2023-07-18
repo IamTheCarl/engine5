@@ -17,8 +17,8 @@ use crate::world::terrain::{
 };
 
 use super::spatial_entities::storage::{
-    BootstrapEntityInfo, DataLoader, DataSaver, EntitySerializationManager, EntityTypeId,
-    SpatialEntity, SpatialEntityStorage, Storable, ToSaveSpatial,
+    BootstrapEntityInfo, DataLoader, DataSaver, EntitySerializationManager, EntityStorage,
+    EntityTypeId, SpatialEntity, Storable, ToSaveSpatial,
 };
 
 /// Keeps track of mouse motion events, pitch, and yaw
@@ -82,8 +82,11 @@ struct PlayerEntityParameters {
 #[derive(Component)]
 pub struct PlayerEntity;
 
-impl SpatialEntity<(Entity, &Storable, &Position, &Velocity), ()> for PlayerEntity {
+impl SpatialEntity<(Entity, &Storable, &Position, &Velocity), (With<Self>, With<ToSaveSpatial>)>
+    for PlayerEntity
+{
     const TYPE_ID: EntityTypeId = 0;
+    const BOOTSTRAP: BootstrapEntityInfo = BootstrapEntityInfo::LocalPlayer;
 
     fn load(data_loader: DataLoader, commands: &mut Commands) -> Result<()> {
         let (storable, parameters) = data_loader.load::<PlayerEntityParameters>()?;
@@ -107,17 +110,13 @@ impl SpatialEntity<(Entity, &Storable, &Position, &Velocity), ()> for PlayerEnti
             &PlayerStorageSerialization { position, velocity },
         );
     }
-
-    fn bootstrapping() -> BootstrapEntityInfo {
-        BootstrapEntityInfo::LocalPlayer
-    }
 }
 
 impl PlayerEntity {
     /// Spawns the `Camera3dBundle` to be controlled
     pub fn spawn(
         commands: &mut Commands,
-        storage: &SpatialEntityStorage,
+        storage: &EntityStorage,
         position: Position,
     ) -> Result<()> {
         let storable = storage.new_storable_component::<PlayerEntity, _, _>()?;
@@ -140,6 +139,7 @@ impl PlayerEntity {
     ) {
         commands
             .spawn((
+                Self,
                 Cylinder {
                     height: 2.5,
                     radius: 0.3,

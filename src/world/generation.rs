@@ -1,5 +1,6 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use bevy::{math::Vec3Swizzles, prelude::*};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     world::physics::{Cylinder, Position, Velocity},
@@ -8,10 +9,9 @@ use crate::{
 };
 
 use super::{
-    spatial_entities::storage::{SpatialEntityStorage, ToSaveSpatial},
+    spatial_entities::storage::{EntityStorage, ToSaveSpatial},
     terrain::{
-        Block, Chunk, ChunkIndex, ChunkPosition, LocalBlockCoordinate, TerrainSpace,
-        TerrainSpaceBundle, TerrainStorage, UpdateMesh,
+        Block, Chunk, ChunkIndex, ChunkPosition, LocalBlockCoordinate, TerrainSpace, UpdateMesh,
     },
 };
 
@@ -23,7 +23,7 @@ pub struct ToGenerateTerrain;
 #[component(storage = "SparseSet")]
 pub struct ToGenerateSpatial;
 
-#[derive(Component)]
+#[derive(Serialize, Deserialize)]
 pub struct EmptyWorld;
 
 impl WorldGenerator for EmptyWorld {
@@ -35,7 +35,7 @@ impl WorldGenerator for EmptyWorld {
     fn generate_spatial(
         &self,
         chunk_position: &ChunkPosition,
-        storage: &mut SpatialEntityStorage,
+        storage: &mut EntityStorage,
         commands: &mut Commands,
     ) -> Result<()> {
         // Spawn a player.
@@ -55,7 +55,7 @@ impl WorldGenerator for EmptyWorld {
     }
 }
 
-#[derive(Component)]
+#[derive(Serialize, Deserialize)]
 pub struct FlatWorld {
     pub block: Block,
 }
@@ -81,7 +81,7 @@ impl WorldGenerator for FlatWorld {
     fn generate_spatial(
         &self,
         chunk_position: &ChunkPosition,
-        storage: &mut SpatialEntityStorage,
+        storage: &mut EntityStorage,
         commands: &mut Commands,
     ) -> Result<()> {
         if chunk_position.index == ChunkIndex::ZERO {
@@ -100,12 +100,11 @@ impl WorldGenerator for FlatWorld {
     }
 }
 
-#[derive(Component)]
+#[derive(Serialize, Deserialize)]
 pub struct OscillatingHills {
     pub block: Block,
     pub rate: i32,
     pub depth: i32,
-    pub database: sled::Db,
 }
 
 impl OscillatingHills {
@@ -145,34 +144,35 @@ impl WorldGenerator for OscillatingHills {
     fn generate_spatial(
         &self,
         chunk_position: &ChunkPosition,
-        storage: &mut SpatialEntityStorage,
+        storage: &mut EntityStorage,
         commands: &mut Commands,
     ) -> Result<()> {
         let base_offset = chunk_position.as_block_coordinate().xz();
 
-        if chunk_position.index == ChunkIndex::new(-1, 1, 0) {
-            commands.spawn((
-                TerrainSpaceBundle {
-                    terrain_space: TerrainSpace::default(),
-                    position: Position {
-                        translation: Vec3::new(-24.0, 32.0, 0.0),
-                        rotation: 0.0,
-                    },
-                    file: TerrainStorage::open_local(&self.database, "spinning_chunk")
-                        .context("Failed to create storage for moving terrain.")?, // TODO we need to generate names rather than hard-code them.
-                    // storable: storage.new_storable_component("dynamic_chunk")?,
-                    transform: Transform::default(),
-                    global_transform: GlobalTransform::default(),
-                    visibility: Visibility::Inherited,
-                    computed_visibility: ComputedVisibility::default(),
-                },
-                SingleFilledChunk { block: self.block },
-                Velocity {
-                    translation: Vec3::new(0.0, 0.0, 0.0),
-                    rotational: 0.2,
-                },
-            ));
-        }
+        // TODO we need to create a "DynamicTerrain" struct to manage this type of entity.
+        // if chunk_position.index == ChunkIndex::new(-1, 1, 0) {
+        //     let (storable, tree) = storage.new_storable_component_with_tree()?;
+
+        //     commands.spawn((
+        //         storable,
+        //         TerrainSpaceBundle {
+        //             terrain_space: TerrainSpace::local(SingleFilledChunk { block: self.block }),
+        //             position: Position {
+        //                 translation: Vec3::new(-24.0, 32.0, 0.0),
+        //                 rotation: 0.0,
+        //             },
+        //             storage: TerrainStorage::Local { tree },
+        //             transform: Transform::default(),
+        //             global_transform: GlobalTransform::default(),
+        //             visibility: Visibility::Inherited,
+        //             computed_visibility: ComputedVisibility::default(),
+        //         },
+        //         Velocity {
+        //             translation: Vec3::new(0.0, 0.0, 0.0),
+        //             rotational: 0.2,
+        //         },
+        //     ));
+        // }
 
         if chunk_position.index == ChunkIndex::ZERO {
             let middle = Chunk::CHUNK_DIAMETER / 2;
@@ -212,7 +212,7 @@ impl WorldGenerator for OscillatingHills {
     }
 }
 
-#[derive(Component)]
+#[derive(Serialize, Deserialize)]
 pub struct CheckerBoard {
     pub even_block: Block,
     pub odd_block: Block,
@@ -253,7 +253,7 @@ impl WorldGenerator for CheckerBoard {
     fn generate_spatial(
         &self,
         chunk_position: &ChunkPosition,
-        storage: &mut SpatialEntityStorage,
+        storage: &mut EntityStorage,
         commands: &mut Commands,
     ) -> Result<()> {
         let (_new_block, height) = self.get_block_and_height(chunk_position);
@@ -291,7 +291,7 @@ impl WorldGenerator for CheckerBoard {
     }
 }
 
-#[derive(Component)]
+#[derive(Serialize, Deserialize)]
 pub struct SingleFilledChunk {
     pub block: Block,
 }
@@ -316,93 +316,11 @@ impl WorldGenerator for SingleFilledChunk {
     fn generate_spatial(
         &self,
         _chunk_position: &ChunkPosition,
-        _storage: &mut SpatialEntityStorage,
+        _storage: &mut EntityStorage,
         _commands: &mut Commands,
     ) -> Result<()> {
         Ok(())
     }
-}
-
-fn new_world_generator<G>(app: &mut App)
-where
-    G: Component + WorldGenerator,
-{
-    type GenerateTerrainQuery<'a, 'b, 'c> = Query<
-        'a,
-        'b,
-        (
-            Entity,
-            &'c ChunkPosition,
-            &'c Parent,
-            With<ToGenerateTerrain>,
-            Without<Chunk>,
-        ),
-    >;
-    type GenerateEntitiesQuery<'a, 'b, 'c> = Query<
-        'a,
-        'b,
-        (
-            Entity,
-            &'c ChunkPosition,
-            &'c Parent,
-            With<ToGenerateSpatial>,
-        ),
-    >;
-
-    // System to generate spatial entities.
-    let system = move |mut commands: Commands,
-                       mut terrain_spaces: Query<&G>,
-                       to_generate: GenerateEntitiesQuery,
-                       storage: Option<ResMut<SpatialEntityStorage>>|
-          -> Result<()> {
-        if let Some(mut storage) = storage {
-            // TODO the generation calls should be done outside of the ECS so that this system becomes non-blocking.
-            for (entity_id, position, parent, _to_generate) in to_generate.iter() {
-                if let Ok(generator) = terrain_spaces.get_mut(parent.get()) {
-                    generator.generate_spatial(position, &mut storage, &mut commands)?;
-
-                    let mut entity = commands.entity(entity_id);
-
-                    entity.remove::<ToGenerateSpatial>().insert(ToSaveSpatial);
-                }
-            }
-        }
-
-        Ok(())
-    };
-    app.add_system(system.pipe(crate::error_handler));
-
-    // System to generate terrain.
-    let system = move |mut commands: Commands,
-                       mut terrain_spaces: Query<(&mut TerrainSpace, &G)>,
-                       to_generate: GenerateTerrainQuery|
-          -> Result<()> {
-        // TODO the generation calls should be done outside of the ECS so that this system becomes non-blocking.
-        for (entity_id, position, parent, _to_generate, _without_chunk) in to_generate.iter() {
-            if let Ok((mut terrain_space, generator)) = terrain_spaces.get_mut(parent.get()) {
-                let chunk = generator.generate_terrain(position)?;
-
-                let mut entity = commands.entity(entity_id);
-
-                entity.remove::<ToGenerateTerrain>().insert((
-                    UpdateMesh, // TODO this should probably be controlled by some kind of mobile entity that actually loads terrain.
-                    position.as_transform(),
-                    SpatialHashOffset {
-                        translation: Vec3::new(8.0, 0.0, 8.0),
-                    },
-                    ToSaveTerrain, // We just went through the effort to generate it, might as well save it while we're at it.
-                ));
-
-                if let Some(chunk) = chunk {
-                    entity.insert(chunk);
-                    terrain_space.non_empty_chunks.insert(entity_id);
-                }
-            }
-        }
-
-        Ok(())
-    };
-    app.add_system(system.pipe(crate::error_handler));
 }
 
 pub trait WorldGenerator {
@@ -410,15 +328,123 @@ pub trait WorldGenerator {
     fn generate_spatial(
         &self,
         chunk_position: &ChunkPosition,
-        storage: &mut SpatialEntityStorage,
+        storage: &mut EntityStorage,
         commands: &mut Commands,
     ) -> Result<()>;
 }
 
-pub fn register_terrain_generators(app: &mut App) {
-    new_world_generator::<FlatWorld>(app);
-    new_world_generator::<EmptyWorld>(app);
-    new_world_generator::<OscillatingHills>(app);
-    new_world_generator::<CheckerBoard>(app);
-    new_world_generator::<SingleFilledChunk>(app);
+macro_rules! register_terrain_generators {
+    ($($x:ident),*) => {
+        #[derive(Deserialize, Serialize)]
+        pub enum WorldGeneratorEnum {
+            None,
+            $(
+                $x($x),
+            )*
+        }
+
+        impl Default for WorldGeneratorEnum {
+            fn default() -> Self {
+                Self::None
+            }
+        }
+
+        impl std::ops::Deref for WorldGeneratorEnum {
+            type Target = dyn WorldGenerator;
+
+            fn deref(&self) -> &Self::Target {
+                match self {
+                    Self::None => &EmptyWorld,
+                    $(
+                        Self::$x(value) => value,
+                    )*
+                }
+            }
+        }
+
+
+        $(
+            impl From<$x> for WorldGeneratorEnum {
+                fn from(value: $x) -> Self {
+                    Self::$x(value)
+                }
+            }
+        )*
+    };
+}
+
+register_terrain_generators!(FlatWorld, OscillatingHills, CheckerBoard, SingleFilledChunk);
+
+type GenerateTerrainQuery<'a, 'b, 'c> = Query<
+    'a,
+    'b,
+    (
+        Entity,
+        &'c ChunkPosition,
+        &'c Parent,
+        With<ToGenerateTerrain>,
+        Without<Chunk>,
+    ),
+>;
+type GenerateEntitiesQuery<'a, 'b, 'c> =
+    Query<'a, 'b, (Entity, &'c ChunkPosition, &'c Parent), With<ToGenerateSpatial>>;
+
+fn generate_spatial_entities(
+    mut commands: Commands,
+    terrain_spaces: Query<&TerrainSpace>,
+    to_generate: GenerateEntitiesQuery,
+    storage: Option<ResMut<EntityStorage>>,
+) -> Result<()> {
+    if let Some(mut storage) = storage {
+        // TODO the generation calls should be done outside of the ECS so that this system becomes non-blocking.
+        for (entity_id, position, parent) in to_generate.iter() {
+            if let Ok(terrain_space) = terrain_spaces.get(parent.get()) {
+                terrain_space
+                    .generator
+                    .generate_spatial(position, &mut storage, &mut commands)?;
+
+                let mut entity = commands.entity(entity_id);
+
+                entity.remove::<ToGenerateSpatial>().insert(ToSaveSpatial);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn generate_terrain(
+    mut commands: Commands,
+    mut terrain_spaces: Query<&mut TerrainSpace>,
+    to_generate: GenerateTerrainQuery,
+) -> Result<()> {
+    // TODO the generation calls should be done outside of the ECS so that this system becomes non-blocking.
+    for (entity_id, position, parent, _to_generate, _without_chunk) in to_generate.iter() {
+        if let Ok(mut terrain_space) = terrain_spaces.get_mut(parent.get()) {
+            let chunk = terrain_space.generator.generate_terrain(position)?;
+
+            let mut entity = commands.entity(entity_id);
+
+            entity.remove::<ToGenerateTerrain>().insert((
+                UpdateMesh, // TODO this should probably be controlled by some kind of mobile entity that actually loads terrain.
+                position.as_transform(),
+                SpatialHashOffset {
+                    translation: Vec3::new(8.0, 0.0, 8.0),
+                },
+                ToSaveTerrain, // We just went through the effort to generate it, might as well save it while we're at it.
+            ));
+
+            if let Some(chunk) = chunk {
+                entity.insert(chunk);
+                terrain_space.non_empty_chunks.insert(entity_id);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub fn setup_terrain_generation(app: &mut App) {
+    app.add_system(generate_terrain.pipe(crate::error_handler));
+    app.add_system(generate_spatial_entities.pipe(crate::error_handler));
 }

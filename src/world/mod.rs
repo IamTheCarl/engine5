@@ -8,69 +8,51 @@ pub mod terrain;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
-use physics::{Position, Velocity};
-use terrain::{BlockRegistry, BlockTag, TerrainSpace, TerrainSpaceBundle, TerrainStorage};
+use terrain::{BlockRegistry, BlockTag};
 
 pub mod generation;
+mod global_terrain;
 
-use self::spatial_entities::storage::SpatialEntityStorage;
+use self::{
+    generation::OscillatingHills, global_terrain::GlobalTerrainEntity,
+    spatial_entities::storage::EntityStorage,
+};
 
-pub fn spawn_world(
+pub fn open_world(
     commands: &mut Commands,
     block_registry: &BlockRegistry,
     path: impl Into<PathBuf>,
 ) -> Result<()> {
-    let default_tag = BlockTag::try_from("core:default").unwrap();
-    let default_data = block_registry
-        .get_by_tag(&default_tag)
-        .context("Could not find default block in block registry.")?;
-    let default_block = default_data.spawn();
+    let path = path.into();
+    let is_new_world = !path.exists();
 
     let world_database =
-        sled::open(path.into()).context("Failed to open or create database for world.")?;
+        sled::open(path).context("Failed to open or create database for world.")?;
+    let storage = EntityStorage::new(&world_database)?;
 
-    let overworld_storage = TerrainStorage::open_local(&world_database, "overworld")
-        .context("Failed to open namespace for overworld terrain.")?;
+    if is_new_world {
+        // New world. Nothing to bootstrap, insert our initial state.
+        let default_tag = BlockTag::try_from("core:default").unwrap();
+        let default_data = block_registry
+            .get_by_tag(&default_tag)
+            .context("Could not find default block in block registry.")?;
 
-    let storage = SpatialEntityStorage::new(&world_database)?;
+        let default_block = default_data.spawn();
 
-    commands.spawn((
-        TerrainSpaceBundle {
-            terrain_space: TerrainSpace::global(),
-            position: Position {
-                translation: Vec3::ZERO,
-                rotation: 0.0,
+        GlobalTerrainEntity::create_new(
+            commands,
+            &storage,
+            OscillatingHills {
+                block: default_block,
+                rate: 512,
+                depth: 16,
             },
-            file: overworld_storage,
-            // storable: storage.new_bootstrapped_storable_component(
-            //     BootstrapEntityInfo::GlobalTerrain,
-            //     "global_terrain",
-            // )?,
-            transform: Transform::default(),
-            global_transform: GlobalTransform::default(),
-            visibility: Visibility::Inherited,
-            computed_visibility: ComputedVisibility::default(),
-        },
-        generation::OscillatingHills {
-            block: default_block,
-            rate: 512,
-            depth: 16,
-            database: world_database,
-        },
-        // generation::FlatWorld {
-        //     block: default_block,
-        // },
-        // generation::CheckerBoard {
-        //     even_block: default_block,
-        //     odd_block: default_block,
-        //     even_height: 1,
-        //     odd_height: 3,
-        // },
-        Velocity {
-            translation: Vec3::ZERO,
-            rotational: 0.0,
-        },
-    ));
+        )
+        .context("Failed to create global terrain.")?;
+    } else {
+        // Old world. We just need to let it bootstrap.
+        storage.request_bootstrap();
+    }
 
     commands.insert_resource(storage);
 
@@ -87,6 +69,7 @@ impl Plugin for WorldPlugin {
         app.add_plugin(player::PlayerPlugin);
         app.add_plugin(spatial_entities::SpatialEntityPlugin);
 
-        generation::register_terrain_generators(app);
+        generation::setup_terrain_generation(app);
+        global_terrain::setup(app);
     }
 }

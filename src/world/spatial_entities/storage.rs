@@ -17,6 +17,8 @@ use crate::world::{generation::ToGenerateSpatial, terrain::ChunkPosition};
 
 use super::SpatialEntityTracker;
 
+const ENTITY_TREE_PREFIX: &[u8] = b"ENTITY-";
+
 #[derive(Component)]
 #[component(storage = "SparseSet")]
 pub struct ToLoadSpatial;
@@ -34,6 +36,17 @@ pub struct ToUnloadSpatial;
 pub struct ToDeleteSpatial;
 
 type TracerId = u64;
+
+fn tree_name_for_entity(
+    tracer_id: TracerId,
+) -> [u8; ENTITY_TREE_PREFIX.len() + std::mem::size_of::<TracerId>()] {
+    let mut entity_tree_id = [0u8; ENTITY_TREE_PREFIX.len() + std::mem::size_of::<TracerId>()];
+
+    entity_tree_id[..ENTITY_TREE_PREFIX.len()].copy_from_slice(ENTITY_TREE_PREFIX);
+    entity_tree_id[ENTITY_TREE_PREFIX.len()..].copy_from_slice(&tracer_id.to_be_bytes());
+
+    entity_tree_id
+}
 
 #[derive(Component)]
 pub struct Storable {
@@ -53,13 +66,14 @@ impl Default for BootstrapEntityInfo {
     }
 }
 
+#[derive(Debug)]
 struct BootstrapList {
     bootstrap_entities: HashMap<TracerId, BootstrapEntityInfo>,
     bootstrap_entities_modified: bool,
 }
 
 #[derive(Resource)]
-pub struct SpatialEntityStorage {
+pub struct EntityStorage {
     tracers_to_entities: HashMap<TracerId, Entity>,
     entities_to_tracers: HashMap<Entity, TracerId>,
     database: sled::Db,
@@ -70,7 +84,7 @@ pub struct SpatialEntityStorage {
     bootstrap_complete: AtomicBool,
 }
 
-impl SpatialEntityStorage {
+impl EntityStorage {
     pub fn new(database: &sled::Db) -> Result<Self> {
         let spatial_entities_storage = database
             .open_tree("spatial_entities")
@@ -79,7 +93,7 @@ impl SpatialEntityStorage {
         let bootstrap_entities = Self::load_bootstrap_entities_info(&spatial_entities_storage)
             .context("Failed to load bootstrap entities.")?;
 
-        Ok(SpatialEntityStorage {
+        Ok(EntityStorage {
             tracers_to_entities: HashMap::new(),
             entities_to_tracers: HashMap::new(),
             database: database.clone(),
@@ -91,8 +105,12 @@ impl SpatialEntityStorage {
                 bootstrap_entities,
                 bootstrap_entities_modified: false,
             }),
-            bootstrap_complete: AtomicBool::new(false),
+            bootstrap_complete: AtomicBool::new(true),
         })
+    }
+
+    pub fn request_bootstrap(&self) {
+        self.bootstrap_complete.store(false, Ordering::SeqCst);
     }
 
     fn load_bootstrap_entities_info(
@@ -167,7 +185,7 @@ impl SpatialEntityStorage {
         // We do not store the tracings here. A system will handle that later.
         // Why do we do it this way? Because an entity can also be loaded from a file, and that would bypass this bit of code.
         // I'd rather not have copies of this in multiple places so we'll just have one system to do both jobs.
-        match E::bootstrapping() {
+        match E::BOOTSTRAP {
             BootstrapEntityInfo::NonBootstrap => {}
             _ => {
                 let mut bootstrap_list = self
@@ -176,7 +194,7 @@ impl SpatialEntityStorage {
                     .expect("Bootstrap list has been poisoned!");
                 bootstrap_list
                     .bootstrap_entities
-                    .insert(tracer_id, E::bootstrapping());
+                    .insert(tracer_id, E::BOOTSTRAP);
                 bootstrap_list.bootstrap_entities_modified = true;
             }
         }
@@ -184,18 +202,46 @@ impl SpatialEntityStorage {
         Ok(Storable { id: tracer_id })
     }
 
-    pub fn delete_entity(&self, trace_id: TracerId) {
+    pub fn new_storable_component_with_tree<E, Q, RQ>(&self) -> Result<(Storable, sled::Tree)>
+    where
+        E: SpatialEntity<Q, RQ>,
+        Q: WorldQuery,
+        RQ: ReadOnlyWorldQuery,
+    {
+        let storable = self.new_storable_component::<E, Q, RQ>()?;
+        let tree_name = tree_name_for_entity(storable.id);
+
+        let tree = self
+            .database
+            .open_tree(tree_name)
+            .context("Failed to open tree for entity.")?;
+
+        Ok((storable, tree))
+    }
+
+    pub fn delete_entity(&self, tracer_id: TracerId) {
         // FIXME that this will leave a reference to the entity in the terrain chunk. That's okay for now, it's invalidated and won't cause a crash.
         // It will eventually be cleaned up when it's not spawned, but it will print error messages.
+
         {
             let mut bootstrap_list = self
                 .bootstrap_list
                 .lock()
                 .expect("Bootstrap list is poisoned!");
-            bootstrap_list.bootstrap_entities.remove(&trace_id);
+            bootstrap_list.bootstrap_entities.remove(&tracer_id);
         }
-        if let Err(error) = self.spatial_entities_storage.remove(trace_id.to_be_bytes()) {
-            log::warn!("Failed to delete entity {}: {:?}", trace_id, error);
+
+        if let Err(error) = self
+            .spatial_entities_storage
+            .remove(tracer_id.to_be_bytes())
+        {
+            log::warn!("Failed to delete entity {}: {:?}", tracer_id, error);
+        }
+
+        let tree_name = tree_name_for_entity(tracer_id);
+
+        if let Err(error) = self.database.drop_tree(tree_name) {
+            log::warn!("Failed to delete tree entity {}: {:?}", tracer_id, error);
         }
     }
 
@@ -216,7 +262,7 @@ impl SpatialEntityStorage {
 
 fn new_tracings(
     new_tracings: Query<(Entity, &Storable), Changed<Storable>>,
-    storage: Option<ResMut<SpatialEntityStorage>>,
+    storage: Option<ResMut<EntityStorage>>,
 ) {
     if let Some(mut storage) = storage {
         for (entity_id, traceable) in new_tracings.iter() {
@@ -230,7 +276,7 @@ fn new_tracings(
 
 fn clean_up_tracings(
     mut removed: RemovedComponents<Storable>,
-    storage: Option<ResMut<SpatialEntityStorage>>,
+    storage: Option<ResMut<EntityStorage>>,
 ) {
     if let Some(mut storage) = storage {
         for entity_id in removed.iter() {
@@ -243,7 +289,7 @@ fn clean_up_tracings(
     }
 }
 
-fn save_bootstrap_entity_list(storage: Option<Res<SpatialEntityStorage>>) {
+fn save_bootstrap_entity_list(storage: Option<Res<EntityStorage>>) {
     if let Some(storage) = storage {
         if let Err(error) = storage.save_bootstrap_entities_list() {
             log::error!("Failed to save bootstrap entities list: {:?}", error);
@@ -253,7 +299,7 @@ fn save_bootstrap_entity_list(storage: Option<Res<SpatialEntityStorage>>) {
 
 fn bootstrap_entities(
     mut commands: Commands,
-    storage: Option<Res<SpatialEntityStorage>>,
+    storage: Option<Res<EntityStorage>>,
     serialization_manager: Res<EntitySerializationManager>,
 ) {
     if let Some(storage) = storage {
@@ -278,13 +324,14 @@ fn save_spatial_hashes(
     spatial_entity_tracker: Res<SpatialEntityTracker>,
     spatial_entities: Query<(Entity, &Storable)>,
     chunks: Query<(Entity, &ChunkPosition), With<ToSaveSpatial>>,
-    storage: Option<Res<SpatialEntityStorage>>,
+    storage: Option<Res<EntityStorage>>,
 ) {
     fn save_spatial_hash(
+        commands: &mut Commands,
         entity_set: &HashSet<Entity>,
         spatial_entities: &Query<(Entity, &Storable)>,
         position: &ChunkPosition,
-        storage: &SpatialEntityStorage,
+        storage: &EntityStorage,
     ) -> Result<()> {
         let tracer_set = {
             let mut tracer_set = Vec::new();
@@ -292,8 +339,9 @@ fn save_spatial_hashes(
 
             for entity in entity_set {
                 // We can only store storable entities.
-                if let Ok((_entity, storable)) = spatial_entities.get(*entity) {
+                if let Ok((entity, storable)) = spatial_entities.get(*entity) {
                     tracer_set.push(storable.id);
+                    commands.entity(entity).insert(ToSaveSpatial);
                 }
             }
 
@@ -327,9 +375,13 @@ fn save_spatial_hashes(
                 &default_entity_set
             };
 
-            if let Err(error) =
-                save_spatial_hash(entity_set, &spatial_entities, chunk_position, &storage)
-            {
+            if let Err(error) = save_spatial_hash(
+                &mut commands,
+                entity_set,
+                &spatial_entities,
+                chunk_position,
+                &storage,
+            ) {
                 log::error!(
                     "Failed to save spatial hash for position {}: {:?}",
                     chunk_position.index,
@@ -343,6 +395,7 @@ fn save_spatial_hashes(
 pub struct DataLoader<'a> {
     type_id: EntityTypeId,
     tracer_id: TracerId,
+    database: &'a sled::Db,
     bytes: &'a [u8],
 }
 
@@ -357,6 +410,21 @@ impl<'a> DataLoader<'a> {
                 )
             })?,
         ))
+    }
+
+    pub fn load_with_tree<D: DeserializeOwned>(self) -> Result<(Storable, D, sled::Tree)> {
+        let storable = Storable { id: self.tracer_id };
+        let deserialized = bincode::deserialize(self.bytes).with_context(|| {
+            format!(
+                "Failed to deserialize entity {} of type {}",
+                self.tracer_id, self.type_id,
+            )
+        })?;
+
+        let tree_name = tree_name_for_entity(storable.id);
+        let tree = self.database.open_tree(tree_name)?;
+
+        Ok((storable, deserialized, tree))
     }
 }
 
@@ -378,15 +446,13 @@ impl<'a> DataSaver<'a> {
 
 pub type EntityTypeId = u16;
 
+// FIXME RQ isn't that useful, and forgetting to set it to require "ToSaveSpatial" can be disastrously bad for a hard drive. Just hard-code it at (With<Self>, With<ToSaveSpatial>).
 pub trait SpatialEntity<Q: WorldQuery, RQ: ReadOnlyWorldQuery> {
     const TYPE_ID: EntityTypeId;
+    const BOOTSTRAP: BootstrapEntityInfo = BootstrapEntityInfo::NonBootstrap;
 
     fn load(data_loader: DataLoader, commands: &mut Commands) -> Result<()>;
     fn save(query: <<Q as WorldQuery>::ReadOnly as WorldQuery>::Item<'_>, data_saver: DataSaver);
-
-    fn bootstrapping() -> BootstrapEntityInfo {
-        BootstrapEntityInfo::default()
-    }
 }
 
 #[derive(Resource)]
@@ -394,7 +460,7 @@ pub struct EntitySerializationManager {
     #[allow(clippy::type_complexity)]
     entity_loaders: HashMap<
         EntityTypeId,
-        &'static (dyn Fn(TracerId, &[u8], &mut Commands) -> Result<()> + Sync),
+        &'static (dyn Fn(TracerId, &[u8], &sled::Db, &mut Commands) -> Result<()> + Sync),
     >,
 }
 
@@ -407,7 +473,7 @@ impl EntitySerializationManager {
     {
         fn save_system<E, Q, RQ>(
             mut commands: Commands,
-            storage: Option<Res<SpatialEntityStorage>>,
+            storage: Option<Res<EntityStorage>>,
             query: Query<Q, RQ>,
         ) where
             E: SpatialEntity<Q, RQ>,
@@ -466,10 +532,11 @@ impl EntitySerializationManager {
         {
             let is_not_duplicate = serialization_manager
                 .entity_loaders
-                .insert(E::TYPE_ID, &|tracer_id, bytes, commands| {
+                .insert(E::TYPE_ID, &|tracer_id, bytes, database, commands| {
                     let data_loader = DataLoader {
                         type_id: E::TYPE_ID,
                         tracer_id,
+                        database,
                         bytes,
                     };
 
@@ -488,31 +555,37 @@ impl EntitySerializationManager {
     fn load_entity(
         &self,
         tracer_id: TracerId,
-        storage: &SpatialEntityStorage,
+        storage: &EntityStorage,
         commands: &mut Commands,
     ) -> Result<()> {
-        let bytes = storage
-            .spatial_entities_storage
-            .get(tracer_id.to_be_bytes())
-            .context("Failed to read from database.")?
-            .context("Failed to find entity in database.")?;
+        // Don't load if already loaded.
+        if !storage.tracers_to_entities.contains_key(&tracer_id) {
+            let bytes = storage
+                .spatial_entities_storage
+                .get(tracer_id.to_be_bytes())
+                .context("Failed to read from database.")?
+                .context("Failed to find entity in database.")?;
 
-        const TYPE_LENGTH: usize = std::mem::size_of::<EntityTypeId>();
-        let mut type_id = [0u8; TYPE_LENGTH];
-        type_id.copy_from_slice(
-            bytes
-                .get(..TYPE_LENGTH)
-                .context("Unexpected end of data.")?,
-        );
-        let type_id = EntityTypeId::from_be_bytes(type_id);
-        let payload = &bytes[TYPE_LENGTH..];
+            const TYPE_LENGTH: usize = std::mem::size_of::<EntityTypeId>();
+            let mut type_id = [0u8; TYPE_LENGTH];
+            type_id.copy_from_slice(
+                bytes
+                    .get(..TYPE_LENGTH)
+                    .context("Unexpected end of data.")?,
+            );
+            let type_id = EntityTypeId::from_le_bytes(type_id);
+            let payload = &bytes[TYPE_LENGTH..];
 
-        let entity_loader = self
-            .entity_loaders
-            .get(&type_id)
-            .with_context(|| format!("No entity registered for type {}.", type_id))?;
+            let entity_loader = self
+                .entity_loaders
+                .get(&type_id)
+                .with_context(|| format!("No entity registered for type {}.", type_id))?;
 
-        entity_loader(tracer_id, payload, commands)?;
+            entity_loader(tracer_id, payload, &storage.database, commands)?;
+
+            // The table `storage.tracers_to_entities` and its reciprocal will automatically be updated by an external system later,
+            // so we don't have to do it here.
+        }
 
         Ok(())
     }
@@ -521,12 +594,12 @@ impl EntitySerializationManager {
 fn load_entities(
     mut commands: Commands,
     terrain_chunks: Query<(Entity, &ChunkPosition), With<ToLoadSpatial>>,
-    storage: Option<Res<SpatialEntityStorage>>,
+    storage: Option<Res<EntityStorage>>,
     serialization_manager: Res<EntitySerializationManager>,
 ) {
     fn load_spatial_hash(
         position: &ChunkPosition,
-        storage: &SpatialEntityStorage,
+        storage: &EntityStorage,
     ) -> Result<Option<Vec<TracerId>>> {
         let chunk_position_encoding = position.to_database_key();
 
@@ -581,6 +654,13 @@ fn load_entities(
     }
 }
 
+fn save_timer(mut commands: Commands, chunks: Query<Entity, With<ChunkPosition>>) {
+    // FIXME this is way too frequent.
+    for chunk in chunks.iter() {
+        commands.entity(chunk).insert(ToSaveSpatial);
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Hash, Clone, SystemSet)]
 struct SerializationSetup;
 
@@ -601,4 +681,6 @@ pub(super) fn register_storage(app: &mut App) {
 
     app.add_system(save_bootstrap_entity_list);
     app.add_system(bootstrap_entities);
+
+    app.add_system(save_timer.in_schedule(CoreSchedule::FixedUpdate));
 }

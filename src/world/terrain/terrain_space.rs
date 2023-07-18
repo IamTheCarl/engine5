@@ -3,7 +3,9 @@ use super::{
     Block, Chunk, ChunkIndex, ChunkPosition, GlobalBlockCoordinate, LocalBlockCoordinate,
     PreChunkBundle, TerrainTime,
 };
-use crate::world::{physics::Position, spatial_entities::storage::ToLoadSpatial};
+use crate::world::{
+    generation::WorldGeneratorEnum, physics::Position, spatial_entities::storage::ToLoadSpatial,
+};
 use bevy::{
     ecs::query::{ReadOnlyWorldQuery, WorldQuery},
     prelude::*,
@@ -30,15 +32,24 @@ struct ActiveTerrainTimer {
 
 #[derive(Component, Default)]
 pub struct TerrainSpace {
+    pub(crate) generator: WorldGeneratorEnum,
     loaded_terrain: HashMap<ChunkIndex, Entity>,
     is_global: bool,
     pub(crate) non_empty_chunks: HashSet<Entity>,
 }
 
 impl TerrainSpace {
-    pub fn global() -> Self {
+    pub fn global(generator: WorldGeneratorEnum) -> Self {
         Self {
+            generator,
             is_global: true,
+            ..Default::default()
+        }
+    }
+
+    pub fn local(generator: impl Into<WorldGeneratorEnum>) -> Self {
+        Self {
+            generator: generator.into(),
             ..Default::default()
         }
     }
@@ -191,7 +202,7 @@ fn block_index_calculation() {
 pub struct TerrainSpaceBundle {
     pub terrain_space: TerrainSpace,
     pub position: Position,
-    pub file: TerrainStorage,
+    pub storage: TerrainStorage,
     // pub storable: Storable, // FIXME we can't store this yet with the current system. Implement that later.
     pub transform: Transform,
     pub global_transform: GlobalTransform,

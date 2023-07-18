@@ -14,6 +14,7 @@ use bevy::{
         texture::Volume,
     },
 };
+use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow, collections::HashMap, mem::size_of, num::NonZeroU16, ops::Range, str::FromStr,
 };
@@ -358,7 +359,7 @@ impl BlockRegistry {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Block {
     id: BlockID,
 }

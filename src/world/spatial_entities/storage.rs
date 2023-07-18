@@ -10,7 +10,10 @@ use std::{
     },
 };
 
-use crate::world::{generation::ToGenerateSpatial, terrain::ChunkPosition};
+use crate::world::{
+    generation::ToGenerateSpatial,
+    terrain::{storage::CHUNK_TIME_TO_SAVE, ChunkPosition},
+};
 
 use super::SpatialEntityTracker;
 
@@ -644,10 +647,24 @@ fn load_entities(
     }
 }
 
-fn save_timer(mut commands: Commands, chunks: Query<Entity, With<ChunkPosition>>) {
-    // FIXME this is way too frequent.
-    for chunk in chunks.iter() {
-        commands.entity(chunk).insert(ToSaveSpatial);
+#[derive(Resource)]
+struct EntitySaveTimer {
+    time: usize,
+}
+
+fn save_timer(
+    mut save_timer: ResMut<EntitySaveTimer>,
+    mut commands: Commands,
+    chunks: Query<Entity, With<ChunkPosition>>,
+) {
+    save_timer.time += 1;
+
+    if save_timer.time >= CHUNK_TIME_TO_SAVE {
+        save_timer.time -= CHUNK_TIME_TO_SAVE;
+
+        for chunk in chunks.iter() {
+            commands.entity(chunk).insert(ToSaveSpatial);
+        }
     }
 }
 
@@ -658,6 +675,8 @@ fn setup(mut commands: Commands) {
     commands.insert_resource(EntitySerializationManager {
         entity_loaders: HashMap::new(),
     });
+
+    commands.insert_resource(EntitySaveTimer { time: 0 });
 }
 
 pub(super) fn register_storage(app: &mut App) {

@@ -4,6 +4,7 @@ use bevy_prototype_debug_lines::DebugLinesPlugin;
 use std::path::Path;
 use world::terrain::BlockRegistry;
 
+pub mod controls;
 pub mod file_paths;
 pub mod world;
 
@@ -27,6 +28,7 @@ impl Plugin for Engine5 {
     fn build(&self, app: &mut App) {
         app.add_plugin(world::WorldPlugin);
         app.add_plugin(DebugLinesPlugin::default());
+        app.add_plugin(controls::PlayerControls);
         // TODO enable DBand dithering once you have control of the camera.
 
         app.configure_set(Engine5.after(world::terrain::TerrainPlugin));

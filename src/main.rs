@@ -26,6 +26,9 @@ impl Engine5 {
 
 impl Plugin for Engine5 {
     fn build(&self, app: &mut App) {
+        // I wait until here to do this so that at least the log should be working.
+        file_paths::create_folders();
+
         app.add_plugin(world::WorldPlugin);
         app.add_plugin(DebugLinesPlugin::default());
         app.add_plugin(controls::PlayerControls);

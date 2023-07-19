@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
 
-use crate::controls::{update_input_state, InputState, PrimaryFireEvent, SecondaryFireEvent};
+use crate::controls::{ButtonState, InputState};
 use crate::world::physics::{
     Cylinder, Position, RayCast, RayTerrainIntersection, RayTerrainIntersectionList, Velocity,
 };
@@ -161,11 +161,11 @@ impl PlayerEntity {
                 position.inverse_quat() * input_state.horizontal_movement.extend(0.0).xzy();
             velocity.translation = local_movement * PLAYER_SPEED;
 
-            if input_state.jumping {
+            if input_state.jumping.is_pressed() {
                 velocity.translation += Vec3::Y * PLAYER_SPEED;
             }
 
-            if input_state.crouching {
+            if input_state.crouching.is_pressed() {
                 velocity.translation -= Vec3::Y * PLAYER_SPEED;
             }
 
@@ -186,7 +186,7 @@ impl PlayerEntity {
     #[allow(clippy::too_many_arguments)]
     fn place_block(
         mut commands: Commands,
-        mut secondary_fire_events: EventReader<SecondaryFireEvent>,
+        input_state: Res<InputState>,
         mut players: Query<(&mut BlockPlacementContext, &RayTerrainIntersectionList)>,
         mut terrain_spaces: Query<&mut TerrainSpace>,
         mut terrain: Query<&mut Chunk>,
@@ -254,22 +254,21 @@ impl PlayerEntity {
             .get_by_tag(&BlockTag::try_from("core:default")?)?
             .spawn();
 
-        for event in secondary_fire_events.iter() {
-            match event.button_state {
-                bevy::input::ButtonState::Pressed => {
-                    for (mut context, ray) in players.iter_mut() {
-                        context.timer.reset();
-                        context.button_held = true;
+        match input_state.secondary_fire {
+            ButtonState::JustPressed => {
+                for (mut context, ray) in players.iter_mut() {
+                    context.timer.reset();
+                    context.button_held = true;
 
-                        place_block(ray, &mut terrain_spaces, &mut terrain, block, &mut commands)
-                    }
-                }
-                bevy::input::ButtonState::Released => {
-                    for (mut context, _ray) in players.iter_mut() {
-                        context.button_held = false;
-                    }
+                    place_block(ray, &mut terrain_spaces, &mut terrain, block, &mut commands)
                 }
             }
+            ButtonState::Released => {
+                for (mut context, _ray) in players.iter_mut() {
+                    context.button_held = false;
+                }
+            }
+            ButtonState::Held => {}
         }
 
         for (mut context, ray) in players.iter_mut() {
@@ -289,7 +288,7 @@ impl PlayerEntity {
     #[allow(clippy::too_many_arguments)]
     fn remove_block(
         mut commands: Commands,
-        mut primary_fire_events: EventReader<PrimaryFireEvent>,
+        input_state: Res<InputState>,
         mut players: Query<(&mut BlockRemovalContext, &RayTerrainIntersectionList)>,
         mut terrain_spaces: Query<&mut TerrainSpace>,
         mut terrain: Query<&mut Chunk>,
@@ -350,22 +349,21 @@ impl PlayerEntity {
             }
         }
 
-        for event in primary_fire_events.iter() {
-            match event.button_state {
-                bevy::input::ButtonState::Pressed => {
-                    for (mut context, ray) in players.iter_mut() {
-                        context.timer.reset();
-                        context.button_held = true;
+        match input_state.primary_fire {
+            ButtonState::JustPressed => {
+                for (mut context, ray) in players.iter_mut() {
+                    context.timer.reset();
+                    context.button_held = true;
 
-                        remove_block(ray, &mut terrain_spaces, &mut terrain, &mut commands)
-                    }
-                }
-                bevy::input::ButtonState::Released => {
-                    for (mut context, _ray) in players.iter_mut() {
-                        context.button_held = false;
-                    }
+                    remove_block(ray, &mut terrain_spaces, &mut terrain, &mut commands)
                 }
             }
+            ButtonState::Released => {
+                for (mut context, _ray) in players.iter_mut() {
+                    context.button_held = false;
+                }
+            }
+            ButtonState::Held => {}
         }
 
         for (mut context, ray) in players.iter_mut() {
@@ -418,14 +416,7 @@ pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
-        // app.add_system(place_block.pipe(crate::error_handler));
-        // app.add_system(remove_block);
-
-        app.add_system(
-            PlayerEntity::process_inputs
-                .after(update_input_state)
-                .before(PhysicsPlugin),
-        );
+        app.add_system(PlayerEntity::process_inputs.before(PhysicsPlugin));
         app.add_system(PlayerEntity::place_block.pipe(crate::error_handler));
         app.add_system(PlayerEntity::remove_block);
 

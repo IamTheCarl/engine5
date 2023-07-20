@@ -9,7 +9,7 @@ edition = "2021"
 bevy = { path = "crates/bevy" } 
 
 [dependencies]
-bevy = { version = "0.10.1", features = ["dynamic_linking", "serialize"] }
+bevy = { version = "0.10.1", features = ["serialize"] }
 serde = { version = "1.0", features = ["derive"] }
 wgpu = "0.16"
 log = "0.4"
@@ -19,6 +19,10 @@ sled = "0.34.7"
 anyhow = "1.0.71"
 ciborium = "0.2.1"
 serde_yaml = "0.9.25"
+
+[features]
+default = ["fast-compile"]
+fast-compile = ["bevy/dynamic_linking"]
 
 # Enable a small amount of optimization in debug mode
 [profile.dev]

@@ -15,6 +15,35 @@ fn main() {
         .run();
 }
 
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash, States)]
+pub enum AppState {
+    #[default]
+    MainMenu,
+    PauseMenu,
+    InGame,
+}
+
+/// A temporary system to test states with.
+fn state_switch(keys: Res<Input<KeyCode>>, mut next_state: ResMut<NextState<AppState>>) {
+    if keys.just_pressed(KeyCode::Key1) {
+        // Main menu state.
+        log::info!("Enter Main Menu State");
+        next_state.set(AppState::MainMenu);
+    }
+
+    if keys.just_pressed(KeyCode::Key2) {
+        // Pause state.
+        log::info!("Enter Pause State");
+        next_state.set(AppState::PauseMenu);
+    }
+
+    if keys.just_pressed(KeyCode::Key3) {
+        // Running state.
+        log::info!("Enter Running State");
+        next_state.set(AppState::InGame);
+    }
+}
+
 #[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 struct Engine5;
 
@@ -29,6 +58,8 @@ impl Plugin for Engine5 {
         // I wait until here to do this so that at least the log should be working.
         file_paths::create_folders();
 
+        app.add_state::<AppState>();
+
         app.add_plugin(world::WorldPlugin);
         app.add_plugin(DebugLinesPlugin::default());
         app.add_plugin(controls::PlayerControls);
@@ -41,6 +72,8 @@ impl Plugin for Engine5 {
                 .before(Engine5),
         );
         app.add_startup_system(setup.pipe(error_handler).in_set(Engine5));
+
+        app.add_system(state_switch);
     }
 }
 

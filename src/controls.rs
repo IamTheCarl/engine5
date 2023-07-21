@@ -10,7 +10,7 @@ use bevy::{
 use ordered_float::NotNan;
 use serde::{Deserialize, Serialize};
 
-use crate::file_paths::CONFIG_DIRECTORY;
+use crate::{file_paths::CONFIG_DIRECTORY, AppState};
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
 pub enum RealButton {
@@ -419,6 +419,7 @@ fn toggle_grab_cursor(window: &mut Window) {
     }
 }
 
+/// A system to let you grab and release the cursor by pressing the escape button.
 fn cursor_grab(keys: Res<Input<KeyCode>>, mut windows: Query<&mut Window, With<PrimaryWindow>>) {
     if let Ok(mut window) = windows.get_single_mut() {
         if keys.just_pressed(KeyCode::Escape) {
@@ -429,7 +430,15 @@ fn cursor_grab(keys: Res<Input<KeyCode>>, mut windows: Query<&mut Window, With<P
 
 fn initial_grab_cursor(mut windows: Query<&mut Window, With<PrimaryWindow>>) {
     if let Ok(mut window) = windows.get_single_mut() {
-        toggle_grab_cursor(&mut window);
+        window.cursor.grab_mode = CursorGrabMode::Confined;
+        window.cursor.visible = false;
+    }
+}
+
+fn release_cursor(mut windows: Query<&mut Window, With<PrimaryWindow>>) {
+    if let Ok(mut window) = windows.get_single_mut() {
+        window.cursor.grab_mode = CursorGrabMode::None;
+        window.cursor.visible = true;
     }
 }
 
@@ -564,8 +573,10 @@ impl Plugin for PlayerControls {
             commands.insert_resource(InputState::default());
             commands.insert_resource(InputMap::load_or_default());
         });
-        app.add_startup_system(initial_grab_cursor);
+        app.add_system(initial_grab_cursor.in_schedule(OnEnter(AppState::InGame)));
+        app.add_system(release_cursor.in_schedule(OnExit(AppState::InGame)));
+
         app.add_system(cursor_grab);
-        app.add_system(update_inputs);
+        app.add_system(update_inputs.in_set(OnUpdate(AppState::InGame)));
     }
 }

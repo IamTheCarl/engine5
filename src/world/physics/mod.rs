@@ -1,4 +1,4 @@
-use crate::{world::terrain::LoadTerrain, DebugRenderSettings};
+use crate::{world::terrain::LoadTerrain, AppState, DebugRenderSettings};
 use bevy::{prelude::*, render::render_resource::PrimitiveTopology};
 use ordered_float::NotNan;
 use serde::{Deserialize, Serialize};
@@ -293,7 +293,11 @@ impl Plugin for PhysicsPlugin {
             },
         );
 
-        app.configure_set(PhysicsPlugin.after(LoadTerrain));
+        app.configure_set(
+            PhysicsPlugin
+                .after(LoadTerrain)
+                .in_set(OnUpdate(AppState::InGame)),
+        );
 
         app.add_system(add_debug_mesh_cylinders.in_set(PhysicsPlugin));
         app.add_system(remove_debug_mesh_cylinders.in_set(PhysicsPlugin));

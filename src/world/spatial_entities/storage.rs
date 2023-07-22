@@ -543,8 +543,11 @@ impl EntitySerializationManager {
             assert!(is_not_duplicate, "Duplicate entity type ID detected.");
         }
 
-        app.add_system(save_system::<E, Q>.in_set(SaveSystemSet));
-        app.add_startup_system(load_setup_system::<E, Q>.in_set(SerializationSetup));
+        app.add_systems(Update, save_system::<E, Q>.in_set(SaveSystemSet));
+        app.add_systems(
+            Startup,
+            load_setup_system::<E, Q>.in_set(SerializationSetup),
+        );
     }
 
     fn load_entity(
@@ -698,28 +701,30 @@ fn setup(mut commands: Commands) {
 }
 
 pub(super) fn register_storage(app: &mut App) {
-    app.configure_set(SaveSystemSet.in_base_set(CoreSet::PostUpdate));
-    app.configure_set(SerializationSetup);
+    app.configure_set(PostUpdate, SaveSystemSet);
+    app.configure_set(Startup, SerializationSetup);
 
-    app.add_startup_system(setup);
-    app.add_startup_system(apply_system_buffers.after(setup).before(SerializationSetup));
-
-    app.add_system(new_tracings);
-    app.add_system(clean_up_tracings);
-    app.add_system(load_entities);
-    app.add_system(save_spatial_hashes);
-
-    app.add_system(save_bootstrap_entity_list);
-    app.add_system(bootstrap_entities);
-
-    app.add_system(
-        save_timer
-            .before(SaveSystemSet)
-            .in_schedule(CoreSchedule::FixedUpdate),
+    app.add_systems(
+        Startup,
+        (
+            setup.before(SerializationSetup),
+            apply_deferred.after(setup).before(SerializationSetup),
+        ),
     );
-    app.add_system(
-        save_on_shutdown
-            .before(SaveSystemSet)
-            .in_base_set(CoreSet::PostUpdate),
+
+    app.add_systems(
+        Update,
+        (
+            new_tracings,
+            clean_up_tracings,
+            load_entities,
+            save_spatial_hashes,
+            save_bootstrap_entity_list,
+            bootstrap_entities,
+        ),
     );
+
+    app.add_systems(FixedUpdate, save_timer.before(SaveSystemSet));
+
+    app.add_systems(PostUpdate, save_on_shutdown.before(SaveSystemSet));
 }

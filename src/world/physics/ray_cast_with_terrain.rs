@@ -13,7 +13,7 @@ pub struct RayTerrainIntersectionList {
     pub contacts: HashMap<Entity, Vec<RayTerrainIntersection>>,
 }
 
-#[derive(Debug, Reflect, FromReflect)]
+#[derive(Debug, Reflect)]
 pub enum RayTerrainIntersectionType {
     Entry,
     Tunneled,
@@ -22,7 +22,7 @@ pub enum RayTerrainIntersectionType {
 
 /// An intersection with terrain.
 /// All values are local to the terrain space.
-#[derive(Debug, Reflect, FromReflect)]
+#[derive(Debug, Reflect)]
 pub struct RayTerrainIntersection {
     pub distance: f32,
     pub intersection_type: RayTerrainIntersectionType,

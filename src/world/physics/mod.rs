@@ -284,7 +284,8 @@ pub struct PhysicsPlugin;
 
 impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_startup_system(
+        app.add_systems(
+            Startup,
             |mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>| {
                 let debug_shader_material = materials.add(Color::RED.into());
                 commands.insert_resource(DebugShaderMaterial(debug_shader_material));
@@ -294,35 +295,47 @@ impl Plugin for PhysicsPlugin {
         );
 
         app.configure_set(
+            Update,
             PhysicsPlugin
                 .after(LoadTerrain)
-                .in_set(OnUpdate(AppState::InGame)),
+                .run_if(in_state(AppState::InGame)),
         );
 
-        app.add_system(add_debug_mesh_cylinders.in_set(PhysicsPlugin));
-        app.add_system(remove_debug_mesh_cylinders.in_set(PhysicsPlugin));
+        app.add_systems(Update, add_debug_mesh_cylinders.in_set(PhysicsPlugin));
+        app.add_systems(Update, remove_debug_mesh_cylinders.in_set(PhysicsPlugin));
 
         // TODO we should consider tieing this to a fixed time step.
-        app.add_system(update_movement.in_set(PhysicsPlugin));
+        app.add_systems(Update, update_movement.in_set(PhysicsPlugin));
 
         // TODO we should take advantage of the "Modified" tag so we only do collision checks on things that actually move.
-        app.configure_set(CollisionCheck.after(update_movement).in_set(PhysicsPlugin));
-        app.add_system(cylinder_to_cylinder::check_for_intersections.in_set(CollisionCheck));
-        app.add_system(cylinder_to_terrain::check_for_intersections.in_set(CollisionCheck));
-        app.add_system(terrain_to_terrain::check_for_intersections.in_set(CollisionCheck));
+        app.configure_set(
+            Update,
+            CollisionCheck.after(update_movement).in_set(PhysicsPlugin),
+        );
+        app.add_systems(
+            Update,
+            (
+                cylinder_to_cylinder::check_for_intersections.in_set(CollisionCheck),
+                cylinder_to_terrain::check_for_intersections.in_set(CollisionCheck),
+                terrain_to_terrain::check_for_intersections.in_set(CollisionCheck),
+            ),
+        );
 
         app.configure_set(
+            Update,
             PostCollisionCheck
                 .after(CollisionCheck)
                 .in_set(PhysicsPlugin),
         );
-        app.add_system(ray_cast_with_terrain::check_for_intersections.in_set(PostCollisionCheck));
-        app.add_system(
-            ray_cast_with_terrain::debug_render
-                .after(ray_cast_with_terrain::check_for_intersections)
-                .in_set(PostCollisionCheck),
+        app.add_systems(
+            Update,
+            (
+                ray_cast_with_terrain::check_for_intersections.in_set(PostCollisionCheck),
+                ray_cast_with_terrain::debug_render
+                    .after(ray_cast_with_terrain::check_for_intersections)
+                    .in_set(PostCollisionCheck),
+                update_transforms.in_set(PostCollisionCheck),
+            ),
         );
-
-        app.add_system(update_transforms.in_set(PostCollisionCheck));
     }
 }

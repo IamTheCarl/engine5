@@ -416,9 +416,14 @@ pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
-        app.add_system(PlayerEntity::process_inputs.before(PhysicsPlugin));
-        app.add_system(PlayerEntity::place_block.pipe(crate::error_handler));
-        app.add_system(PlayerEntity::remove_block);
+        app.add_systems(
+            Update,
+            (
+                PlayerEntity::process_inputs.before(PhysicsPlugin),
+                PlayerEntity::place_block.pipe(crate::error_handler),
+                PlayerEntity::remove_block,
+            ),
+        );
 
         EntitySerializationManager::register::<PlayerEntity, _>(app);
     }

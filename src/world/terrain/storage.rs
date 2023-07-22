@@ -215,17 +215,19 @@ fn save_on_shutdown(
 }
 
 pub fn register_terrain_files(app: &mut App) {
-    app.add_system(load_terrain.pipe(crate::error_handler));
-    app.add_system(save_terrain.in_base_set(CoreSet::PostUpdate));
-    app.add_system(save_timer_start.before(super::terrain_time_tick));
-    app.add_system(
-        save_timer_trigger
-            .after(save_timer_start)
-            .before(save_terrain),
+    app.add_systems(
+        Update,
+        (
+            load_terrain.pipe(crate::error_handler),
+            save_timer_start.before(super::terrain_time_tick),
+            save_timer_trigger
+                .after(save_timer_start)
+                .before(save_terrain),
+        ),
     );
-    app.add_system(
-        save_on_shutdown
-            .before(save_terrain)
-            .in_base_set(CoreSet::PostUpdate),
+
+    app.add_systems(
+        PostUpdate,
+        (save_terrain, save_on_shutdown.before(save_terrain)),
     );
 }

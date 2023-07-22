@@ -213,7 +213,7 @@ impl Default for InputMap {
             crouching: HashSet::from([
                 Button::RealButton {
                     button: RealButton::Key {
-                        key_code: KeyCode::LShift,
+                        key_code: KeyCode::ShiftLeft,
                     },
                 },
                 Button::RealButton {
@@ -569,14 +569,14 @@ pub struct PlayerControls;
 
 impl Plugin for PlayerControls {
     fn build(&self, app: &mut App) {
-        app.add_startup_system(|mut commands: Commands| {
+        app.add_systems(Startup, |mut commands: Commands| {
             commands.insert_resource(InputState::default());
             commands.insert_resource(InputMap::load_or_default());
         });
-        app.add_system(initial_grab_cursor.in_schedule(OnEnter(AppState::InGame)));
-        app.add_system(release_cursor.in_schedule(OnExit(AppState::InGame)));
+        app.add_systems(OnEnter(AppState::InGame), initial_grab_cursor);
+        app.add_systems(OnExit(AppState::InGame), release_cursor);
 
-        app.add_system(cursor_grab);
-        app.add_system(update_inputs.in_set(OnUpdate(AppState::InGame)));
+        app.add_systems(Update, cursor_grab);
+        app.add_systems(Update, update_inputs.run_if(in_state(AppState::InGame)));
     }
 }

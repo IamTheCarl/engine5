@@ -1,12 +1,8 @@
 
 #import bevy_pbr::mesh_view_bindings
-#import bevy_pbr::mesh_bindings
-#import bevy_pbr::mesh_functions
-
-struct VertexOutput {
-    @builtin(position) clip_position: vec4<f32>,
-    #import bevy_pbr::mesh_vertex_output
-};
+#import bevy_pbr::mesh_bindings mesh
+#import bevy_pbr::mesh_functions as mesh_functions
+#import bevy_pbr::mesh_vertex_output MeshVertexOutput
 
 fn extract_unsigned(word: u32, width: u32, offset: u32) -> u32 {
     var element = (word >> offset) & (~0u >> (32u - width));
@@ -14,8 +10,8 @@ fn extract_unsigned(word: u32, width: u32, offset: u32) -> u32 {
 }
 
 @vertex
-fn vertex(@location(0) vertex: u32) -> VertexOutput {
-    var out: VertexOutput;
+fn vertex(@location(0) vertex: u32) -> MeshVertexOutput {
+    var out: MeshVertexOutput;
 
     var model = mesh.model;
 
@@ -47,10 +43,10 @@ fn vertex(@location(0) vertex: u32) -> VertexOutput {
     var v = extract_unsigned(vertex, 1u, 19u);
     var texture_layer = extract_unsigned(vertex, 9u, 20u);
 
-    out.world_position = mesh_position_local_to_world(model, vec4<f32>(f32(x), f32(y), f32(z), 1.0));
-    out.clip_position = mesh_position_world_to_clip(out.world_position);
-    out.world_normal = mesh_normal_local_to_world(NORMAL_LOOKUP_TABLE[direction_index]);
-    out.world_tangent = mesh_tangent_local_to_world(model, TANGENT_LOOKUP_TABLE[direction_index]);
+    out.world_position = mesh_functions::mesh_position_local_to_world(model, vec4<f32>(f32(x), f32(y), f32(z), 1.0));
+    out.position = mesh_functions::mesh_position_world_to_clip(out.world_position);
+    out.world_normal = mesh_functions::mesh_normal_local_to_world(NORMAL_LOOKUP_TABLE[direction_index]);
+    out.world_tangent = mesh_functions::mesh_tangent_local_to_world(model, TANGENT_LOOKUP_TABLE[direction_index]);
     out.uv = vec2(f32(u), f32(v)); // 968
     out.texture_layer = i32(texture_layer);
 

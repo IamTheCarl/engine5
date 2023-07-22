@@ -796,7 +796,8 @@ impl Chunk {
     }
 }
 
-#[derive(AsBindGroup, Reflect, FromReflect, Debug, Clone, TypeUuid)]
+// TODO this was just copied from the core of Bevy. At this rate I'm starting to think I should customize it more to only have the features I actually use.
+#[derive(AsBindGroup, Reflect, Debug, Clone, TypeUuid)]
 #[uuid = "ab106dd3-3971-4655-a535-b3b47738c649"]
 #[uniform(0, StandardMaterialUniform)]
 #[reflect(Default, Debug)]
@@ -837,6 +838,15 @@ struct TerrainMaterial {
     pub unlit: bool,
     pub alpha_mode: AlphaMode,
     pub depth_bias: f32,
+
+    #[texture(11, dimension = "2d_array")]
+    #[sampler(12)]
+    pub depth_map: Option<Handle<Image>>,
+
+    pub parallax_depth_scale: f32,
+    pub parallax_mapping_method: ParallaxMappingMethod,
+    pub max_parallax_layer_count: f32,
+    pub max_relief_mapping_search_steps: u32,
 }
 
 impl TerrainMaterial {
@@ -899,6 +909,11 @@ impl Default for TerrainMaterial {
             unlit: false,
             alpha_mode: AlphaMode::Opaque,
             depth_bias: 0.0,
+            depth_map: None,
+            parallax_depth_scale: 0.0,
+            parallax_mapping_method: ParallaxMappingMethod::Occlusion,
+            max_parallax_layer_count: 0.0,
+            max_relief_mapping_search_steps: 0,
         }
     }
 }
@@ -964,6 +979,9 @@ impl AsBindGroupShaderType<StandardMaterialUniform> for TerrainMaterial {
             reflectance: self.reflectance,
             flags: flags.bits(),
             alpha_cutoff,
+            parallax_depth_scale: self.parallax_depth_scale,
+            max_parallax_layer_count: self.max_parallax_layer_count,
+            max_relief_mapping_search_steps: self.max_relief_mapping_search_steps,
         }
     }
 }
@@ -1512,19 +1530,28 @@ pub struct TerrainPlugin;
 
 impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugin(MaterialPlugin::<TerrainMaterial>::default());
+        app.add_plugins(MaterialPlugin::<TerrainMaterial>::default());
 
-        app.configure_set(TerrainPlugin);
-        app.add_startup_system(
-            terrain_setup
-                .pipe(crate::error_handler)
-                .in_set(TerrainPlugin),
+        app.add_systems(
+            Startup,
+            (
+                terrain_setup
+                    .pipe(crate::error_handler)
+                    .in_set(TerrainPlugin),
+                apply_deferred.after(terrain_setup),
+            ),
         );
 
-        app.add_system(generate_chunk_mesh);
-        app.add_system(terrain_texture_loading.pipe(crate::error_handler));
+        app.configure_set(Update, TerrainPlugin);
+        app.add_systems(
+            Update,
+            (
+                generate_chunk_mesh,
+                terrain_texture_loading.pipe(crate::error_handler),
+            ),
+        );
 
-        app.add_system(terrain_time_tick.in_schedule(CoreSchedule::FixedUpdate));
+        app.add_systems(FixedUpdate, terrain_time_tick);
 
         storage::register_terrain_files(app);
         terrain_space::register_terrain_space(app);

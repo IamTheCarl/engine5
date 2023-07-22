@@ -260,7 +260,7 @@ pub struct SpatialEntityPlugin;
 
 impl Plugin for SpatialEntityPlugin {
     fn build(&self, app: &mut App) {
-        app.add_startup_system(|mut commands: Commands| {
+        app.add_systems(Startup, |mut commands: Commands| {
             // TODO make this accessible from a menu or terminal.
             commands.insert_resource(DebugRenderSettings {
                 cylinders: true,
@@ -276,10 +276,16 @@ impl Plugin for SpatialEntityPlugin {
             });
         });
 
-        app.add_system(insert_spatial_hash.in_set(SpatialEntityPlugin));
-        app.add_system(update_spatial_hash_entities.in_set(SpatialEntityPlugin));
-        app.add_system(update_spatial_hash_entities_with_offset.in_set(SpatialEntityPlugin));
-        app.add_system(
+        app.add_systems(
+            Update,
+            (
+                insert_spatial_hash.in_set(SpatialEntityPlugin),
+                update_spatial_hash_entities.in_set(SpatialEntityPlugin),
+                update_spatial_hash_entities_with_offset.in_set(SpatialEntityPlugin),
+            ),
+        );
+        app.add_systems(
+            Update,
             handle_removed_spatial_hash_entities
                 .in_set(SpatialEntityPlugin)
                 .after(update_spatial_hash_entities)

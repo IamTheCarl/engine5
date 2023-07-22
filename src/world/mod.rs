@@ -65,10 +65,12 @@ pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugin(terrain::TerrainPlugin);
-        app.add_plugin(physics::PhysicsPlugin);
-        app.add_plugin(player::PlayerPlugin);
-        app.add_plugin(spatial_entities::SpatialEntityPlugin);
+        app.add_plugins((
+            terrain::TerrainPlugin,
+            physics::PhysicsPlugin,
+            player::PlayerPlugin,
+            spatial_entities::SpatialEntityPlugin,
+        ));
 
         generation::setup_terrain_generation(app);
         global_terrain::setup(app);

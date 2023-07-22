@@ -442,6 +442,11 @@ fn generate_terrain(
 }
 
 pub fn setup_terrain_generation(app: &mut App) {
-    app.add_system(generate_terrain.pipe(crate::error_handler));
-    app.add_system(generate_spatial_entities.pipe(crate::error_handler));
+    app.add_systems(
+        Update,
+        (
+            generate_terrain.pipe(crate::error_handler),
+            generate_spatial_entities.pipe(crate::error_handler),
+        ),
+    );
 }

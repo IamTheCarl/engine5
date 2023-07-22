@@ -10,8 +10,7 @@ pub mod world;
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
-        .add_plugin(Engine5::new())
+        .add_plugins((DefaultPlugins, Engine5::new()))
         .run();
 }
 
@@ -60,20 +59,23 @@ impl Plugin for Engine5 {
 
         app.add_state::<AppState>();
 
-        app.add_plugin(world::WorldPlugin);
-        app.add_plugin(DebugLinesPlugin::default());
-        app.add_plugin(controls::PlayerControls);
-        // TODO enable DBand dithering once you have control of the camera.
+        app.add_plugins((
+            world::WorldPlugin,
+            DebugLinesPlugin::default(),
+            controls::PlayerControls,
+        ));
 
-        app.configure_set(Engine5.after(world::terrain::TerrainPlugin));
-        app.add_startup_system(
-            apply_system_buffers
+        app.configure_set(Update, Engine5);
+        app.add_systems(Startup, setup.pipe(error_handler).in_set(Engine5));
+
+        app.add_systems(
+            Startup,
+            apply_deferred
                 .after(world::terrain::TerrainPlugin)
                 .before(Engine5),
         );
-        app.add_startup_system(setup.pipe(error_handler).in_set(Engine5));
 
-        app.add_system(state_switch);
+        app.add_systems(Update, state_switch);
     }
 }
 

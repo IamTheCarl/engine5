@@ -366,22 +366,29 @@ pub struct LoadTerrain;
 pub struct UnloadTerrain;
 
 pub fn register_terrain_space(app: &mut App) {
-    app.add_startup_system(setup_system);
+    app.add_systems(Startup, setup_system);
 
-    app.add_system(load_all_terrain.in_set(LoadTerrain));
-    app.add_system(load_terrain.in_set(LoadTerrain));
-    app.add_system(bootstrap_terrain_space.in_set(LoadTerrain));
+    app.add_systems(
+        Update,
+        (
+            load_all_terrain.in_set(LoadTerrain),
+            load_terrain.in_set(LoadTerrain),
+            bootstrap_terrain_space.in_set(LoadTerrain),
+        ),
+    );
 
     // We check to clean up chunks once a second.
     // We don't run this after `load_all_terrain` because that terrain doesn't dynamically unload.
-    app.configure_set(UnloadTerrain.after(LoadTerrain));
+    app.configure_set(Update, UnloadTerrain.after(LoadTerrain));
 
-    app.add_system(
+    app.add_systems(
+        Update,
         delete_chunks
             .before(super::terrain_time_tick)
             .in_set(UnloadTerrain),
     );
-    app.add_system(
+    app.add_systems(
+        Update,
         mark_chunk_for_save_and_unload
             .before(delete_chunks)
             .in_set(UnloadTerrain),

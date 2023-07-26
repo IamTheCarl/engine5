@@ -1,16 +1,34 @@
 use anyhow::Result;
-use bevy::prelude::*;
+use bevy::{app::AppExit, asset::ChangeWatcher, prelude::*};
 use bevy_prototype_debug_lines::DebugLinesPlugin;
-use std::path::Path;
+use bevy_ui_navigation::DefaultNavigationPlugins;
+use std::time::Duration;
 use world::terrain::BlockRegistry;
 
 pub mod controls;
 pub mod file_paths;
+mod ui;
 pub mod world;
 
 fn main() {
     App::new()
-        .add_plugins((DefaultPlugins, Engine5::new()))
+        .add_plugins((
+            DefaultPlugins
+                .set(AssetPlugin {
+                    // Tell the asset server to watch for asset changes on disk:
+                    watch_for_changes: ChangeWatcher::with_delay(Duration::from_millis(200)),
+                    ..default()
+                })
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "Engine 5".to_string(),
+                        ..Default::default()
+                    }),
+                    ..default()
+                }),
+            DefaultNavigationPlugins,
+            Engine5::new(),
+        ))
         .run();
 }
 
@@ -20,6 +38,7 @@ pub enum AppState {
     MainMenu,
     PauseMenu,
     InGame,
+    ShuttingDown,
 }
 
 /// A temporary system to test states with.
@@ -63,6 +82,7 @@ impl Plugin for Engine5 {
             world::WorldPlugin,
             DebugLinesPlugin::default(),
             controls::PlayerControls,
+            ui::UserInterface,
         ));
 
         app.configure_set(Update, Engine5);
@@ -76,6 +96,10 @@ impl Plugin for Engine5 {
         );
 
         app.add_systems(Update, state_switch);
+        app.add_systems(
+            OnEnter(AppState::ShuttingDown),
+            |mut exit_event: EventWriter<AppExit>| exit_event.send(AppExit),
+        );
     }
 }
 
@@ -90,11 +114,11 @@ fn setup(mut commands: Commands, block_registry: Res<BlockRegistry>) -> Result<(
         terrain_ray_casts: false,
     });
 
-    world::open_world(
-        &mut commands,
-        &block_registry,
-        Path::new(file_paths::SAVE_DIRECTORY).join("test"),
-    )?;
+    // world::open_world(
+    //     &mut commands,
+    //     &block_registry,
+    //     Path::new(file_paths::SAVE_DIRECTORY).join("test"),
+    // )?;
 
     Ok(())
 }

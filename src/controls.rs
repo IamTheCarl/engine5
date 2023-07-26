@@ -7,6 +7,7 @@ use bevy::{
     utils::HashSet,
     window::{CursorGrabMode, PrimaryWindow},
 };
+use bevy_ui_navigation::systems::InputMapping;
 use ordered_float::NotNan;
 use serde::{Deserialize, Serialize};
 
@@ -564,19 +565,41 @@ fn update_inputs(
     }
 }
 
+fn detect_gamepads(mut ui_input_mapping: ResMut<InputMapping>, gamepads: Res<Gamepads>) {
+    // I want to accept input from all controllers because my computer is weird and makes
+    // controller 0 the LED driver built into my motherboard. I assume other computers will have issues like this.
+    ui_input_mapping.gamepads = gamepads.iter().collect();
+}
+
 #[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 pub struct PlayerControls;
 
 impl Plugin for PlayerControls {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, |mut commands: Commands| {
-            commands.insert_resource(InputState::default());
-            commands.insert_resource(InputMap::load_or_default());
-        });
+        app.add_systems(
+            Startup,
+            |mut commands: Commands, mut ui_input_mapping: ResMut<InputMapping>| {
+                commands.insert_resource(InputState::default());
+                commands.insert_resource(InputMap::load_or_default());
+
+                // Enable keyboard and mouse navigation.
+                ui_input_mapping.keyboard_navigation = true;
+                ui_input_mapping.focus_follows_mouse = true;
+                ui_input_mapping.key_action = KeyCode::Return;
+                ui_input_mapping.key_cancel = KeyCode::Escape;
+                ui_input_mapping.key_free = KeyCode::Unlabeled;
+            },
+        );
         app.add_systems(OnEnter(AppState::InGame), initial_grab_cursor);
         app.add_systems(OnExit(AppState::InGame), release_cursor);
 
-        app.add_systems(Update, cursor_grab);
-        app.add_systems(Update, update_inputs.run_if(in_state(AppState::InGame)));
+        app.add_systems(
+            Update,
+            (
+                cursor_grab,
+                detect_gamepads,
+                update_inputs.run_if(in_state(AppState::InGame)),
+            ),
+        );
     }
 }

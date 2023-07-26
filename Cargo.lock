@@ -291,6 +291,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bevy-ui-navigation"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1388d4da3b73f48a9686068af4e7dfa26962226e6627cf4ec45df35a6a407e69"
+dependencies = [
+ "bevy",
+ "non-empty-vec",
+]
+
+[[package]]
 name = "bevy_a11y"
 version = "0.11.0"
 dependencies = [
@@ -1411,6 +1421,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bevy",
+ "bevy-ui-navigation",
  "bevy_prototype_debug_lines",
  "ciborium",
  "log",
@@ -1418,7 +1429,6 @@ dependencies = [
  "serde",
  "serde_yaml",
  "sled",
- "wgpu",
 ]
 
 [[package]]
@@ -1643,9 +1653,9 @@ checksum = "d2fabcfbdc87f4758337ca535fb41a6d701b65693ce38287d856d1674551ec9b"
 
 [[package]]
 name = "glow"
-version = "0.12.2"
+version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "807edf58b70c0b5b2181dd39fe1839dbdb3ba02645630dc5f753e23da307f762"
+checksum = "ca0fe580e4b60a8ab24a868bc08e2f03cbcb20d3d676601fa909386713333728"
 dependencies = [
  "js-sys",
  "slotmap",
@@ -2283,6 +2293,12 @@ dependencies = [
  "memchr",
  "minimal-lexical",
 ]
+
+[[package]]
+name = "non-empty-vec"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ceeba69aa8d4c53cdceeac8f17eb2656bb88b468bbe6c0889d34edfdea26ec8b"
 
 [[package]]
 name = "notify"

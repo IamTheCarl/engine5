@@ -3,7 +3,6 @@ use bevy::{app::AppExit, asset::ChangeWatcher, prelude::*, window::ExitCondition
 use bevy_prototype_debug_lines::DebugLinesPlugin;
 use bevy_ui_navigation::DefaultNavigationPlugins;
 use std::time::Duration;
-use world::terrain::BlockRegistry;
 
 use crate::ui::ErrorContext;
 
@@ -111,7 +110,7 @@ impl Plugin for Engine5 {
     }
 }
 
-fn setup(mut commands: Commands, block_registry: Res<BlockRegistry>) -> Result<()> {
+fn setup(mut commands: Commands) -> Result<()> {
     // TODO make this accessible from a menu or terminal.
     commands.insert_resource(DebugRenderSettings {
         cylinders: true,
@@ -124,12 +123,6 @@ fn setup(mut commands: Commands, block_registry: Res<BlockRegistry>) -> Result<(
 
     // Used by all UI.
     commands.spawn(Camera2dBundle::default());
-
-    // world::open_world(
-    //     &mut commands,
-    //     &block_registry,
-    //     Path::new(file_paths::SAVE_DIRECTORY).join("test"),
-    // )?;
 
     Ok(())
 }

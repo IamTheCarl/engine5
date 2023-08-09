@@ -1,6 +1,13 @@
-use crate::AppState;
+use std::path::Path;
+
+use crate::{
+    error_handler, file_paths,
+    world::{self, terrain::BlockRegistry},
+    AppState,
+};
 
 use super::spawn_button;
+use anyhow::Result;
 use bevy::prelude::*;
 use bevy_ui_navigation::{
     prelude::{NavEvent, NavRequest},
@@ -77,17 +84,35 @@ fn despawn(mut commands: Commands, main_menu: Query<Entity, With<MainMenu>>) {
 }
 
 fn handle_selections(
+    mut commands: Commands,
     mut events: EventReader<NavEvent>,
     mut next_state: ResMut<NextState<AppState>>,
+
+    block_registry: Res<BlockRegistry>,
+    single_player_buttons: Query<(), With<SinglePlayerButton>>,
     quit_buttons: Query<(), With<QuitButton>>,
-) {
+) -> Result<()> {
     for event in events.iter() {
         if let NavEvent::NoChanges { from, request } = event {
-            if matches!(request, NavRequest::Action) && quit_buttons.contains(*from.first()) {
-                next_state.set(AppState::ShuttingDown);
+            if matches!(request, NavRequest::Action) {
+                if quit_buttons.contains(*from.first()) {
+                    next_state.set(AppState::ShuttingDown);
+                }
+
+                if single_player_buttons.contains(*from.first()) {
+                    world::open_world(
+                        &mut commands,
+                        &block_registry,
+                        Path::new(file_paths::SAVE_DIRECTORY).join("test"),
+                    )?;
+
+                    next_state.set(AppState::InGame);
+                }
             }
         }
     }
+
+    Ok(())
 }
 
 pub fn setup(app: &mut App) {
@@ -96,6 +121,7 @@ pub fn setup(app: &mut App) {
     app.add_systems(
         Update,
         handle_selections
+            .pipe(error_handler)
             .after(NavRequestSystem)
             .run_if(in_state(AppState::MainMenu)),
     );

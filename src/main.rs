@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bevy::{app::AppExit, asset::ChangeWatcher, prelude::*};
+use bevy::{app::AppExit, asset::ChangeWatcher, prelude::*, window::ExitCondition};
 use bevy_prototype_debug_lines::DebugLinesPlugin;
 use bevy_ui_navigation::DefaultNavigationPlugins;
 use std::time::Duration;
@@ -26,6 +26,7 @@ fn main() {
                         title: "Engine 5".to_string(),
                         ..Default::default()
                     }),
+                    exit_condition: ExitCondition::DontExit, // We handle the exit ourselves.
                     ..default()
                 }),
             DefaultNavigationPlugins,
@@ -88,6 +89,8 @@ impl Plugin for Engine5 {
             ui::UserInterface,
         ));
 
+        app.add_systems(PostUpdate, exit_on_all_windows_closed);
+
         app.configure_set(Update, Engine5);
         app.add_systems(Startup, setup.pipe(error_handler).in_set(Engine5));
 
@@ -99,6 +102,8 @@ impl Plugin for Engine5 {
         );
 
         app.add_systems(Update, state_switch);
+
+        // TODO this is a temporary way to shutdown. I want this to verify all worlds have been saved and closed before application exist.
         app.add_systems(
             OnEnter(AppState::ShuttingDown),
             |mut exit_event: EventWriter<AppExit>| exit_event.send(AppExit),
@@ -127,6 +132,17 @@ fn setup(mut commands: Commands, block_registry: Res<BlockRegistry>) -> Result<(
     // )?;
 
     Ok(())
+}
+
+// Reworked from the original in Bevy to
+pub fn exit_on_all_windows_closed(
+    mut next_state: ResMut<NextState<AppState>>,
+    windows: Query<&Window>,
+) {
+    if windows.is_empty() {
+        log::info!("No windows are open, exiting");
+        next_state.set(AppState::ShuttingDown);
+    }
 }
 
 pub fn error_handler(

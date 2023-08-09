@@ -2,7 +2,10 @@ use crate::AppState;
 
 use super::spawn_button;
 use bevy::prelude::*;
-use bevy_ui_navigation::prelude::{NavEvent, NavRequest};
+use bevy_ui_navigation::{
+    prelude::{NavEvent, NavRequest},
+    NavRequestSystem,
+};
 
 #[derive(Component)]
 struct MainMenu;
@@ -17,7 +20,6 @@ struct SettingsButton;
 struct QuitButton;
 
 fn spawn(mut commands: Commands) {
-    commands.spawn(Camera2dBundle::default());
     commands
         .spawn((
             NodeBundle {
@@ -93,6 +95,8 @@ pub fn setup(app: &mut App) {
     app.add_systems(OnExit(AppState::MainMenu), despawn);
     app.add_systems(
         Update,
-        handle_selections.run_if(in_state(AppState::MainMenu)),
+        handle_selections
+            .after(NavRequestSystem)
+            .run_if(in_state(AppState::MainMenu)),
     );
 }

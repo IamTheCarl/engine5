@@ -5,6 +5,8 @@ use bevy_ui_navigation::DefaultNavigationPlugins;
 use std::time::Duration;
 use world::terrain::BlockRegistry;
 
+use crate::ui::ErrorContext;
+
 pub mod controls;
 pub mod file_paths;
 mod ui;
@@ -38,6 +40,7 @@ pub enum AppState {
     MainMenu,
     PauseMenu,
     InGame,
+    FatalError,
     ShuttingDown,
 }
 
@@ -114,6 +117,9 @@ fn setup(mut commands: Commands, block_registry: Res<BlockRegistry>) -> Result<(
         terrain_ray_casts: false,
     });
 
+    // Used by all UI.
+    commands.spawn(Camera2dBundle::default());
+
     // world::open_world(
     //     &mut commands,
     //     &block_registry,
@@ -123,10 +129,15 @@ fn setup(mut commands: Commands, block_registry: Res<BlockRegistry>) -> Result<(
     Ok(())
 }
 
-pub fn error_handler(In(result): In<anyhow::Result<()>>) {
+pub fn error_handler(
+    In(result): In<anyhow::Result<()>>,
+    mut commands: Commands,
+    mut next_state: ResMut<NextState<AppState>>,
+) {
+    // Only switch to error state if there was actually an error.
     if let Err(error) = result {
-        log::error!("Fatal Error: {:?}", error);
-        std::process::exit(1); // TODO I'd like a more graceful shutdown. One that saves the world and displays an error message in the window.
+        commands.insert_resource(ErrorContext { error });
+        next_state.set(AppState::FatalError);
     }
 }
 

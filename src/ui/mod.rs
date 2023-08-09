@@ -1,7 +1,10 @@
 use bevy::prelude::*;
 use bevy_ui_navigation::prelude::*;
 
+mod fatal_error_display;
 mod main_menu;
+
+pub use fatal_error_display::ErrorContext;
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 pub struct UserInterface;
@@ -14,11 +17,11 @@ impl Plugin for UserInterface {
                 // So that the UI _feels_ smooth, make sure to update the visual
                 // after the navigation system ran
                 button_system.after(NavRequestSystem),
-                print_nav_events.after(NavRequestSystem),
             ),
         );
 
         main_menu::setup(app);
+        fatal_error_display::setup(app);
     }
 }
 
@@ -31,11 +34,6 @@ fn button_system(
         } else {
             *material = Color::DARK_GRAY.into();
         }
-    }
-}
-fn print_nav_events(mut events: EventReader<NavEvent>) {
-    for event in events.iter() {
-        println!("{:?}", event);
     }
 }
 

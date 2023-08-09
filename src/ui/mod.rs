@@ -1,10 +1,14 @@
-use bevy::prelude::*;
+use anyhow::Result;
+use bevy::{prelude::*, utils::synccell::SyncCell};
 use bevy_ui_navigation::prelude::*;
 
 mod fatal_error_display;
 mod main_menu;
 
+use copypasta::{ClipboardContext, ClipboardProvider};
 pub use fatal_error_display::ErrorContext;
+
+use crate::error_handler;
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 pub struct UserInterface;
@@ -20,9 +24,43 @@ impl Plugin for UserInterface {
             ),
         );
 
+        app.add_systems(Startup, setup_clipboard.pipe(error_handler));
+
         main_menu::setup(app);
         fatal_error_display::setup(app);
     }
+}
+
+#[derive(Resource)]
+pub struct Clipboard {
+    pub clipboard: SyncCell<ClipboardContext>,
+}
+
+impl std::ops::Deref for Clipboard {
+    type Target = dyn ClipboardProvider;
+
+    fn deref(&self) -> &Self::Target {
+        // The only reason we even have this is because DerefMut requires it.
+        unimplemented!()
+    }
+}
+
+impl std::ops::DerefMut for Clipboard {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.clipboard.get()
+    }
+}
+
+fn setup_clipboard(mut commands: Commands) -> Result<()> {
+    let clipboard = ClipboardContext::new().map_err(|error| {
+        anyhow::anyhow!("Failed to get handle to system clipboard: {:?}", error)
+    })?;
+
+    commands.insert_resource(Clipboard {
+        clipboard: SyncCell::new(clipboard),
+    });
+
+    Ok(())
 }
 
 fn button_system(

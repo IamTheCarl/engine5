@@ -1,12 +1,11 @@
 use crate::AppState;
 
-use super::spawn_button;
+use super::{spawn_button, Clipboard};
 use bevy::prelude::*;
 use bevy_ui_navigation::{
     prelude::{NavEvent, NavRequest},
     NavRequestSystem,
 };
-use copypasta::{ClipboardContext, ClipboardProvider};
 
 #[derive(Resource)]
 pub struct ErrorContext {
@@ -117,6 +116,7 @@ fn handle_selections(
     quit_buttons: Query<(), With<QuitButton>>,
     copy_buttons: Query<(), With<CopyButton>>,
     error_context: Option<Res<ErrorContext>>,
+    mut clipboard: Option<ResMut<Clipboard>>,
 ) {
     for event in events.iter() {
         if let NavEvent::NoChanges { from, request } = event {
@@ -127,8 +127,8 @@ fn handle_selections(
 
                 if copy_buttons.contains(*from.first()) {
                     // TODO we need some kind of on-screen conformation of this event.
-                    match ClipboardContext::new() {
-                        Ok(mut clipboard) => {
+                    match clipboard.as_mut() {
+                        Some(clipboard) => {
                             match clipboard.set_contents(extract_error_context(&error_context)) {
                                 Ok(()) => {
                                     log::info!("Copied error message to clipboard.");
@@ -145,8 +145,8 @@ fn handle_selections(
                                 }
                             }
                         }
-                        Err(error) => {
-                            log::error!("Failed to get handle to system clipboard: {:?}", error);
+                        None => {
+                            log::error!("Clipboard was unavailable when trying to copy error message to it.");
                         }
                     }
                 }

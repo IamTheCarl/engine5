@@ -5,7 +5,7 @@ use bevy::{
     input::mouse,
     prelude::*,
     utils::HashSet,
-    window::{CursorGrabMode, PrimaryWindow},
+    window::{CursorGrabMode, PrimaryWindow, WindowMode},
 };
 use bevy_ui_navigation::systems::InputMapping;
 use ordered_float::NotNan;
@@ -420,11 +420,21 @@ fn toggle_grab_cursor(window: &mut Window) {
     }
 }
 
-/// A system to let you grab and release the cursor by pressing the escape button.
-fn cursor_grab(keys: Res<Input<KeyCode>>, mut windows: Query<&mut Window, With<PrimaryWindow>>) {
+/// A system to process dedicated keys that cannot be re-bound on the PC.
+fn dedicated_keys(keys: Res<Input<KeyCode>>, mut windows: Query<&mut Window, With<PrimaryWindow>>) {
     if let Ok(mut window) = windows.get_single_mut() {
         if keys.just_pressed(KeyCode::Escape) {
-            toggle_grab_cursor(&mut window);
+            // TODO activate pause menu.
+            // toggle_grab_cursor(&mut window);
+        }
+
+        if keys.just_pressed(KeyCode::F11) {
+            window.mode = match window.mode {
+                WindowMode::Windowed => WindowMode::Fullscreen,
+                WindowMode::BorderlessFullscreen => WindowMode::Windowed,
+                WindowMode::SizedFullscreen => WindowMode::Windowed,
+                WindowMode::Fullscreen => WindowMode::Windowed,
+            };
         }
     }
 }
@@ -596,7 +606,7 @@ impl Plugin for PlayerControls {
         app.add_systems(
             Update,
             (
-                cursor_grab,
+                dedicated_keys,
                 detect_gamepads,
                 update_inputs.run_if(in_state(AppState::InGame)),
             ),

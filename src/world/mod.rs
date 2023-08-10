@@ -60,6 +60,14 @@ pub fn open_world(
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash, States)]
+pub enum WorldState {
+    #[default]
+    Unloaded,
+    Running,
+    Paused,
+}
+
 #[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 pub struct WorldPlugin;
 
@@ -71,6 +79,8 @@ impl Plugin for WorldPlugin {
             player::PlayerPlugin,
             spatial_entities::SpatialEntityPlugin,
         ));
+
+        app.add_state::<WorldState>();
 
         generation::setup_terrain_generation(app);
         global_terrain::setup(app);

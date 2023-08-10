@@ -11,7 +11,7 @@ use bevy_ui_navigation::systems::InputMapping;
 use ordered_float::NotNan;
 use serde::{Deserialize, Serialize};
 
-use crate::{file_paths::CONFIG_DIRECTORY, AppState};
+use crate::{file_paths::CONFIG_DIRECTORY, world::WorldState, AppState};
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
 pub enum RealButton {
@@ -407,27 +407,9 @@ pub struct InputState {
     pub secondary_fire: ButtonState,
 }
 
-fn toggle_grab_cursor(window: &mut Window) {
-    match window.cursor.grab_mode {
-        CursorGrabMode::None => {
-            window.cursor.grab_mode = CursorGrabMode::Confined;
-            window.cursor.visible = false;
-        }
-        _ => {
-            window.cursor.grab_mode = CursorGrabMode::None;
-            window.cursor.visible = true;
-        }
-    }
-}
-
 /// A system to process dedicated keys that cannot be re-bound on the PC.
 fn dedicated_keys(keys: Res<Input<KeyCode>>, mut windows: Query<&mut Window, With<PrimaryWindow>>) {
     if let Ok(mut window) = windows.get_single_mut() {
-        if keys.just_pressed(KeyCode::Escape) {
-            // TODO activate pause menu.
-            // toggle_grab_cursor(&mut window);
-        }
-
         if keys.just_pressed(KeyCode::F11) {
             window.mode = match window.mode {
                 WindowMode::Windowed => WindowMode::Fullscreen,
@@ -600,8 +582,8 @@ impl Plugin for PlayerControls {
                 ui_input_mapping.key_free = KeyCode::Unlabeled;
             },
         );
-        app.add_systems(OnEnter(AppState::InGame), initial_grab_cursor);
-        app.add_systems(OnExit(AppState::InGame), release_cursor);
+        app.add_systems(OnEnter(WorldState::Running), initial_grab_cursor);
+        app.add_systems(OnExit(WorldState::Running), release_cursor);
 
         app.add_systems(
             Update,

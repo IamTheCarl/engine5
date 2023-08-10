@@ -38,31 +38,9 @@ fn main() {
 pub enum AppState {
     #[default]
     MainMenu,
-    PauseMenu,
     InGame,
     FatalError,
     ShuttingDown,
-}
-
-/// A temporary system to test states with.
-fn state_switch(keys: Res<Input<KeyCode>>, mut next_state: ResMut<NextState<AppState>>) {
-    if keys.just_pressed(KeyCode::Key1) {
-        // Main menu state.
-        log::info!("Enter Main Menu State");
-        next_state.set(AppState::MainMenu);
-    }
-
-    if keys.just_pressed(KeyCode::Key2) {
-        // Pause state.
-        log::info!("Enter Pause State");
-        next_state.set(AppState::PauseMenu);
-    }
-
-    if keys.just_pressed(KeyCode::Key3) {
-        // Running state.
-        log::info!("Enter Running State");
-        next_state.set(AppState::InGame);
-    }
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
@@ -100,9 +78,7 @@ impl Plugin for Engine5 {
                 .before(Engine5),
         );
 
-        app.add_systems(Update, state_switch);
-
-        // TODO this is a temporary way to shutdown. I want this to verify all worlds have been saved and closed before application exist.
+        // TODO this is a temporary way to shutdown. I want this to verify all worlds have been saved and closed before application exits.
         app.add_systems(
             OnEnter(AppState::ShuttingDown),
             |mut exit_event: EventWriter<AppExit>| exit_event.send(AppExit),

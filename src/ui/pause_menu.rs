@@ -1,4 +1,4 @@
-use crate::{error_handler, AppState};
+use crate::{error_handler, world::WorldState, AppState};
 
 use super::spawn_button;
 use anyhow::Result;
@@ -75,7 +75,8 @@ fn despawn(mut commands: Commands, main_menu: Query<Entity, With<PauseMenu>>) {
 
 fn handle_selections(
     mut events: EventReader<NavEvent>,
-    mut next_state: ResMut<NextState<AppState>>,
+    mut next_app_state: ResMut<NextState<AppState>>,
+    mut next_world_state: ResMut<NextState<WorldState>>,
 
     return_to_game_buttons: Query<(), With<ReturnToGameButton>>,
     quit_to_main_menu_buttons: Query<(), With<QuitToMainMenuButton>>,
@@ -85,15 +86,17 @@ fn handle_selections(
         if let NavEvent::NoChanges { from, request } = event {
             if matches!(request, NavRequest::Action) {
                 if quit_to_desktop_buttons.contains(*from.first()) {
-                    next_state.set(AppState::ShuttingDown);
+                    next_app_state.set(AppState::ShuttingDown);
+                    next_world_state.set(WorldState::Unloaded);
                 }
 
                 if quit_to_main_menu_buttons.contains(*from.first()) {
-                    next_state.set(AppState::MainMenu);
+                    next_app_state.set(AppState::MainMenu);
+                    next_world_state.set(WorldState::Unloaded);
                 }
 
                 if return_to_game_buttons.contains(*from.first()) {
-                    next_state.set(AppState::InGame);
+                    next_world_state.set(WorldState::Running);
                 }
             }
         }
@@ -102,14 +105,39 @@ fn handle_selections(
     Ok(())
 }
 
+fn enter_pause_state(
+    keys: Res<Input<KeyCode>>,
+    mut next_world_state: ResMut<NextState<WorldState>>,
+) {
+    if keys.just_pressed(KeyCode::Escape) {
+        next_world_state.set(WorldState::Paused);
+    }
+}
+
+fn exit_pause_state(
+    keys: Res<Input<KeyCode>>,
+    mut next_world_state: ResMut<NextState<WorldState>>,
+) {
+    if keys.just_pressed(KeyCode::Escape) {
+        next_world_state.set(WorldState::Running);
+    }
+}
+
 pub fn setup(app: &mut App) {
-    app.add_systems(OnEnter(AppState::PauseMenu), spawn);
-    app.add_systems(OnExit(AppState::PauseMenu), despawn);
+    app.add_systems(OnEnter(WorldState::Paused), spawn);
+    app.add_systems(OnExit(WorldState::Paused), despawn);
     app.add_systems(
         Update,
         handle_selections
             .pipe(error_handler)
             .after(NavRequestSystem)
-            .run_if(in_state(AppState::PauseMenu)),
+            .run_if(in_state(WorldState::Paused)),
+    );
+    app.add_systems(
+        Update,
+        (
+            enter_pause_state.run_if(in_state(WorldState::Running)),
+            exit_pause_state.run_if(in_state(WorldState::Paused)),
+        ),
     );
 }

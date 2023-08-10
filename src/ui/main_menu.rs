@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::{
     error_handler, file_paths,
-    world::{self, terrain::BlockRegistry},
+    world::{self, terrain::BlockRegistry, WorldState},
     AppState,
 };
 
@@ -86,7 +86,8 @@ fn despawn(mut commands: Commands, main_menu: Query<Entity, With<MainMenu>>) {
 fn handle_selections(
     mut commands: Commands,
     mut events: EventReader<NavEvent>,
-    mut next_state: ResMut<NextState<AppState>>,
+    mut next_app_state: ResMut<NextState<AppState>>,
+    mut next_world_state: ResMut<NextState<WorldState>>,
 
     block_registry: Res<BlockRegistry>,
     single_player_buttons: Query<(), With<SinglePlayerButton>>,
@@ -96,7 +97,7 @@ fn handle_selections(
         if let NavEvent::NoChanges { from, request } = event {
             if matches!(request, NavRequest::Action) {
                 if quit_buttons.contains(*from.first()) {
-                    next_state.set(AppState::ShuttingDown);
+                    next_app_state.set(AppState::ShuttingDown);
                 }
 
                 if single_player_buttons.contains(*from.first()) {
@@ -106,7 +107,8 @@ fn handle_selections(
                         Path::new(file_paths::SAVE_DIRECTORY).join("test"),
                     )?;
 
-                    next_state.set(AppState::InGame);
+                    next_app_state.set(AppState::InGame);
+                    next_world_state.set(WorldState::Running);
                 }
             }
         }

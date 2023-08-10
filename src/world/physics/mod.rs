@@ -10,6 +10,8 @@ mod ray_cast_with_terrain;
 pub use ray_cast_with_terrain::{
     RayTerrainIntersection, RayTerrainIntersectionList, RayTerrainIntersectionType,
 };
+
+use super::WorldState;
 mod terrain_to_terrain;
 
 #[derive(Component, Reflect, Default)]
@@ -298,7 +300,8 @@ impl Plugin for PhysicsPlugin {
             Update,
             PhysicsPlugin
                 .after(LoadTerrain)
-                .run_if(in_state(AppState::InGame)),
+                .run_if(in_state(AppState::InGame))
+                .run_if(in_state(WorldState::Running)),
         );
 
         app.add_systems(Update, add_debug_mesh_cylinders.in_set(PhysicsPlugin));

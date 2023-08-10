@@ -1,11 +1,12 @@
 use anyhow::Result;
 use bevy::{prelude::*, utils::synccell::SyncCell};
 use bevy_ui_navigation::prelude::*;
+use copypasta::{ClipboardContext, ClipboardProvider};
 
 mod fatal_error_display;
 mod main_menu;
+mod pause_menu;
 
-use copypasta::{ClipboardContext, ClipboardProvider};
 pub use fatal_error_display::ErrorContext;
 
 use crate::error_handler;
@@ -28,6 +29,7 @@ impl Plugin for UserInterface {
 
         main_menu::setup(app);
         fatal_error_display::setup(app);
+        pause_menu::setup(app);
     }
 }
 

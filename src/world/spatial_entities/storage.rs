@@ -13,6 +13,7 @@ use std::{
 use crate::world::{
     generation::ToGenerateSpatial,
     terrain::{storage::CHUNK_TIME_TO_SAVE, ChunkPosition},
+    WorldEntity,
 };
 
 use super::SpatialEntityTracker;
@@ -300,17 +301,21 @@ fn bootstrap_entities(
     mut commands: Commands,
     storage: Option<Res<EntityStorage>>,
     serialization_manager: Res<EntitySerializationManager>,
+    world_entity: Option<Res<WorldEntity>>,
 ) {
-    if let Some(storage) = storage {
+    if let (Some(storage), Some(world_entity)) = (storage, world_entity) {
         if !storage.bootstrap_complete.swap(true, Ordering::SeqCst) {
             let bootstrap_list = storage
                 .bootstrap_list
                 .lock()
                 .expect("Bootstrap list has been poisoned!");
             for tracer_id in bootstrap_list.bootstrap_entities.keys() {
-                if let Err(error) =
-                    serialization_manager.load_entity(*tracer_id, &storage, &mut commands)
-                {
+                if let Err(error) = serialization_manager.load_entity(
+                    *tracer_id,
+                    &storage,
+                    world_entity.entity,
+                    &mut commands,
+                ) {
                     log::error!("Failed to load entity {}: {:?}", tracer_id, error);
                 }
             }
@@ -450,7 +455,7 @@ pub trait SpatialEntity<Q: WorldQuery> {
     const TYPE_ID: EntityTypeId;
     const BOOTSTRAP: BootstrapEntityInfo = BootstrapEntityInfo::NonBootstrap;
 
-    fn load(data_loader: DataLoader, commands: &mut Commands) -> Result<()>;
+    fn load(data_loader: DataLoader, parent: Entity, commands: &mut Commands) -> Result<()>;
     fn save(query: <<Q as WorldQuery>::ReadOnly as WorldQuery>::Item<'_>, data_saver: DataSaver);
 }
 
@@ -459,7 +464,7 @@ pub struct EntitySerializationManager {
     #[allow(clippy::type_complexity)]
     entity_loaders: HashMap<
         EntityTypeId,
-        &'static (dyn Fn(TracerId, &[u8], &sled::Db, &mut Commands) -> Result<()> + Sync),
+        &'static (dyn Fn(TracerId, &[u8], &sled::Db, Entity, &mut Commands) -> Result<()> + Sync),
     >,
 }
 
@@ -527,18 +532,21 @@ impl EntitySerializationManager {
         {
             let is_not_duplicate = serialization_manager
                 .entity_loaders
-                .insert(E::TYPE_ID, &|tracer_id, bytes, database, commands| {
-                    let data_loader = DataLoader {
-                        type_id: E::TYPE_ID,
-                        tracer_id,
-                        database,
-                        bytes,
-                    };
+                .insert(
+                    E::TYPE_ID,
+                    &|tracer_id, bytes, database, parent, commands| {
+                        let data_loader = DataLoader {
+                            type_id: E::TYPE_ID,
+                            tracer_id,
+                            database,
+                            bytes,
+                        };
 
-                    E::load(data_loader, commands)?;
+                        E::load(data_loader, parent, commands)?;
 
-                    Ok(())
-                })
+                        Ok(())
+                    },
+                )
                 .is_none();
             assert!(is_not_duplicate, "Duplicate entity type ID detected.");
         }
@@ -554,6 +562,7 @@ impl EntitySerializationManager {
         &self,
         tracer_id: TracerId,
         storage: &EntityStorage,
+        parent: Entity,
         commands: &mut Commands,
     ) -> Result<()> {
         // Don't load if already loaded.
@@ -579,7 +588,7 @@ impl EntitySerializationManager {
                 .get(&type_id)
                 .with_context(|| format!("No entity registered for type {}.", type_id))?;
 
-            entity_loader(tracer_id, payload, &storage.database, commands)?;
+            entity_loader(tracer_id, payload, &storage.database, parent, commands)?;
 
             // The table `storage.tracers_to_entities` and its reciprocal will automatically be updated by an external system later,
             // so we don't have to do it here.
@@ -591,6 +600,7 @@ impl EntitySerializationManager {
 
 fn load_entities(
     mut commands: Commands,
+    world_entity: Option<Res<WorldEntity>>,
     terrain_chunks: Query<(Entity, &ChunkPosition), With<ToLoadSpatial>>,
     storage: Option<Res<EntityStorage>>,
     serialization_manager: Res<EntitySerializationManager>,
@@ -616,7 +626,7 @@ fn load_entities(
         }
     }
 
-    if let Some(storage) = storage {
+    if let (Some(storage), Some(world_entity)) = (storage, world_entity) {
         for (chunk_entity, chunk_position) in terrain_chunks.iter() {
             match load_spatial_hash(chunk_position, &storage) {
                 Ok(spatial_hash) => {
@@ -627,6 +637,7 @@ fn load_entities(
                             if let Err(error) = serialization_manager.load_entity(
                                 tracer_id,
                                 &storage,
+                                world_entity.entity,
                                 &mut commands,
                             ) {
                                 log::error!("Failed to load entity {}: {:?}", tracer_id, error);

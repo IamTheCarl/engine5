@@ -155,10 +155,9 @@ fn handle_removed_spatial_hash_entities(
     mut spatial_object_tracker: ResMut<SpatialEntityTracker>,
 ) {
     for entity in removals.iter() {
-        let spatial_hash = spatial_objects
-            .get(entity)
-            .expect("Entity was already removed.");
-        spatial_object_tracker.remove_entity(*spatial_hash, entity);
+        if let Ok(spatial_hash) = spatial_objects.get(entity) {
+            spatial_object_tracker.remove_entity(*spatial_hash, entity);
+        }
     }
 }
 

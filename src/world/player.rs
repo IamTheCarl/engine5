@@ -40,9 +40,9 @@ impl SpatialEntity<(Entity, &Storable, &Position, &Velocity, &Self)> for PlayerE
     const TYPE_ID: EntityTypeId = 0;
     const BOOTSTRAP: BootstrapEntityInfo = BootstrapEntityInfo::LocalPlayer;
 
-    fn load(data_loader: DataLoader, commands: &mut Commands) -> Result<()> {
+    fn load(data_loader: DataLoader, parent: Entity, commands: &mut Commands) -> Result<()> {
         let (storable, parameters) = data_loader.load::<PlayerEntityParameters>()?;
-        Self::spawn_internal(commands, storable, parameters);
+        Self::spawn_internal(parent, commands, storable, parameters);
         Ok(())
     }
 
@@ -78,6 +78,7 @@ impl SpatialEntity<(Entity, &Storable, &Position, &Velocity, &Self)> for PlayerE
 impl PlayerEntity {
     /// Spawns the `Camera3dBundle` to be controlled
     pub fn spawn(
+        parent: Entity,
         commands: &mut Commands,
         storage: &EntityStorage,
         position: Position,
@@ -86,6 +87,7 @@ impl PlayerEntity {
         let storable = storage.new_storable_component::<PlayerEntity, _>()?;
 
         Self::spawn_internal(
+            parent,
             commands,
             storable,
             PlayerEntityParameters {
@@ -98,6 +100,7 @@ impl PlayerEntity {
     }
 
     fn spawn_internal(
+        parent: Entity,
         commands: &mut Commands,
         storable: Storable,
         parameters: PlayerEntityParameters,
@@ -120,6 +123,7 @@ impl PlayerEntity {
                 ToSaveSpatial, // We want to save this as soon as its spawned.
                 LocalPlayer, // FIXME this shouldn't just be a local player by default, but it's okay since multiplayer isn't implemented yet.
             ))
+            .set_parent(parent)
             .with_children(|parent| {
                 parent
                     .spawn((

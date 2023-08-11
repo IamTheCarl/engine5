@@ -14,6 +14,7 @@ use super::{
     terrain::{
         Block, Chunk, ChunkIndex, ChunkPosition, LocalBlockCoordinate, TerrainSpace, UpdateMesh,
     },
+    WorldEntity,
 };
 
 #[derive(Component)]
@@ -37,12 +38,14 @@ impl WorldGenerator for EmptyWorld {
         &self,
         chunk_position: &ChunkPosition,
         storage: &mut EntityStorage,
+        parent: Entity,
         commands: &mut Commands,
     ) -> Result<()> {
         // Spawn a player.
         if chunk_position.index == ChunkIndex::ZERO {
             let middle = Chunk::CHUNK_DIAMETER / 2;
             PlayerEntity::spawn(
+                parent,
                 commands,
                 storage,
                 Position {
@@ -84,11 +87,13 @@ impl WorldGenerator for FlatWorld {
         &self,
         chunk_position: &ChunkPosition,
         storage: &mut EntityStorage,
+        parent: Entity,
         commands: &mut Commands,
     ) -> Result<()> {
         if chunk_position.index == ChunkIndex::ZERO {
             let middle = Chunk::CHUNK_DIAMETER / 2;
             PlayerEntity::spawn(
+                parent,
                 commands,
                 storage,
                 Position {
@@ -148,12 +153,14 @@ impl WorldGenerator for OscillatingHills {
         &self,
         chunk_position: &ChunkPosition,
         storage: &mut EntityStorage,
+        parent: Entity,
         commands: &mut Commands,
     ) -> Result<()> {
         let base_offset = chunk_position.as_block_coordinate().xz();
 
         if chunk_position.index == ChunkIndex::new(-1, 1, 0) {
             DynamicTerrainEntity::spawn(
+                parent,
                 commands,
                 storage,
                 SingleFilledChunk { block: self.block },
@@ -174,6 +181,7 @@ impl WorldGenerator for OscillatingHills {
 
             let height = self.calculate_height_for_index(base_offset, IVec2::splat(middle));
             PlayerEntity::spawn(
+                parent,
                 commands,
                 storage,
                 Position {
@@ -250,6 +258,7 @@ impl WorldGenerator for CheckerBoard {
         &self,
         chunk_position: &ChunkPosition,
         storage: &mut EntityStorage,
+        parent: Entity,
         commands: &mut Commands,
     ) -> Result<()> {
         let (_new_block, height) = self.get_block_and_height(chunk_position);
@@ -257,6 +266,7 @@ impl WorldGenerator for CheckerBoard {
         if chunk_position.index == ChunkIndex::ZERO {
             let middle = Chunk::CHUNK_DIAMETER / 2;
             PlayerEntity::spawn(
+                parent,
                 commands,
                 storage,
                 Position {
@@ -314,6 +324,7 @@ impl WorldGenerator for SingleFilledChunk {
         &self,
         _chunk_position: &ChunkPosition,
         _storage: &mut EntityStorage,
+        _parent: Entity,
         _commands: &mut Commands,
     ) -> Result<()> {
         Ok(())
@@ -326,6 +337,7 @@ pub trait WorldGenerator {
         &self,
         chunk_position: &ChunkPosition,
         storage: &mut EntityStorage,
+        parent: Entity,
         commands: &mut Commands,
     ) -> Result<()>;
 }
@@ -388,17 +400,21 @@ type GenerateEntitiesQuery<'a, 'b, 'c> =
 
 fn generate_spatial_entities(
     mut commands: Commands,
+    world_entity: Option<Res<WorldEntity>>,
     terrain_spaces: Query<&TerrainSpace>,
     to_generate: GenerateEntitiesQuery,
     storage: Option<ResMut<EntityStorage>>,
 ) -> Result<()> {
-    if let Some(mut storage) = storage {
+    if let (Some(mut storage), Some(world_entity)) = (storage, world_entity) {
         // TODO the generation calls should be done outside of the ECS so that this system becomes non-blocking.
         for (entity_id, position, parent) in to_generate.iter() {
             if let Ok(terrain_space) = terrain_spaces.get(parent.get()) {
-                terrain_space
-                    .generator
-                    .generate_spatial(position, &mut storage, &mut commands)?;
+                terrain_space.generator.generate_spatial(
+                    position,
+                    &mut storage,
+                    world_entity.entity,
+                    &mut commands,
+                )?;
 
                 let mut entity = commands.entity(entity_id);
 

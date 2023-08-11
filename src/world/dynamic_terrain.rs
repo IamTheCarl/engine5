@@ -27,10 +27,11 @@ impl SpatialEntity<(Entity, &Storable, &Position, &Velocity, &TerrainSpace)>
 {
     const TYPE_ID: EntityTypeId = 2;
 
-    fn load(data_loader: DataLoader, commands: &mut Commands) -> Result<()> {
+    fn load(data_loader: DataLoader, parent: Entity, commands: &mut Commands) -> Result<()> {
         let (storable, parameters, tree) =
             data_loader.load_with_tree::<DynamicTerrainParameters>()?;
         Self::spawn_internal(
+            parent,
             commands,
             storable,
             TerrainStorage::Local { tree },
@@ -70,6 +71,7 @@ impl SpatialEntity<(Entity, &Storable, &Position, &Velocity, &TerrainSpace)>
 
 impl DynamicTerrainEntity {
     pub fn spawn(
+        parent: Entity,
         commands: &mut Commands,
         storage: &EntityStorage,
         generator: impl Into<WorldGeneratorEnum>,
@@ -80,6 +82,7 @@ impl DynamicTerrainEntity {
             storage.new_storable_component_with_tree::<DynamicTerrainEntity, _>()?;
 
         Self::spawn_internal(
+            parent,
             commands,
             storable,
             TerrainStorage::Local { tree },
@@ -93,26 +96,29 @@ impl DynamicTerrainEntity {
     }
 
     fn spawn_internal(
+        parent: Entity,
         commands: &mut Commands,
         storable: Storable,
         storage: TerrainStorage,
         parameters: DynamicTerrainParameters,
     ) {
-        commands.spawn((
-            Self,
-            ToSaveSpatial,
-            storable,
-            TerrainSpaceBundle {
-                terrain_space: TerrainSpace::local(parameters.generator),
-                position: parameters.position,
-                storage,
-                transform: Transform::default(),
-                global_transform: GlobalTransform::default(),
-                visibility: Visibility::Inherited,
-                computed_visibility: ComputedVisibility::default(),
-            },
-            parameters.velocity,
-        ));
+        commands
+            .spawn((
+                Self,
+                ToSaveSpatial,
+                storable,
+                TerrainSpaceBundle {
+                    terrain_space: TerrainSpace::local(parameters.generator),
+                    position: parameters.position,
+                    storage,
+                    transform: Transform::default(),
+                    global_transform: GlobalTransform::default(),
+                    visibility: Visibility::Inherited,
+                    computed_visibility: ComputedVisibility::default(),
+                },
+                parameters.velocity,
+            ))
+            .set_parent(parent);
     }
 }
 

@@ -14,10 +14,20 @@ mod dynamic_terrain;
 pub mod generation;
 mod global_terrain;
 
+use crate::AppState;
+
 use self::{
     generation::OscillatingHills, global_terrain::GlobalTerrainEntity,
     spatial_entities::storage::EntityStorage,
 };
+
+#[derive(Component)]
+struct World;
+
+#[derive(Resource)]
+struct WorldEntity {
+    pub entity: Entity,
+}
 
 pub fn open_world(
     commands: &mut Commands,
@@ -31,6 +41,15 @@ pub fn open_world(
         sled::open(path).context("Failed to open or create database for world.")?;
     let storage = EntityStorage::new(&world_database)?;
 
+    let entity = commands
+        .spawn((
+            World,
+            TransformBundle::default(),
+            VisibilityBundle::default(),
+        ))
+        .id();
+    commands.insert_resource(WorldEntity { entity });
+
     if is_new_world {
         // New world. Nothing to bootstrap, insert our initial state.
         let default_tag = BlockTag::try_from("core:default").unwrap();
@@ -41,6 +60,7 @@ pub fn open_world(
         let default_block = default_data.spawn();
 
         GlobalTerrainEntity::create_new(
+            entity,
             commands,
             &storage,
             OscillatingHills {
@@ -68,6 +88,16 @@ pub enum WorldState {
     Paused,
 }
 
+fn unload_world(mut commands: Commands, world_entities: Query<Entity, With<World>>) {
+    for entity in world_entities.iter() {
+        if let Some(entity) = commands.get_entity(entity) {
+            entity.despawn_recursive();
+        }
+    }
+
+    commands.remove_resource::<EntityStorage>();
+}
+
 #[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 pub struct WorldPlugin;
 
@@ -81,6 +111,7 @@ impl Plugin for WorldPlugin {
         ));
 
         app.add_state::<WorldState>();
+        app.add_systems(OnExit(AppState::InGame), unload_world);
 
         generation::setup_terrain_generation(app);
         global_terrain::setup(app);

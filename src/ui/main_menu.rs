@@ -27,6 +27,8 @@ struct SettingsButton;
 struct QuitButton;
 
 fn spawn(mut commands: Commands) {
+    commands.spawn((Camera2dBundle::default(), MainMenu));
+
     commands
         .spawn((
             NodeBundle {

@@ -33,6 +33,8 @@ fn spawn(mut commands: Commands, error_context: Option<Res<ErrorContext>>) {
     let error_text = extract_error_context(&error_context);
     log::error!("Fatal Error: {:?}", error_text);
 
+    commands.spawn((Camera2dBundle::default(), FatalErrorDisplay));
+
     commands
         .spawn((
             NodeBundle {

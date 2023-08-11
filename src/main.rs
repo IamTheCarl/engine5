@@ -97,9 +97,6 @@ fn setup(mut commands: Commands) -> Result<()> {
         terrain_ray_casts: false,
     });
 
-    // Used by all UI.
-    commands.spawn(Camera2dBundle::default());
-
     Ok(())
 }
 

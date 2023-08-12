@@ -33,9 +33,7 @@ struct QuitButton;
 fn spawn(mut commands: Commands) {
     commands.spawn((Camera2dBundle::default(), MenuSetting::default()));
 
-    let mut settings_button_entity = Entity::PLACEHOLDER;
-
-    commands
+    let menu_entity = commands
         .spawn((
             NodeBundle {
                 style: Style {
@@ -79,11 +77,15 @@ fn spawn(mut commands: Commands) {
                 },
                 ..Default::default()
             });
+        })
+        .id();
 
-            spawn_prioritized_button(commands, "Single Player", SinglePlayerButton);
-            settings_button_entity = spawn_button(commands, "Settings", SettingsButton);
-            spawn_button(commands, "Quit", QuitButton);
-        });
+    spawn_prioritized_button(&mut commands, "Single Player", SinglePlayerButton)
+        .set_parent(menu_entity);
+    let settings_button_entity = spawn_button(&mut commands, "Settings", SettingsButton)
+        .set_parent(menu_entity)
+        .id();
+    spawn_button(&mut commands, "Quit", QuitButton).set_parent(menu_entity);
 
     settings_menu::spawn(commands, settings_button_entity);
 }

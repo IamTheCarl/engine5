@@ -28,9 +28,7 @@ struct QuitToMainMenuButton;
 struct QuitToDesktopButton;
 
 fn spawn(mut commands: Commands) {
-    let mut settings_button_entity = Entity::PLACEHOLDER;
-
-    commands
+    let menu_entity = commands
         .spawn((
             NodeBundle {
                 style: Style {
@@ -66,12 +64,16 @@ fn spawn(mut commands: Commands) {
                 },
                 ..Default::default()
             });
+        })
+        .id();
 
-            spawn_prioritized_button(commands, "Return to game", ReturnToGameButton);
-            settings_button_entity = spawn_button(commands, "Settings", SettingsButton);
-            spawn_button(commands, "Quit to main menu", QuitToMainMenuButton);
-            spawn_button(commands, "Quit to desktop", QuitToDesktopButton);
-        });
+    spawn_prioritized_button(&mut commands, "Return to game", ReturnToGameButton)
+        .set_parent(menu_entity);
+    let settings_button_entity = spawn_button(&mut commands, "Settings", SettingsButton)
+        .set_parent(menu_entity)
+        .id();
+    spawn_button(&mut commands, "Quit to main menu", QuitToMainMenuButton).set_parent(menu_entity);
+    spawn_button(&mut commands, "Quit to desktop", QuitToDesktopButton).set_parent(menu_entity);
 
     settings_menu::spawn(commands, settings_button_entity);
 }

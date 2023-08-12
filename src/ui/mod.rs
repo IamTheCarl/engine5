@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bevy::{prelude::*, utils::synccell::SyncCell};
+use bevy::{ecs::system::EntityCommands, prelude::*, utils::synccell::SyncCell};
 use bevy_ui_navigation::{prelude::*, NavMarkerPropagationPlugin};
 use copypasta::{ClipboardContext, ClipboardProvider};
 
@@ -78,54 +78,54 @@ fn button_system(
     }
 }
 
-fn spawn_button<L: Component>(
-    commands: &mut ChildBuilder,
+fn spawn_button<'w, 's, 'a, L: Component>(
+    commands: &'a mut Commands<'w, 's>,
     text: impl Into<String>,
     label: L,
-) -> Entity {
+) -> EntityCommands<'w, 's, 'a> {
     spawn_button_raw::<L>(commands, Focusable::new(), text, label)
 }
 
-fn spawn_prioritized_button<L: Component>(
-    commands: &mut ChildBuilder,
+fn spawn_prioritized_button<'w, 's, 'a, L: Component>(
+    commands: &'a mut Commands<'w, 's>,
     text: impl Into<String>,
     label: L,
-) -> Entity {
+) -> EntityCommands<'w, 's, 'a> {
     spawn_button_raw::<L>(commands, Focusable::new().prioritized(), text, label)
 }
 
-fn spawn_button_raw<L: Component>(
-    commands: &mut ChildBuilder,
+fn spawn_button_raw<'w, 's, 'a, L: Component>(
+    commands: &'a mut Commands<'w, 's>,
     focus: Focusable,
     text: impl Into<String>,
     label: L,
-) -> Entity {
-    commands
-        .spawn((
-            ButtonBundle {
-                style: Style {
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    width: Val::Percent(100.0),
-                    ..Default::default()
-                },
-                background_color: Color::DARK_GRAY.into(),
+) -> EntityCommands<'w, 's, 'a> {
+    let mut entity_commands = commands.spawn((
+        ButtonBundle {
+            style: Style {
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                width: Val::Percent(100.0),
                 ..Default::default()
             },
-            focus,
-            label,
-        ))
-        .with_children(|parent| {
-            parent.spawn(TextBundle::from_section(
-                text,
-                TextStyle {
-                    font_size: 40.0,
-                    color: Color::WHITE,
-                    ..Default::default()
-                },
-            ));
-        })
-        .id()
+            background_color: Color::DARK_GRAY.into(),
+            ..Default::default()
+        },
+        focus,
+        label,
+    ));
+    entity_commands.with_children(|parent| {
+        parent.spawn(TextBundle::from_section(
+            text,
+            TextStyle {
+                font_size: 40.0,
+                color: Color::WHITE,
+                ..Default::default()
+            },
+        ));
+    });
+
+    entity_commands
 }
 
 #[derive(Component)]

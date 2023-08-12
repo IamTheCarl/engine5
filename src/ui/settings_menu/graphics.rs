@@ -4,19 +4,13 @@ use bevy_ui_navigation::menu::{MenuBuilder, MenuSetting, NavMarker};
 use super::{setup_submenu, spawn_button, BackButton};
 
 #[derive(Component)]
-struct SettingsMenu;
+struct GraphicsSettingsMenu;
 
 #[derive(Component, Clone)]
-struct SettingsMenuMarker;
-
-#[derive(Component)]
-struct GraphicsButton;
-
-#[derive(Component)]
-struct ControlsButton;
+struct GraphicsSettingsMenuMarker;
 
 pub fn spawn(mut commands: Commands, parent: Entity) {
-    commands
+    let menu_entity = commands
         .spawn((
             NodeBundle {
                 style: Style {
@@ -33,8 +27,8 @@ pub fn spawn(mut commands: Commands, parent: Entity) {
             },
             MenuSetting::new(),
             MenuBuilder::EntityParent(parent),
-            SettingsMenu,
-            NavMarker(SettingsMenuMarker),
+            GraphicsSettingsMenu,
+            NavMarker(GraphicsSettingsMenuMarker),
         ))
         .with_children(|commands| {
             commands.spawn(TextBundle::from_section(
@@ -52,13 +46,12 @@ pub fn spawn(mut commands: Commands, parent: Entity) {
                 },
                 ..Default::default()
             });
+        })
+        .id();
 
-            spawn_button(commands, "Graphics", GraphicsButton);
-            spawn_button(commands, "Controls", ControlsButton);
-            spawn_button(commands, "Back", BackButton);
-        });
+    spawn_button(&mut commands, "Back", BackButton).set_parent(menu_entity);
 }
 
 pub fn setup(app: &mut App) {
-    setup_submenu::<SettingsMenu, SettingsMenuMarker>(app);
+    setup_submenu::<GraphicsSettingsMenu, GraphicsSettingsMenuMarker>(app);
 }

@@ -35,7 +35,7 @@ fn spawn(mut commands: Commands, error_context: Option<Res<ErrorContext>>) {
 
     commands.spawn((Camera2dBundle::default(), FatalErrorDisplay));
 
-    commands
+    let menu_entity = commands
         .spawn((
             NodeBundle {
                 style: Style {
@@ -98,10 +98,12 @@ fn spawn(mut commands: Commands, error_context: Option<Res<ErrorContext>>) {
                 },
                 ..Default::default()
             });
+        })
+        .id();
 
-            spawn_button(commands, "Quit", QuitButton);
-            spawn_prioritized_button(commands, "Copy error to Clipboard", CopyButton);
-        });
+    spawn_button(&mut commands, "Quit", QuitButton).set_parent(menu_entity);
+    spawn_prioritized_button(&mut commands, "Copy error to Clipboard", CopyButton)
+        .set_parent(menu_entity);
 }
 
 fn despawn(mut commands: Commands, main_menu: Query<Entity, With<FatalErrorDisplay>>) {

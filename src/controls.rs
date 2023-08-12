@@ -546,6 +546,51 @@ fn detect_gamepads(mut ui_input_mapping: ResMut<InputMapping>, gamepads: Res<Gam
     ui_input_mapping.gamepads = gamepads.iter().collect();
 }
 
+fn update_ui_input_map(input_map: Res<InputMap>, mut ui_input_mapping: ResMut<InputMapping>) {
+    fn get_first_keyboard_key(
+        analog_inputs: &HashSet<AnalogInput>,
+        scale_check: impl Fn(f32) -> bool,
+    ) -> Option<KeyCode> {
+        for input in analog_inputs.iter() {
+            if let AnalogInput::Button {
+                button: RealButton::Key { key_code },
+                scale,
+            } = input
+            {
+                if scale_check(scale.into_inner()) {
+                    return Some(*key_code);
+                }
+            }
+        }
+
+        None
+    }
+
+    if let Some(key_code) =
+        get_first_keyboard_key(&input_map.horizontal_movement.x, |scale| scale < 0.0)
+    {
+        ui_input_mapping.key_right = key_code;
+    }
+
+    if let Some(key_code) =
+        get_first_keyboard_key(&input_map.horizontal_movement.x, |scale| scale > 0.0)
+    {
+        ui_input_mapping.key_left = key_code;
+    }
+
+    if let Some(key_code) =
+        get_first_keyboard_key(&input_map.horizontal_movement.y, |scale| scale < 0.0)
+    {
+        ui_input_mapping.key_up = key_code;
+    }
+
+    if let Some(key_code) =
+        get_first_keyboard_key(&input_map.horizontal_movement.y, |scale| scale > 0.0)
+    {
+        ui_input_mapping.key_down = key_code;
+    }
+}
+
 #[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 pub struct PlayerControls;
 
@@ -567,6 +612,7 @@ impl Plugin for PlayerControls {
         );
         app.add_systems(OnEnter(WorldState::Running), initial_grab_cursor);
         app.add_systems(OnExit(WorldState::Running), release_cursor);
+        app.add_systems(Update, update_ui_input_map.before(NavRequestSystem));
 
         app.add_systems(
             Update,

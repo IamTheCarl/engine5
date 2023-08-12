@@ -1,11 +1,12 @@
 use anyhow::Result;
 use bevy::{prelude::*, utils::synccell::SyncCell};
-use bevy_ui_navigation::prelude::*;
+use bevy_ui_navigation::{prelude::*, NavMarkerPropagationPlugin};
 use copypasta::{ClipboardContext, ClipboardProvider};
 
 mod fatal_error_display;
 mod main_menu;
 mod pause_menu;
+mod settings_menu;
 
 pub use fatal_error_display::ErrorContext;
 
@@ -19,9 +20,8 @@ impl Plugin for UserInterface {
         app.add_systems(
             Update,
             (
-                // So that the UI _feels_ smooth, make sure to update the visual
-                // after the navigation system ran
                 button_system.after(NavRequestSystem),
+                process_back_buttons.after(NavRequestSystem),
             ),
         );
 
@@ -30,6 +30,7 @@ impl Plugin for UserInterface {
         main_menu::setup(app);
         fatal_error_display::setup(app);
         pause_menu::setup(app);
+        settings_menu::setup(app);
     }
 }
 
@@ -77,7 +78,28 @@ fn button_system(
     }
 }
 
-fn spawn_button<L: Component>(commands: &mut ChildBuilder, text: impl Into<String>, label: L) {
+fn spawn_button<L: Component>(
+    commands: &mut ChildBuilder,
+    text: impl Into<String>,
+    label: L,
+) -> Entity {
+    spawn_button_raw::<L>(commands, Focusable::new(), text, label)
+}
+
+fn spawn_prioritized_button<L: Component>(
+    commands: &mut ChildBuilder,
+    text: impl Into<String>,
+    label: L,
+) -> Entity {
+    spawn_button_raw::<L>(commands, Focusable::new().prioritized(), text, label)
+}
+
+fn spawn_button_raw<L: Component>(
+    commands: &mut ChildBuilder,
+    focus: Focusable,
+    text: impl Into<String>,
+    label: L,
+) -> Entity {
     commands
         .spawn((
             ButtonBundle {
@@ -90,7 +112,7 @@ fn spawn_button<L: Component>(commands: &mut ChildBuilder, text: impl Into<Strin
                 background_color: Color::DARK_GRAY.into(),
                 ..Default::default()
             },
-            Focusable::default(),
+            focus,
             label,
         ))
         .with_children(|parent| {
@@ -102,5 +124,61 @@ fn spawn_button<L: Component>(commands: &mut ChildBuilder, text: impl Into<Strin
                     ..Default::default()
                 },
             ));
-        });
+        })
+        .id()
+}
+
+#[derive(Component)]
+pub struct BackButton;
+
+fn process_back_buttons(
+    mut events: EventReader<NavEvent>,
+    mut nav_requests: EventWriter<NavRequest>,
+
+    back_buttons: Query<(), With<BackButton>>,
+) {
+    for event in events.iter() {
+        if let NavEvent::NoChanges { from, request } = event {
+            if matches!(request, NavRequest::Action) && back_buttons.contains(*from.first()) {
+                nav_requests.send(NavRequest::Cancel);
+            }
+        }
+    }
+}
+
+pub fn setup_submenu<Menu: Component, Marker: Component + Clone>(app: &mut App) {
+    fn hide_when_unfocused<Menu: Component, Marker: Component + Clone>(
+        menu_items: Query<(), With<Marker>>,
+        mut menu_styles: Query<&mut Style, With<Menu>>,
+        mut removed: RemovedComponents<Focused>,
+    ) {
+        for removal in removed.iter() {
+            if menu_items.contains(removal) {
+                for mut menu_style in menu_styles.iter_mut() {
+                    menu_style.display = Display::None;
+                }
+            }
+        }
+    }
+    fn show_when_focused<Menu: Component, Marker: Component + Clone>(
+        menu_items: Query<(), (Added<Focused>, With<Marker>)>,
+        mut menu_styles: Query<&mut Style, With<Menu>>,
+    ) {
+        if menu_items.get_single().is_ok() {
+            for mut menu_style in menu_styles.iter_mut() {
+                menu_style.display = Display::Flex;
+            }
+        }
+    }
+
+    app.add_plugins(NavMarkerPropagationPlugin::<Marker>::new());
+    app.add_systems(
+        Update,
+        (
+            hide_when_unfocused::<Menu, Marker>.after(NavRequestSystem),
+            show_when_focused::<Menu, Marker>
+                .after(hide_when_unfocused::<Menu, Marker>)
+                .after(NavRequestSystem),
+        ),
+    );
 }

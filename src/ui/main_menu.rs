@@ -6,16 +6,20 @@ use crate::{
     AppState,
 };
 
-use super::spawn_button;
+use super::{settings_menu, setup_submenu, spawn_button, spawn_prioritized_button};
 use anyhow::Result;
 use bevy::prelude::*;
 use bevy_ui_navigation::{
+    menu::{MenuBuilder, MenuSetting, NavMarker},
     prelude::{NavEvent, NavRequest},
     NavRequestSystem,
 };
 
 #[derive(Component)]
 struct MainMenu;
+
+#[derive(Component, Clone)]
+struct MainMenuMarker;
 
 #[derive(Component)]
 struct SinglePlayerButton;
@@ -27,7 +31,9 @@ struct SettingsButton;
 struct QuitButton;
 
 fn spawn(mut commands: Commands) {
-    commands.spawn((Camera2dBundle::default(), MainMenu));
+    commands.spawn((Camera2dBundle::default(), MenuSetting::default()));
+
+    let mut settings_button_entity = Entity::PLACEHOLDER;
 
     commands
         .spawn((
@@ -44,6 +50,9 @@ fn spawn(mut commands: Commands) {
                 },
                 ..Default::default()
             },
+            MenuSetting::new(),
+            MenuBuilder::Root,
+            NavMarker(MainMenuMarker),
             MainMenu,
         ))
         .with_children(|commands| {
@@ -71,13 +80,15 @@ fn spawn(mut commands: Commands) {
                 ..Default::default()
             });
 
-            spawn_button(commands, "Single Player", SinglePlayerButton);
-            spawn_button(commands, "Settings", SettingsButton);
+            spawn_prioritized_button(commands, "Single Player", SinglePlayerButton);
+            settings_button_entity = spawn_button(commands, "Settings", SettingsButton);
             spawn_button(commands, "Quit", QuitButton);
         });
+
+    settings_menu::spawn(commands, settings_button_entity);
 }
 
-fn despawn(mut commands: Commands, main_menu: Query<Entity, With<MainMenu>>) {
+fn despawn(mut commands: Commands, main_menu: Query<Entity, With<MenuSetting>>) {
     for menu in main_menu.iter() {
         if let Some(menu) = commands.get_entity(menu) {
             menu.despawn_recursive();
@@ -122,11 +133,13 @@ fn handle_selections(
 pub fn setup(app: &mut App) {
     app.add_systems(OnEnter(AppState::MainMenu), spawn);
     app.add_systems(OnExit(AppState::MainMenu), despawn);
+
+    setup_submenu::<MainMenu, MainMenuMarker>(app);
     app.add_systems(
         Update,
-        handle_selections
+        (handle_selections
             .pipe(error_handler)
             .after(NavRequestSystem)
-            .run_if(in_state(AppState::MainMenu)),
+            .run_if(in_state(AppState::MainMenu)),),
     );
 }

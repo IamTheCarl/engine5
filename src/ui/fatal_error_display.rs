@@ -1,4 +1,4 @@
-use crate::AppState;
+use crate::{ui::spawn_prioritized_button, AppState};
 
 use super::{spawn_button, Clipboard};
 use bevy::prelude::*;
@@ -100,7 +100,7 @@ fn spawn(mut commands: Commands, error_context: Option<Res<ErrorContext>>) {
             });
 
             spawn_button(commands, "Quit", QuitButton);
-            spawn_button(commands, "Copy error to Clipboard", CopyButton);
+            spawn_prioritized_button(commands, "Copy error to Clipboard", CopyButton);
         });
 }
 

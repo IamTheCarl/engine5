@@ -7,7 +7,7 @@ use bevy::{
     utils::HashSet,
     window::{CursorGrabMode, PrimaryWindow, WindowMode},
 };
-use bevy_ui_navigation::systems::InputMapping;
+use bevy_ui_navigation::{systems::InputMapping, NavRequestSystem};
 use ordered_float::NotNan;
 use serde::{Deserialize, Serialize};
 
@@ -37,6 +37,7 @@ pub enum RealAnalogInput {
         scale: NotNan<f32>,
     },
 }
+
 #[derive(Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
 pub enum Button {
     RealButton {
@@ -72,6 +73,7 @@ impl AxisSet {
 }
 
 #[derive(Resource, Serialize, Deserialize, Debug)]
+#[serde(default)]
 pub struct InputMap {
     horizontal_movement: AxisSet,
     look_movement: AxisSet,
@@ -508,53 +510,34 @@ fn update_inputs(
 
     input_state.look_movement = input_map.look_movement.read(frame);
 
-    input_state.jumping = if input_map.jumping.is_pressed(frame) {
-        if input_state.jumping == ButtonState::Held
-            || input_state.jumping == ButtonState::JustPressed
-        {
-            ButtonState::Held
+    fn update_button_state(
+        frame: InputFrame,
+        button_state: &mut ButtonState,
+        button_mapping: &HashSet<Button>,
+    ) {
+        *button_state = if button_mapping.is_pressed(frame) {
+            if *button_state == ButtonState::Held || *button_state == ButtonState::JustPressed {
+                ButtonState::Held
+            } else {
+                ButtonState::JustPressed
+            }
         } else {
-            ButtonState::JustPressed
-        }
-    } else {
-        ButtonState::Released
-    };
-
-    input_state.crouching = if input_map.crouching.is_pressed(frame) {
-        if input_state.crouching == ButtonState::Held
-            || input_state.crouching == ButtonState::JustPressed
-        {
-            ButtonState::Held
-        } else {
-            ButtonState::JustPressed
-        }
-    } else {
-        ButtonState::Released
-    };
-
-    input_state.primary_fire = if input_map.primary_fire.is_pressed(frame) {
-        if input_state.primary_fire == ButtonState::Held
-            || input_state.primary_fire == ButtonState::JustPressed
-        {
-            ButtonState::Held
-        } else {
-            ButtonState::JustPressed
-        }
-    } else {
-        ButtonState::Released
-    };
-
-    input_state.secondary_fire = if input_map.secondary_fire.is_pressed(frame) {
-        if input_state.secondary_fire == ButtonState::Held
-            || input_state.secondary_fire == ButtonState::JustPressed
-        {
-            ButtonState::Held
-        } else {
-            ButtonState::JustPressed
-        }
-    } else {
-        ButtonState::Released
+            ButtonState::Released
+        };
     }
+
+    update_button_state(frame, &mut input_state.jumping, &input_map.jumping);
+    update_button_state(frame, &mut input_state.crouching, &input_map.crouching);
+    update_button_state(
+        frame,
+        &mut input_state.primary_fire,
+        &input_map.primary_fire,
+    );
+    update_button_state(
+        frame,
+        &mut input_state.secondary_fire,
+        &input_map.secondary_fire,
+    );
 }
 
 fn detect_gamepads(mut ui_input_mapping: ResMut<InputMapping>, gamepads: Res<Gamepads>) {

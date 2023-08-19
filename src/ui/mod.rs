@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bevy::{ecs::system::EntityCommands, prelude::*, utils::synccell::SyncCell};
+use bevy::{prelude::*, utils::synccell::SyncCell};
 use bevy_ui_navigation::{prelude::*, NavMarkerPropagationPlugin};
 use copypasta::{ClipboardContext, ClipboardProvider};
 
@@ -7,6 +7,7 @@ mod fatal_error_display;
 mod main_menu;
 mod pause_menu;
 mod settings_menu;
+pub mod widgets;
 
 pub use fatal_error_display::ErrorContext;
 
@@ -17,15 +18,10 @@ pub struct UserInterface;
 
 impl Plugin for UserInterface {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            (
-                button_system.after(NavRequestSystem),
-                process_back_buttons.after(NavRequestSystem),
-            ),
-        );
-
         app.add_systems(Startup, setup_clipboard.pipe(error_handler));
+        app.add_plugins(NavMarkerPropagationPlugin::<OverlayMenu>::new());
+
+        widgets::setup(app);
 
         main_menu::setup(app);
         fatal_error_display::setup(app);
@@ -66,96 +62,22 @@ fn setup_clipboard(mut commands: Commands) -> Result<()> {
     Ok(())
 }
 
-fn button_system(
-    mut interaction_query: Query<(&Focusable, &mut BackgroundColor), Changed<Focusable>>,
-) {
-    for (focusable, mut material) in interaction_query.iter_mut() {
-        if let FocusState::Focused = focusable.state() {
-            *material = Color::ORANGE_RED.into();
-        } else {
-            *material = Color::DARK_GRAY.into();
-        }
-    }
-}
-
-fn spawn_button<'w, 's, 'a, L: Component>(
-    commands: &'a mut Commands<'w, 's>,
-    text: impl Into<String>,
-    label: L,
-) -> EntityCommands<'w, 's, 'a> {
-    spawn_button_raw::<L>(commands, Focusable::new(), text, label)
-}
-
-fn spawn_prioritized_button<'w, 's, 'a, L: Component>(
-    commands: &'a mut Commands<'w, 's>,
-    text: impl Into<String>,
-    label: L,
-) -> EntityCommands<'w, 's, 'a> {
-    spawn_button_raw::<L>(commands, Focusable::new().prioritized(), text, label)
-}
-
-fn spawn_button_raw<'w, 's, 'a, L: Component>(
-    commands: &'a mut Commands<'w, 's>,
-    focus: Focusable,
-    text: impl Into<String>,
-    label: L,
-) -> EntityCommands<'w, 's, 'a> {
-    let mut entity_commands = commands.spawn((
-        ButtonBundle {
-            style: Style {
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                width: Val::Percent(100.0),
-                ..Default::default()
-            },
-            background_color: Color::DARK_GRAY.into(),
-            ..Default::default()
-        },
-        focus,
-        label,
-    ));
-    entity_commands.with_children(|parent| {
-        parent.spawn(TextBundle::from_section(
-            text,
-            TextStyle {
-                font_size: 40.0,
-                color: Color::WHITE,
-                ..Default::default()
-            },
-        ));
-    });
-
-    entity_commands
-}
-
-#[derive(Component)]
-pub struct BackButton;
-
-fn process_back_buttons(
-    mut events: EventReader<NavEvent>,
-    mut nav_requests: EventWriter<NavRequest>,
-
-    back_buttons: Query<(), With<BackButton>>,
-) {
-    for event in events.iter() {
-        if let NavEvent::NoChanges { from, request } = event {
-            if matches!(request, NavRequest::Action) && back_buttons.contains(*from.first()) {
-                nav_requests.send(NavRequest::Cancel);
-            }
-        }
-    }
-}
+#[derive(Component, Clone)]
+pub struct OverlayMenu;
 
 pub fn setup_submenu<Menu: Component, Marker: Component + Clone>(app: &mut App) {
     fn hide_when_unfocused<Menu: Component, Marker: Component + Clone>(
         menu_items: Query<(), With<Marker>>,
+        overlay_menus: Query<(), (Added<Focused>, With<OverlayMenu>)>,
         mut menu_styles: Query<&mut Style, With<Menu>>,
         mut removed: RemovedComponents<Focused>,
     ) {
-        for removal in removed.iter() {
-            if menu_items.contains(removal) {
-                for mut menu_style in menu_styles.iter_mut() {
-                    menu_style.display = Display::None;
+        if overlay_menus.is_empty() {
+            for removal in removed.iter() {
+                if menu_items.contains(removal) {
+                    for mut menu_style in menu_styles.iter_mut() {
+                        menu_style.display = Display::None;
+                    }
                 }
             }
         }

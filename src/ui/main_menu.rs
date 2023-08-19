@@ -6,7 +6,10 @@ use crate::{
     AppState,
 };
 
-use super::{settings_menu, setup_submenu, spawn_button, spawn_prioritized_button};
+use super::{
+    settings_menu, setup_submenu,
+    widgets::{spawn_button, spawn_prioritized_button},
+};
 use anyhow::Result;
 use bevy::prelude::*;
 use bevy_ui_navigation::{
@@ -87,7 +90,7 @@ fn spawn(mut commands: Commands) {
         .id();
     spawn_button(&mut commands, "Quit", QuitButton).set_parent(menu_entity);
 
-    settings_menu::spawn(commands, settings_button_entity);
+    settings_menu::spawn(&mut commands, settings_button_entity);
 }
 
 fn despawn(mut commands: Commands, main_menu: Query<Entity, With<MenuSetting>>) {

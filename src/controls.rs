@@ -5,7 +5,7 @@ use bevy::{
     input::mouse,
     prelude::*,
     utils::HashSet,
-    window::{CursorGrabMode, PrimaryWindow, WindowMode},
+    window::{CursorGrabMode, PrimaryWindow},
 };
 use bevy_ui_navigation::{systems::InputMapping, NavRequestSystem};
 use ordered_float::NotNan;
@@ -409,20 +409,6 @@ pub struct InputState {
     pub secondary_fire: ButtonState,
 }
 
-/// A system to process dedicated keys that cannot be re-bound on the PC.
-fn dedicated_keys(keys: Res<Input<KeyCode>>, mut windows: Query<&mut Window, With<PrimaryWindow>>) {
-    if let Ok(mut window) = windows.get_single_mut() {
-        if keys.just_pressed(KeyCode::F11) {
-            window.mode = match window.mode {
-                WindowMode::Windowed => WindowMode::Fullscreen,
-                WindowMode::BorderlessFullscreen => WindowMode::Windowed,
-                WindowMode::SizedFullscreen => WindowMode::Windowed,
-                WindowMode::Fullscreen => WindowMode::Windowed,
-            };
-        }
-    }
-}
-
 fn initial_grab_cursor(mut windows: Query<&mut Window, With<PrimaryWindow>>) {
     if let Ok(mut window) = windows.get_single_mut() {
         window.cursor.grab_mode = CursorGrabMode::Confined;
@@ -617,7 +603,6 @@ impl Plugin for PlayerControls {
         app.add_systems(
             Update,
             (
-                dedicated_keys,
                 detect_gamepads,
                 update_inputs.run_if(in_state(AppState::InGame)),
             ),

@@ -1,6 +1,9 @@
 use crate::{error_handler, world::WorldState, AppState};
 
-use super::{settings_menu, setup_submenu, spawn_button, spawn_prioritized_button};
+use super::{
+    settings_menu, setup_submenu,
+    widgets::{spawn_button, spawn_prioritized_button},
+};
 use anyhow::Result;
 use bevy::prelude::*;
 use bevy_ui_navigation::{
@@ -75,7 +78,7 @@ fn spawn(mut commands: Commands) {
     spawn_button(&mut commands, "Quit to main menu", QuitToMainMenuButton).set_parent(menu_entity);
     spawn_button(&mut commands, "Quit to desktop", QuitToDesktopButton).set_parent(menu_entity);
 
-    settings_menu::spawn(commands, settings_button_entity);
+    settings_menu::spawn(&mut commands, settings_button_entity);
 }
 
 fn despawn(mut commands: Commands, main_menu: Query<Entity, With<MenuSetting>>) {

@@ -1,6 +1,11 @@
-use crate::{ui::spawn_prioritized_button, AppState};
+use crate::{
+    ui::{
+        widgets::{spawn_button, spawn_prioritized_button},
+        Clipboard,
+    },
+    AppState,
+};
 
-use super::{spawn_button, Clipboard};
 use bevy::prelude::*;
 use bevy_ui_navigation::{
     prelude::{NavEvent, NavRequest},

@@ -1,7 +1,13 @@
-use bevy::prelude::*;
+use bevy::{
+    prelude::*,
+    window::{PrimaryWindow, WindowMode},
+};
 use bevy_ui_navigation::menu::{MenuBuilder, MenuSetting, NavMarker};
 
-use super::{setup_submenu, spawn_button, BackButton};
+use crate::ui::{
+    setup_submenu,
+    widgets::{spawn_button, spawn_combo, BackButton, Combo},
+};
 
 #[derive(Component)]
 struct GraphicsSettingsMenu;
@@ -9,7 +15,7 @@ struct GraphicsSettingsMenu;
 #[derive(Component, Clone)]
 struct GraphicsSettingsMenuMarker;
 
-pub fn spawn(mut commands: Commands, parent: Entity) {
+pub fn spawn(commands: &mut Commands, parent: Entity) {
     let menu_entity = commands
         .spawn((
             NodeBundle {
@@ -32,7 +38,7 @@ pub fn spawn(mut commands: Commands, parent: Entity) {
         ))
         .with_children(|commands| {
             commands.spawn(TextBundle::from_section(
-                "Settings",
+                "Graphics Settings",
                 TextStyle {
                     font_size: 60.0,
                     color: Color::WHITE,
@@ -49,9 +55,81 @@ pub fn spawn(mut commands: Commands, parent: Entity) {
         })
         .id();
 
-    spawn_button(&mut commands, "Back", BackButton).set_parent(menu_entity);
+    spawn_combo(
+        commands,
+        FullscreenModeSetting,
+        "Fullscreen Mode",
+        1,
+        ["disabled", "enabled"],
+    )
+    .set_parent(menu_entity);
+    spawn_combo(commands, (), "Start in Fullscreen Mode", 0, ["no", "yes"]).set_parent(menu_entity);
+    spawn_button(commands, "Back", BackButton).set_parent(menu_entity);
+}
+
+#[derive(Component)]
+struct FullscreenModeSetting;
+
+fn fullscreen_toggle(
+    keys: Res<Input<KeyCode>>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
+    mut fullscreen_combos: Query<&mut Combo, With<FullscreenModeSetting>>,
+) {
+    if let Ok(mut window) = windows.get_single_mut() {
+        if keys.just_pressed(KeyCode::F11) {
+            let go_fullscreen = matches!(window.mode, WindowMode::Windowed);
+
+            for mut combo in fullscreen_combos.iter_mut() {
+                combo.selection = if go_fullscreen { 1 } else { 0 };
+            }
+
+            window.mode = if go_fullscreen {
+                WindowMode::Fullscreen
+            } else {
+                WindowMode::Windowed
+            };
+        }
+    }
+}
+
+fn initalize_fullscreen_combo(
+    mut combos: Query<&mut Combo, Added<FullscreenModeSetting>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+) {
+    if let Ok(window) = windows.get_single() {
+        for mut combo in combos.iter_mut() {
+            combo.selection = if matches!(window.mode, WindowMode::Windowed) {
+                0
+            } else {
+                1
+            };
+        }
+    }
+}
+
+fn fullscreen_combo_selection_handler(
+    combos: Query<&Combo, (Changed<Combo>, With<FullscreenModeSetting>)>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
+) {
+    if let Ok(mut window) = windows.get_single_mut() {
+        if let Ok(combo) = combos.get_single() {
+            window.mode = match combo.selection {
+                1 => WindowMode::Fullscreen,
+                _ => WindowMode::Windowed,
+            };
+        }
+    }
 }
 
 pub fn setup(app: &mut App) {
     setup_submenu::<GraphicsSettingsMenu, GraphicsSettingsMenuMarker>(app);
+
+    app.add_systems(
+        Update,
+        (
+            fullscreen_toggle,
+            initalize_fullscreen_combo,
+            fullscreen_combo_selection_handler,
+        ),
+    );
 }

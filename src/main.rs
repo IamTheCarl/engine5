@@ -28,7 +28,6 @@ fn main() {
                     exit_condition: ExitCondition::DontExit, // We handle the exit ourselves.
                     ..default()
                 }),
-            DefaultNavigationPlugins,
             Engine5::new(),
         ))
         .run();
@@ -63,6 +62,7 @@ impl Plugin for Engine5 {
             world::WorldPlugin,
             DebugLinesPlugin::default(),
             controls::PlayerControls,
+            DefaultNavigationPlugins,
             ui::UserInterface,
         ));
 

@@ -1,3 +1,8 @@
+//! Combos allow the user to select one item from a list of items.
+//! Examples of this include:
+//! * Boolean True/False, Yes/No, Enabled/Disabled
+//! * Multiple Choice A, B, C, or D
+
 use crate::ui::{widgets::spawn_button, OverlayMenu};
 use bevy::{ecs::system::EntityCommands, prelude::*};
 use bevy_ui_navigation::{

@@ -1,3 +1,5 @@
+//! Buttons are a single input the player can select to trigger an event, such as moving to a new menu, resuming the game, extiting to desktop, etc.
+
 use bevy::{ecs::system::EntityCommands, prelude::*};
 use bevy_ui_navigation::{
     prelude::{FocusState, Focusable, NavEvent, NavRequest},

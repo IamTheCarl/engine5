@@ -555,13 +555,13 @@ fn update_ui_input_map(input_map: Res<InputMap>, mut ui_input_mapping: ResMut<In
     if let Some(key_code) =
         get_first_keyboard_key(&input_map.horizontal_movement.x, |scale| scale < 0.0)
     {
-        ui_input_mapping.key_right = key_code;
+        ui_input_mapping.key_left = key_code;
     }
 
     if let Some(key_code) =
         get_first_keyboard_key(&input_map.horizontal_movement.x, |scale| scale > 0.0)
     {
-        ui_input_mapping.key_left = key_code;
+        ui_input_mapping.key_right = key_code;
     }
 
     if let Some(key_code) =

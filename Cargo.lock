@@ -1459,6 +1459,7 @@ dependencies = [
  "ciborium",
  "copypasta",
  "log",
+ "nom",
  "ordered-float",
  "serde",
  "serde_yaml",

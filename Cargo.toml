@@ -20,6 +20,7 @@ ciborium = "0.2.1"
 serde_yaml = "0.9.25"
 bevy-ui-navigation = "0.28.0"
 copypasta = "0.8.2"
+nom = "7.1"
 
 [features]
 default = ["fast-compile"]

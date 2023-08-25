@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use crate::{
-    error_handler, file_paths,
+    config::file_paths,
+    error_handler,
     world::{self, terrain::BlockRegistry, WorldState},
     AppState,
 };

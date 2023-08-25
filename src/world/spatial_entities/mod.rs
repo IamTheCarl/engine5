@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use bevy_prototype_debug_lines::DebugLines;
 
-use crate::DebugRenderSettings;
+use crate::config::graphics::DebugRenderSettings;
 
 use super::{
     physics::Position,

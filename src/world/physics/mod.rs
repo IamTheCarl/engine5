@@ -1,4 +1,4 @@
-use crate::{world::terrain::LoadTerrain, AppState, DebugRenderSettings};
+use crate::{config::graphics::DebugRenderSettings, world::terrain::LoadTerrain, AppState};
 use bevy::{prelude::*, render::render_resource::PrimitiveTopology};
 use ordered_float::NotNan;
 use serde::{Deserialize, Serialize};

@@ -11,7 +11,8 @@ use bevy_ui_navigation::{systems::InputMapping, NavRequestSystem};
 use ordered_float::NotNan;
 use serde::{Deserialize, Serialize};
 
-use crate::{file_paths::CONFIG_DIRECTORY, world::WorldState, AppState};
+use super::file_paths::CONFIG_DIRECTORY;
+use crate::{world::WorldState, AppState};
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
 pub enum RealButton {

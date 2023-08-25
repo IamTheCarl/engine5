@@ -1,4 +1,3 @@
-use anyhow::Result;
 use bevy::{app::AppExit, asset::ChangeWatcher, prelude::*, window::ExitCondition};
 use bevy_prototype_debug_lines::DebugLinesPlugin;
 use bevy_ui_navigation::DefaultNavigationPlugins;
@@ -6,8 +5,7 @@ use std::time::Duration;
 
 use crate::ui::ErrorContext;
 
-pub mod controls;
-pub mod file_paths;
+pub mod config;
 mod ui;
 pub mod world;
 
@@ -54,14 +52,15 @@ impl Engine5 {
 impl Plugin for Engine5 {
     fn build(&self, app: &mut App) {
         // I wait until here to do this so that at least the log should be working.
-        file_paths::create_folders();
+        config::file_paths::create_folders();
 
         app.add_state::<AppState>();
 
         app.add_plugins((
             world::WorldPlugin,
             DebugLinesPlugin::default(),
-            controls::PlayerControls,
+            config::controls::PlayerControls,
+            config::graphics::GraphicsConfigPlugin,
             DefaultNavigationPlugins,
             ui::UserInterface,
         ));
@@ -69,7 +68,6 @@ impl Plugin for Engine5 {
         app.add_systems(PostUpdate, exit_on_all_windows_closed);
 
         app.configure_set(Update, Engine5);
-        app.add_systems(Startup, setup.pipe(error_handler).in_set(Engine5));
 
         app.add_systems(
             Startup,
@@ -84,20 +82,6 @@ impl Plugin for Engine5 {
             |mut exit_event: EventWriter<AppExit>| exit_event.send(AppExit),
         );
     }
-}
-
-fn setup(mut commands: Commands) -> Result<()> {
-    // TODO make this accessible from a menu or terminal.
-    commands.insert_resource(DebugRenderSettings {
-        cylinders: true,
-        cylinder_terrain_checks: false,
-        hashing_center_point: false,
-        cylinder_cylinder_checks: false,
-        terrain_terrain_checks: false,
-        terrain_ray_casts: false,
-    });
-
-    Ok(())
 }
 
 // Reworked from the original in Bevy to
@@ -121,14 +105,4 @@ pub fn error_handler(
         commands.insert_resource(ErrorContext { error });
         next_state.set(AppState::FatalError);
     }
-}
-
-#[derive(Resource, Reflect)]
-pub struct DebugRenderSettings {
-    cylinders: bool,
-    cylinder_terrain_checks: bool,
-    hashing_center_point: bool,
-    cylinder_cylinder_checks: bool,
-    terrain_terrain_checks: bool,
-    terrain_ray_casts: bool,
 }

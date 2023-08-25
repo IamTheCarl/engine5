@@ -1,6 +1,3 @@
-use std::path::Path;
-
-use anyhow::{Context, Result};
 use bevy::{
     input::mouse,
     prelude::*,
@@ -11,7 +8,7 @@ use bevy_ui_navigation::{systems::InputMapping, NavRequestSystem};
 use ordered_float::NotNan;
 use serde::{Deserialize, Serialize};
 
-use super::file_paths::CONFIG_DIRECTORY;
+use super::Config;
 use crate::{world::WorldState, AppState};
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
@@ -84,47 +81,8 @@ pub struct InputMap {
     secondary_fire: HashSet<Button>,
 }
 
-impl InputMap {
-    const CONFIG_FILE: &str = "input_map.yaml";
-
-    fn load() -> Result<Self> {
-        let input_map =
-            std::fs::read_to_string(Path::new(CONFIG_DIRECTORY).join(Self::CONFIG_FILE))
-                .context("Failed to open config file")?;
-
-        let input_map: Self =
-            serde_yaml::from_str(&input_map).context("Failed to deserialize input map.")?;
-
-        Ok(input_map)
-    }
-
-    fn save(&self) -> Result<()> {
-        let input_map = serde_yaml::to_string(self).context("Failed to serialize input map.")?;
-        std::fs::write(
-            Path::new(CONFIG_DIRECTORY).join(Self::CONFIG_FILE),
-            input_map,
-        )
-        .context("Failed to write input map to file.")?;
-
-        Ok(())
-    }
-
-    fn load_or_default() -> Self {
-        match Self::load() {
-            Ok(map) => map,
-            Err(error) => {
-                log::error!("Failed to load input mapping: {:?}", error);
-                log::info!("A new input map will be saved, overwriting the old one if present.");
-                let map = Self::default();
-
-                if let Err(error) = map.save() {
-                    log::error!("Failed to save input map: {:?}", error);
-                }
-
-                map
-            }
-        }
-    }
+impl Config for InputMap {
+    const CONFIG_FILE: &'static str = "input_map.yaml";
 }
 
 impl Default for InputMap {

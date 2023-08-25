@@ -6,7 +6,9 @@ use bevy_ui_navigation::menu::{MenuBuilder, MenuSetting, NavMarker};
 
 use crate::ui::{
     setup_submenu,
-    widgets::{spawn_button, spawn_combo, spawn_numaric_input, BackButton, Combo, Sign},
+    widgets::{
+        spawn_button, spawn_combo, spawn_numaric_input, BackButton, Combo, NumaricInput, RangeLimit,
+    },
 };
 
 #[derive(Component)]
@@ -68,10 +70,10 @@ pub fn spawn(commands: &mut Commands, parent: Entity) {
         commands,
         "View Distance",
         "chunks",
-        Some(Sign::Posative),
-        vec![1, 0],
-        vec![0, 0],
+        false,
+        NumaricInput::new::<2, 0>(10, 0).unwrap(),
     )
+    .insert(RangeLimit::new(NumaricInput::new::<2, 0>(8, 0).unwrap()..))
     .set_parent(menu_entity);
     spawn_button(commands, "Back", BackButton).set_parent(menu_entity);
 }

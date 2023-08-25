@@ -1,6 +1,7 @@
 //! Numeric inputs enable the user to input numbers.
 //! Numbers can be unsigned integers, integers, positive floating point numbers, or real floating point numbers.
 
+use anyhow::{anyhow, Result};
 use bevy::{ecs::system::EntityCommands, input::mouse::MouseWheel, prelude::*};
 use bevy_ui_navigation::{
     menu::NavMarker,
@@ -32,15 +33,313 @@ impl std::fmt::Display for Sign {
     }
 }
 
-#[derive(Debug, Component, Eq, PartialEq)]
+#[derive(Debug, Clone, Component)]
 pub struct NumaricInput {
     /// The sign of the value, can be positive or negative.
     /// Is ignored when converting to unsigned integers.
     sign: Sign,
 
     // Starts with least significant value, ends with most significant value.
-    value_integer: Vec<u8>,
-    value_fractional: Vec<u8>,
+    integer: Vec<u8>,
+    fractional: Vec<u8>,
+}
+
+impl NumaricInput {
+    pub fn new<const INTEGER_DIGITS: usize, const FRACTIONAL_DIGITS: usize>(
+        integer: isize,
+        fractional: usize,
+    ) -> Result<Self> {
+        use nobcd::BcdNumber;
+
+        fn nibble_iterator(byte: &u8) -> std::iter::FromFn<impl FnMut() -> Option<u8>> {
+            enum State {
+                First,
+                Second,
+                Done,
+            }
+
+            let first_nibble = (*byte >> 4) & 0x0F;
+            let second_nibble = *byte & 0x0F;
+            let mut state = State::First;
+
+            std::iter::from_fn(move || match state {
+                State::First => {
+                    state = State::Second;
+                    Some(first_nibble)
+                }
+                State::Second => {
+                    state = State::Done;
+                    Some(second_nibble)
+                }
+                State::Done => None,
+            })
+        }
+
+        let sign = if integer >= 0 {
+            Sign::Posative
+        } else {
+            Sign::Negative
+        };
+
+        let bcd = BcdNumber::<INTEGER_DIGITS>::new(integer.unsigned_abs())
+            .map_err(|_error| anyhow!("Failed to encode integer to BCD."))?;
+        let value_integer = bcd
+            .bcd_bytes()
+            .iter()
+            .flat_map(nibble_iterator)
+            .skip(INTEGER_DIGITS)
+            .collect();
+
+        let bcd = BcdNumber::<FRACTIONAL_DIGITS>::new(fractional)
+            .map_err(|_error| anyhow!("Failed to encode fraction to BCD."))?;
+        let value_fractional = bcd
+            .bcd_bytes()
+            .iter()
+            .flat_map(nibble_iterator)
+            .skip(FRACTIONAL_DIGITS)
+            .collect();
+
+        Ok(Self {
+            sign,
+            integer: value_integer,
+            fractional: value_fractional,
+        })
+    }
+
+    fn is_zero(&self) -> bool {
+        for digit in self.integer.iter() {
+            if *digit != 0 {
+                return false;
+            }
+        }
+
+        for digit in self.fractional.iter() {
+            if *digit != 0 {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn copy(&mut self, other: &Self) {
+        self.integer.iter_mut().for_each(|value| *value = 0);
+        self.integer
+            .iter_mut()
+            .rev()
+            .zip(other.integer.iter().rev())
+            .for_each(|(ours, theirs)| *ours = *theirs);
+
+        self.fractional.iter_mut().for_each(|value| *value = 0);
+        self.fractional
+            .iter_mut()
+            .zip(other.fractional.iter())
+            .for_each(|(ours, theirs)| *ours = *theirs);
+    }
+}
+
+impl std::cmp::Eq for NumaricInput {}
+
+impl std::cmp::PartialEq for NumaricInput {
+    fn eq(&self, other: &Self) -> bool {
+        matches!(self.cmp(other), std::cmp::Ordering::Equal)
+    }
+}
+
+impl std::cmp::Ord for NumaricInput {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+
+        fn compare_digits(
+            ours: impl Iterator<Item = u8>,
+            theirs: impl Iterator<Item = u8>,
+        ) -> Ordering {
+            for (ours, theirs) in ours.zip(theirs) {
+                let cmp = ours.cmp(&theirs);
+
+                match cmp {
+                    // One of them has an order of magnitude on the other.
+                    Ordering::Less | Ordering::Greater => return cmp,
+                    Ordering::Equal => {
+                        // Continue to the next most significant number.
+                    }
+                }
+            }
+
+            // They're all equal.
+            Ordering::Equal
+        }
+
+        fn compare_integer_slices(ours: &[u8], theirs: &[u8]) -> Ordering {
+            let max_length = ours.len().max(theirs.len());
+            let ours = std::iter::repeat(0u8)
+                .take(max_length - ours.len())
+                .chain(ours.iter().copied());
+
+            let theirs = std::iter::repeat(0u8)
+                .take(max_length - theirs.len())
+                .chain(theirs.iter().copied());
+
+            compare_digits(ours, theirs)
+        }
+
+        fn compare_fractional_slices(ours: &[u8], theirs: &[u8]) -> Ordering {
+            let max_length = ours.len().max(theirs.len());
+            let ours = ours
+                .iter()
+                .copied()
+                .chain(std::iter::repeat(0u8).take(max_length - ours.len()));
+
+            let theirs = theirs
+                .iter()
+                .copied()
+                .chain(std::iter::repeat(0u8).take(max_length - theirs.len()));
+
+            compare_digits(ours, theirs)
+        }
+
+        if self.sign == other.sign {
+            // How does the integer part compare?
+            let integer_cmp = compare_integer_slices(&self.integer, &other.integer);
+
+            match integer_cmp {
+                Ordering::Less | Ordering::Greater => integer_cmp,
+                Ordering::Equal => {
+                    // Use the fractional part as a tie breaker.
+                    compare_fractional_slices(&self.fractional, &other.fractional)
+                }
+            }
+        } else if self.is_zero() && other.is_zero() {
+            Ordering::Equal
+        } else {
+            if self.sign == Sign::Posative {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            }
+        }
+    }
+}
+impl std::cmp::PartialOrd for NumaricInput {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+#[test]
+fn compare_numaric_inputs() {
+    assert_eq!(
+        NumaricInput {
+            sign: Sign::Posative,
+            integer: vec![0],
+            fractional: vec![]
+        },
+        NumaricInput {
+            sign: Sign::Posative,
+            integer: vec![0],
+            fractional: vec![]
+        }
+    );
+
+    assert_eq!(
+        NumaricInput {
+            sign: Sign::Posative,
+            integer: vec![0, 0],
+            fractional: vec![]
+        },
+        NumaricInput {
+            sign: Sign::Posative,
+            integer: vec![0],
+            fractional: vec![]
+        }
+    );
+
+    assert_eq!(
+        NumaricInput {
+            sign: Sign::Posative,
+            integer: vec![0, 0],
+            fractional: vec![0, 0]
+        },
+        NumaricInput {
+            sign: Sign::Posative,
+            integer: vec![0],
+            fractional: vec![]
+        }
+    );
+
+    assert!(
+        NumaricInput {
+            sign: Sign::Posative,
+            integer: vec![1],
+            fractional: vec![]
+        } > NumaricInput {
+            sign: Sign::Posative,
+            integer: vec![0],
+            fractional: vec![]
+        }
+    );
+
+    assert_eq!(
+        NumaricInput {
+            sign: Sign::Posative,
+            integer: vec![0],
+            fractional: vec![]
+        },
+        NumaricInput {
+            sign: Sign::Negative,
+            integer: vec![0],
+            fractional: vec![]
+        }
+    );
+
+    assert!(
+        NumaricInput {
+            sign: Sign::Posative,
+            integer: vec![1],
+            fractional: vec![]
+        } > NumaricInput {
+            sign: Sign::Negative,
+            integer: vec![1],
+            fractional: vec![]
+        }
+    );
+
+    assert!(
+        NumaricInput {
+            sign: Sign::Posative,
+            integer: vec![1, 0],
+            fractional: vec![]
+        } > NumaricInput {
+            sign: Sign::Negative,
+            integer: vec![3, 0],
+            fractional: vec![]
+        }
+    );
+
+    assert_eq!(
+        NumaricInput {
+            sign: Sign::Posative,
+            integer: vec![1],
+            fractional: vec![]
+        },
+        NumaricInput {
+            sign: Sign::Posative,
+            integer: vec![1],
+            fractional: vec![0]
+        }
+    );
+
+    assert!(
+        NumaricInput {
+            sign: Sign::Posative,
+            integer: vec![1, 0],
+            fractional: vec![1]
+        } > NumaricInput {
+            sign: Sign::Negative,
+            integer: vec![1, 0],
+            fractional: vec![]
+        }
+    );
 }
 
 impl ToString for NumaricInput {
@@ -51,7 +350,7 @@ impl ToString for NumaricInput {
             value += "-";
         }
 
-        let mut integer_iterator = self.value_integer.iter().peekable();
+        let mut integer_iterator = self.integer.iter().peekable();
 
         while integer_iterator.peek() == Some(&&0u8) {
             integer_iterator.next();
@@ -65,10 +364,10 @@ impl ToString for NumaricInput {
             }
         }
 
-        if !self.value_fractional.is_empty() {
+        if !self.fractional.is_empty() {
             write!(&mut value, ".").ok();
 
-            for digit in self.value_fractional.iter() {
+            for digit in self.fractional.iter() {
                 write!(&mut value, "{:01}", digit).ok();
             }
         }
@@ -82,8 +381,8 @@ fn string_formatting() {
     assert_eq!(
         NumaricInput {
             sign: Sign::Posative,
-            value_integer: vec![0],
-            value_fractional: vec![]
+            integer: vec![0],
+            fractional: vec![]
         }
         .to_string(),
         "0"
@@ -92,8 +391,8 @@ fn string_formatting() {
     assert_eq!(
         NumaricInput {
             sign: Sign::Posative,
-            value_integer: vec![0, 0],
-            value_fractional: vec![]
+            integer: vec![0, 0],
+            fractional: vec![]
         }
         .to_string(),
         "0"
@@ -102,8 +401,8 @@ fn string_formatting() {
     assert_eq!(
         NumaricInput {
             sign: Sign::Posative,
-            value_integer: vec![0],
-            value_fractional: vec![0, 0]
+            integer: vec![0],
+            fractional: vec![0, 0]
         }
         .to_string(),
         "0.00"
@@ -112,8 +411,8 @@ fn string_formatting() {
     assert_eq!(
         NumaricInput {
             sign: Sign::Negative,
-            value_integer: vec![0],
-            value_fractional: vec![]
+            integer: vec![0],
+            fractional: vec![]
         }
         .to_string(),
         "0"
@@ -122,8 +421,8 @@ fn string_formatting() {
     assert_eq!(
         NumaricInput {
             sign: Sign::Negative,
-            value_integer: vec![1],
-            value_fractional: vec![]
+            integer: vec![1],
+            fractional: vec![]
         }
         .to_string(),
         "-1"
@@ -132,8 +431,8 @@ fn string_formatting() {
     assert_eq!(
         NumaricInput {
             sign: Sign::Posative,
-            value_integer: vec![0, 0, 1],
-            value_fractional: vec![]
+            integer: vec![0, 0, 1],
+            fractional: vec![]
         }
         .to_string(),
         "1"
@@ -148,7 +447,7 @@ impl NumaricInput {
     {
         let mut value = 0;
 
-        for (index, digit) in self.value_integer.iter().rev().enumerate() {
+        for (index, digit) in self.integer.iter().rev().enumerate() {
             let exponent = 10usize.pow(index as u32);
             value += *digit as usize * exponent;
         }
@@ -167,7 +466,7 @@ impl NumaricInput {
     {
         let mut value = 0;
 
-        for (index, digit) in self.value_integer.iter().rev().enumerate() {
+        for (index, digit) in self.integer.iter().rev().enumerate() {
             let exponent = 10isize.pow(index as u32);
             value += *digit as isize * exponent;
         }
@@ -188,12 +487,12 @@ impl NumaricInput {
     pub fn as_f64(&self) -> f64 {
         let mut value = 0.0;
 
-        for (index, digit) in self.value_integer.iter().rev().enumerate() {
+        for (index, digit) in self.integer.iter().rev().enumerate() {
             let exponent = 10f64.powi(index as i32);
             value += *digit as f64 * exponent;
         }
 
-        for (index, digit) in self.value_fractional.iter().enumerate() {
+        for (index, digit) in self.fractional.iter().enumerate() {
             let exponent = 10f64.powi(index as i32) * 10f64;
             value += *digit as f64 / exponent;
         }
@@ -210,9 +509,9 @@ impl NumaricInput {
         self.sign = sign;
 
         // Clear the number out first.
-        self.value_integer.iter_mut().for_each(|value| *value = 0);
+        self.integer.iter_mut().for_each(|value| *value = 0);
 
-        self.value_integer
+        self.integer
             .iter_mut()
             .rev()
             .zip(integer.chars().rev())
@@ -221,11 +520,9 @@ impl NumaricInput {
             });
 
         // Do it again for the fractional part.
-        self.value_fractional
-            .iter_mut()
-            .for_each(|value| *value = 0);
+        self.fractional.iter_mut().for_each(|value| *value = 0);
 
-        self.value_fractional
+        self.fractional
             .iter_mut()
             .zip(fractional.chars())
             .for_each(|(target, source)| {
@@ -238,8 +535,8 @@ impl NumaricInput {
 fn numaric_input() {
     let value = NumaricInput {
         sign: Sign::Negative,
-        value_integer: vec![1, 2, 3],
-        value_fractional: vec![1, 2, 3],
+        integer: vec![1, 2, 3],
+        fractional: vec![1, 2, 3],
     };
 
     assert_eq!(value.as_unsigned::<u8>(), 123);
@@ -259,8 +556,8 @@ fn numaric_input() {
 fn update_from_parts() {
     let mut value = NumaricInput {
         sign: Sign::Posative,
-        value_integer: vec![0, 0],
-        value_fractional: vec![0, 0],
+        integer: vec![0, 0],
+        fractional: vec![0, 0],
     };
 
     value.update_from_parts(Sign::Posative, "1", "2");
@@ -268,8 +565,8 @@ fn update_from_parts() {
         value,
         NumaricInput {
             sign: Sign::Posative,
-            value_integer: vec![0, 1],
-            value_fractional: vec![2, 0],
+            integer: vec![0, 1],
+            fractional: vec![2, 0],
         }
     );
 
@@ -278,8 +575,8 @@ fn update_from_parts() {
         value,
         NumaricInput {
             sign: Sign::Posative,
-            value_integer: vec![2, 3],
-            value_fractional: vec![4, 0],
+            integer: vec![2, 3],
+            fractional: vec![4, 0],
         }
     );
 
@@ -288,8 +585,8 @@ fn update_from_parts() {
         value,
         NumaricInput {
             sign: Sign::Posative,
-            value_integer: vec![0, 1],
-            value_fractional: vec![2, 3],
+            integer: vec![0, 1],
+            fractional: vec![2, 3],
         }
     );
 
@@ -298,8 +595,8 @@ fn update_from_parts() {
         value,
         NumaricInput {
             sign: Sign::Negative,
-            value_integer: vec![0, 1],
-            value_fractional: vec![2, 0],
+            integer: vec![0, 1],
+            fractional: vec![2, 0],
         }
     );
 }
@@ -315,9 +612,8 @@ pub fn spawn_numaric_input<'w, 's, 'a>(
     commands: &'a mut Commands<'w, 's>,
     label: &str,
     unit: &str,
-    sign: Option<Sign>,
-    initial_integer: Vec<u8>,
-    initial_fraction: Vec<u8>,
+    permit_negative: bool,
+    initial_value: NumaricInput,
 ) -> EntityCommands<'w, 's, 'a> {
     let button_entity = commands
         .spawn((
@@ -387,7 +683,7 @@ pub fn spawn_numaric_input<'w, 's, 'a>(
                         NavMarker(OverlayMenu),
                     ))
                     .with_children(|parent| {
-                        if let Some(sign) = &sign {
+                        if permit_negative {
                             parent
                                 .spawn((
                                     ButtonBundle {
@@ -408,7 +704,7 @@ pub fn spawn_numaric_input<'w, 's, 'a>(
                                 .with_children(|parent| {
                                     parent.spawn((
                                         TextBundle::from_section(
-                                            format!("{}", sign),
+                                            format!("{}", initial_value.sign),
                                             TextStyle {
                                                 font_size: 40.0,
                                                 color: Color::WHITE,
@@ -422,7 +718,7 @@ pub fn spawn_numaric_input<'w, 's, 'a>(
                                 });
                         }
 
-                        for (index, digit) in initial_integer.iter().enumerate() {
+                        for (index, digit) in initial_value.integer.iter().enumerate() {
                             parent
                                 .spawn((
                                     ButtonBundle {
@@ -461,7 +757,7 @@ pub fn spawn_numaric_input<'w, 's, 'a>(
                                 });
                         }
 
-                        if !initial_fraction.is_empty() {
+                        if !initial_value.fractional.is_empty() {
                             parent.spawn(TextBundle::from_section(
                                 ".",
                                 TextStyle {
@@ -471,7 +767,7 @@ pub fn spawn_numaric_input<'w, 's, 'a>(
                                 },
                             ));
 
-                            for (index, digit) in initial_fraction.iter().enumerate() {
+                            for (index, digit) in initial_value.fractional.iter().enumerate() {
                                 parent
                                     .spawn((
                                         ButtonBundle {
@@ -524,11 +820,7 @@ pub fn spawn_numaric_input<'w, 's, 'a>(
     });
 
     let mut entity_commands = commands.entity(numaric_input_entity);
-    entity_commands.insert(NumaricInput {
-        sign: sign.unwrap_or(Sign::Posative),
-        value_integer: initial_integer,
-        value_fractional: initial_fraction,
-    });
+    entity_commands.insert(initial_value);
 
     entity_commands
 }
@@ -573,14 +865,14 @@ fn update_digit_text(
 ) {
     for (mut text, integer_digit) in integer_digits.iter_mut() {
         if let Ok(numaric_input) = numaric_entities.get(integer_digit.numaric_input_entity) {
-            let value = numaric_input.value_integer[integer_digit.index];
+            let value = numaric_input.integer[integer_digit.index];
             text.sections[0].value = format!("{:01}", value);
         }
     }
 
     for (mut text, fractional_digit) in fractional_digits.iter_mut() {
         if let Ok(numaric_input) = numaric_entities.get(fractional_digit.numaric_input_entity) {
-            let value = numaric_input.value_fractional[fractional_digit.index];
+            let value = numaric_input.fractional[fractional_digit.index];
             text.sections[0].value = format!("{:01}", value);
         }
     }
@@ -660,14 +952,14 @@ fn get_digit_mut<'a>(
     for integer_digit in integer_digits {
         if let Ok(mut numaric_input) = numaric_entities.get_mut(integer_digit.numaric_input_entity)
         {
-            func(&mut numaric_input.value_integer[integer_digit.index])
+            func(&mut numaric_input.integer[integer_digit.index])
         }
     }
 
     for fraction_digit in fractional_digits {
         if let Ok(mut numaric_input) = numaric_entities.get_mut(fraction_digit.numaric_input_entity)
         {
-            func(&mut numaric_input.value_fractional[fraction_digit.index])
+            func(&mut numaric_input.fractional[fraction_digit.index])
         }
     }
 }
@@ -992,18 +1284,78 @@ fn paste(
     }
 }
 
+#[derive(Debug, Component)]
+pub struct RangeLimit {
+    pub start: std::ops::Bound<NumaricInput>,
+    pub end: std::ops::Bound<NumaricInput>,
+}
+
+impl RangeLimit {
+    pub fn new(range: impl std::ops::RangeBounds<NumaricInput>) -> Self {
+        Self {
+            start: range.start_bound().cloned(),
+            end: range.end_bound().cloned(),
+        }
+    }
+}
+
+impl std::ops::RangeBounds<NumaricInput> for RangeLimit {
+    fn start_bound(&self) -> std::ops::Bound<&NumaricInput> {
+        self.start.as_ref()
+    }
+
+    fn end_bound(&self) -> std::ops::Bound<&NumaricInput> {
+        self.end.as_ref()
+    }
+}
+
+fn enforce_range_bounds(mut numaric_inputs: Query<(&mut NumaricInput, &RangeLimit)>) {
+    for (mut input, limits) in numaric_inputs.iter_mut() {
+        // Excluded bounds aren't properly enforced because I'd have to add support for arithmetic
+        // operations on numaric inputs and I've already packed enough work into this thing.
+
+        match &limits.start {
+            std::ops::Bound::Included(limit) | std::ops::Bound::Excluded(limit) => {
+                if *input < *limit {
+                    input.copy(limit);
+                }
+            }
+            std::ops::Bound::Unbounded => {
+                // Nothing to do about that.
+            }
+        }
+
+        match &limits.end {
+            std::ops::Bound::Included(limit) | std::ops::Bound::Excluded(limit) => {
+                if *input > *limit {
+                    input.copy(limit);
+                }
+            }
+            std::ops::Bound::Unbounded => {
+                // Nothing to do about that.
+            }
+        }
+    }
+}
+
+#[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
+struct NumaricalInputSet;
+
 pub fn setup(app: &mut App) {
+    app.configure_set(Update, NumaricalInputSet.after(NavRequestSystem));
     app.add_systems(
         Update,
         (
-            update_digit_text
-                .after(NavRequestSystem)
-                .after(process_digit_general_input),
-            process_digit_general_input.after(NavRequestSystem),
-            process_digit_mouse_input,
-            process_digit_keyboard_input,
-            copy,
-            paste,
+            // Take all our inputs.
+            process_digit_general_input.in_set(NumaricalInputSet),
+            process_digit_mouse_input.in_set(NumaricalInputSet),
+            process_digit_keyboard_input.in_set(NumaricalInputSet),
+            paste.in_set(NumaricalInputSet),
+            // Enforce range bounds.
+            enforce_range_bounds.after(NumaricalInputSet),
+            // Now we can display/copy.
+            update_digit_text.after(enforce_range_bounds),
+            copy.after(enforce_range_bounds),
         ),
     );
 }

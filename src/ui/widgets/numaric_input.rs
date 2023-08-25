@@ -211,12 +211,10 @@ impl std::cmp::Ord for NumaricInput {
             }
         } else if self.is_zero() && other.is_zero() {
             Ordering::Equal
+        } else if self.sign == Sign::Posative {
+            Ordering::Greater
         } else {
-            if self.sign == Sign::Posative {
-                Ordering::Greater
-            } else {
-                Ordering::Less
-            }
+            Ordering::Less
         }
     }
 }

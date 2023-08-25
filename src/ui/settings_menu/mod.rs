@@ -1,6 +1,8 @@
 use bevy::prelude::*;
 use bevy_ui_navigation::menu::{MenuBuilder, MenuSetting, NavMarker};
 
+use crate::config::graphics::GraphicsConfig;
+
 use super::{
     setup_submenu,
     widgets::{spawn_button, BackButton},
@@ -20,7 +22,7 @@ struct GraphicsButton;
 #[derive(Component)]
 struct ControlsButton;
 
-pub fn spawn(commands: &mut Commands, parent: Entity) {
+pub fn spawn(commands: &mut Commands, parent: Entity, graphics_config: &GraphicsConfig) {
     let menu_entity = commands
         .spawn((
             NodeBundle {
@@ -66,7 +68,7 @@ pub fn spawn(commands: &mut Commands, parent: Entity) {
     spawn_button(commands, "Controls", ControlsButton).set_parent(menu_entity);
     spawn_button(commands, "Back", BackButton).set_parent(menu_entity);
 
-    graphics::spawn(commands, graphics_button_entity);
+    graphics::spawn(commands, graphics_button_entity, graphics_config);
 }
 
 pub fn setup(app: &mut App) {

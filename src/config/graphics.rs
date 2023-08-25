@@ -5,8 +5,8 @@ use super::Config;
 
 #[derive(Resource, Serialize, Deserialize)]
 pub struct GraphicsConfig {
-    start_in_fullscreen_mode: bool,
-    chunk_view_radius: u16,
+    pub start_in_fullscreen_mode: bool,
+    pub chunk_view_radius: u16,
 }
 
 impl Default for GraphicsConfig {
@@ -53,7 +53,8 @@ impl Plugin for GraphicsConfigPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, |mut commands: Commands| {
             commands.insert_resource(DebugRenderSettings::default());
-            commands.insert_resource(GraphicsConfig::load_or_default());
         });
+
+        GraphicsConfig::app_setup(app);
     }
 }

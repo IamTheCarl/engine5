@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::{
-    config::file_paths,
+    config::{file_paths, graphics::GraphicsConfig},
     error_handler,
     world::{self, terrain::BlockRegistry, WorldState},
     AppState,
@@ -34,7 +34,7 @@ struct SettingsButton;
 #[derive(Component)]
 struct QuitButton;
 
-fn spawn(mut commands: Commands) {
+fn spawn(mut commands: Commands, graphics_config: Res<GraphicsConfig>) {
     commands.spawn((Camera2dBundle::default(), MenuSetting::default()));
 
     let menu_entity = commands
@@ -91,7 +91,7 @@ fn spawn(mut commands: Commands) {
         .id();
     spawn_button(&mut commands, "Quit", QuitButton).set_parent(menu_entity);
 
-    settings_menu::spawn(&mut commands, settings_button_entity);
+    settings_menu::spawn(&mut commands, settings_button_entity, &graphics_config);
 }
 
 fn despawn(mut commands: Commands, main_menu: Query<Entity, With<MenuSetting>>) {

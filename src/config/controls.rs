@@ -8,7 +8,7 @@ use bevy_ui_navigation::{systems::InputMapping, NavRequestSystem};
 use ordered_float::NotNan;
 use serde::{Deserialize, Serialize};
 
-use super::Config;
+use super::{Config, LoadConfigSet};
 use crate::{world::WorldState, AppState};
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
@@ -537,24 +537,23 @@ fn update_ui_input_map(input_map: Res<InputMap>, mut ui_input_mapping: ResMut<In
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
-pub struct PlayerControls;
+pub struct PlayerControlsPlugin;
 
-impl Plugin for PlayerControls {
+impl Plugin for PlayerControlsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Startup,
-            |mut commands: Commands, mut ui_input_mapping: ResMut<InputMapping>| {
-                commands.insert_resource(InputState::default());
-                commands.insert_resource(InputMap::load_or_default());
+        fn setup(mut commands: Commands, mut ui_input_mapping: ResMut<InputMapping>) {
+            commands.insert_resource(InputState::default());
 
-                // Enable keyboard and mouse navigation.
-                ui_input_mapping.keyboard_navigation = true;
-                ui_input_mapping.focus_follows_mouse = true;
-                ui_input_mapping.key_action = KeyCode::Return;
-                ui_input_mapping.key_cancel = KeyCode::Escape;
-                ui_input_mapping.key_free = KeyCode::Unlabeled;
-            },
-        );
+            // Enable keyboard and mouse navigation.
+            ui_input_mapping.keyboard_navigation = true;
+            ui_input_mapping.focus_follows_mouse = true;
+            ui_input_mapping.key_action = KeyCode::Return;
+            ui_input_mapping.key_cancel = KeyCode::Escape;
+            ui_input_mapping.key_free = KeyCode::Unlabeled;
+        }
+
+        app.add_systems(Startup, setup.after(LoadConfigSet));
+        InputMap::app_setup(app);
         app.add_systems(OnEnter(WorldState::Running), initial_grab_cursor);
         app.add_systems(OnExit(WorldState::Running), release_cursor);
         app.add_systems(Update, update_ui_input_map.before(NavRequestSystem));

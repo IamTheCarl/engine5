@@ -1,4 +1,4 @@
-use crate::{error_handler, world::WorldState, AppState};
+use crate::{config::graphics::GraphicsConfig, error_handler, world::WorldState, AppState};
 
 use super::{
     settings_menu, setup_submenu,
@@ -30,7 +30,7 @@ struct QuitToMainMenuButton;
 #[derive(Component)]
 struct QuitToDesktopButton;
 
-fn spawn(mut commands: Commands) {
+fn spawn(mut commands: Commands, graphics_config: Res<GraphicsConfig>) {
     let menu_entity = commands
         .spawn((
             NodeBundle {
@@ -78,7 +78,7 @@ fn spawn(mut commands: Commands) {
     spawn_button(&mut commands, "Quit to main menu", QuitToMainMenuButton).set_parent(menu_entity);
     spawn_button(&mut commands, "Quit to desktop", QuitToDesktopButton).set_parent(menu_entity);
 
-    settings_menu::spawn(&mut commands, settings_button_entity);
+    settings_menu::spawn(&mut commands, settings_button_entity, &graphics_config);
 }
 
 fn despawn(mut commands: Commands, main_menu: Query<Entity, With<MenuSetting>>) {

@@ -4,10 +4,14 @@ use bevy::{
 };
 use bevy_ui_navigation::menu::{MenuBuilder, MenuSetting, NavMarker};
 
-use crate::ui::{
-    setup_submenu,
-    widgets::{
-        spawn_button, spawn_combo, spawn_numaric_input, BackButton, Combo, NumaricInput, RangeLimit,
+use crate::{
+    config::{graphics::GraphicsConfig, LoadConfigSet},
+    ui::{
+        setup_submenu,
+        widgets::{
+            spawn_button, spawn_combo, spawn_numaric_input, BackButton, Combo, NumaricInput,
+            RangeLimit,
+        },
     },
 };
 
@@ -17,7 +21,7 @@ struct GraphicsSettingsMenu;
 #[derive(Component, Clone)]
 struct GraphicsSettingsMenuMarker;
 
-pub fn spawn(commands: &mut Commands, parent: Entity) {
+pub fn spawn(commands: &mut Commands, parent: Entity, graphics_config: &GraphicsConfig) {
     let menu_entity = commands
         .spawn((
             NodeBundle {
@@ -61,18 +65,32 @@ pub fn spawn(commands: &mut Commands, parent: Entity) {
         commands,
         FullscreenModeSetting,
         "Fullscreen Mode",
-        1,
+        match graphics_config.start_in_fullscreen_mode {
+            true => 1,
+            false => 0,
+        },
         ["disabled", "enabled"],
     )
     .set_parent(menu_entity);
-    spawn_combo(commands, (), "Start in Fullscreen Mode", 0, ["no", "yes"]).set_parent(menu_entity);
+    spawn_combo(
+        commands,
+        InitialFullscreenModeSetting,
+        "Start in Fullscreen Mode",
+        match graphics_config.start_in_fullscreen_mode {
+            true => 1,
+            false => 0,
+        },
+        ["no", "yes"],
+    )
+    .set_parent(menu_entity);
     spawn_numaric_input(
         commands,
         "View Distance",
         "chunks",
         false,
-        NumaricInput::new::<2, 0>(10, 0).unwrap(),
+        NumaricInput::new::<2, 0>(graphics_config.chunk_view_radius as isize, 0).unwrap(),
     )
+    .insert(ViewDistanceSetting)
     .insert(RangeLimit::new(NumaricInput::new::<2, 0>(8, 0).unwrap()..))
     .set_parent(menu_entity);
     spawn_button(commands, "Back", BackButton).set_parent(menu_entity);
@@ -100,6 +118,22 @@ fn fullscreen_toggle(
                 WindowMode::Windowed
             };
         }
+    }
+}
+
+#[derive(Component)]
+struct InitialFullscreenModeSetting;
+
+fn set_initial_fullscreen_mode(
+    graphics_config: Res<GraphicsConfig>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
+) {
+    if let Ok(mut window) = windows.get_single_mut() {
+        window.mode = if graphics_config.start_in_fullscreen_mode {
+            WindowMode::Fullscreen
+        } else {
+            WindowMode::Windowed
+        };
     }
 }
 
@@ -132,8 +166,31 @@ fn fullscreen_combo_selection_handler(
     }
 }
 
+fn initial_fullscreen_combo_selection_handler(
+    combos: Query<&Combo, (Changed<Combo>, With<InitialFullscreenModeSetting>)>,
+    mut graphics_config: ResMut<GraphicsConfig>,
+) {
+    if let Ok(combo) = combos.get_single() {
+        graphics_config.start_in_fullscreen_mode = combo.selection == 1;
+    }
+}
+
+#[derive(Component)]
+struct ViewDistanceSetting;
+
+fn update_view_distance_setting(
+    numaric_input: Query<&NumaricInput, (Changed<NumaricInput>, With<ViewDistanceSetting>)>,
+    mut graphics_config: ResMut<GraphicsConfig>,
+) {
+    if let Ok(numaric_input) = numaric_input.get_single() {
+        graphics_config.chunk_view_radius = numaric_input.as_unsigned();
+    }
+}
+
 pub fn setup(app: &mut App) {
     setup_submenu::<GraphicsSettingsMenu, GraphicsSettingsMenuMarker>(app);
+
+    app.add_systems(Startup, set_initial_fullscreen_mode.after(LoadConfigSet));
 
     app.add_systems(
         Update,
@@ -141,6 +198,8 @@ pub fn setup(app: &mut App) {
             fullscreen_toggle,
             initalize_fullscreen_combo,
             fullscreen_combo_selection_handler,
+            initial_fullscreen_combo_selection_handler,
+            update_view_distance_setting,
         ),
     );
 }

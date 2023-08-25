@@ -59,10 +59,9 @@ impl Plugin for Engine5 {
         app.add_plugins((
             world::WorldPlugin,
             DebugLinesPlugin::default(),
-            config::controls::PlayerControls,
-            config::graphics::GraphicsConfigPlugin,
             DefaultNavigationPlugins,
             ui::UserInterface,
+            config::ConfigPlugin,
         ));
 
         app.add_systems(PostUpdate, exit_on_all_windows_closed);

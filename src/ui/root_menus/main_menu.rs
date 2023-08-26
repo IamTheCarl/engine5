@@ -3,13 +3,12 @@ use std::path::Path;
 use crate::{
     config::{file_paths, graphics::GraphicsConfig},
     error_handler,
+    ui::{
+        sub_menus::{settings, setup_submenu},
+        widgets::{spawn_button, spawn_prioritized_button},
+    },
     world::{self, terrain::BlockRegistry, WorldState},
     AppState,
-};
-
-use super::{
-    settings_menu, setup_submenu,
-    widgets::{spawn_button, spawn_prioritized_button},
 };
 use anyhow::Result;
 use bevy::prelude::*;
@@ -91,7 +90,7 @@ fn spawn(mut commands: Commands, graphics_config: Res<GraphicsConfig>) {
         .id();
     spawn_button(&mut commands, "Quit", QuitButton).set_parent(menu_entity);
 
-    settings_menu::spawn(&mut commands, settings_button_entity, &graphics_config);
+    settings::spawn(&mut commands, settings_button_entity, &graphics_config);
 }
 
 fn despawn(mut commands: Commands, main_menu: Query<Entity, With<MenuSetting>>) {

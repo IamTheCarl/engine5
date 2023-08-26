@@ -10,7 +10,7 @@ use bevy_ui_navigation::{
 };
 use std::fmt::Write;
 
-use crate::ui::{Clipboard, OverlayMenu};
+use crate::ui::{sub_menus::OverlayMenu, Clipboard};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Sign {

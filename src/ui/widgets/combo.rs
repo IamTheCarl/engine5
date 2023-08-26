@@ -3,7 +3,7 @@
 //! * Boolean True/False, Yes/No, Enabled/Disabled
 //! * Multiple Choice A, B, C, or D
 
-use crate::ui::{widgets::spawn_button, OverlayMenu};
+use crate::ui::{sub_menus::OverlayMenu, widgets::spawn_button};
 use bevy::{ecs::system::EntityCommands, prelude::*};
 use bevy_ui_navigation::{
     menu::NavMarker,

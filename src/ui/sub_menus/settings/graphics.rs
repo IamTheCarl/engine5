@@ -7,7 +7,7 @@ use bevy_ui_navigation::menu::{MenuBuilder, MenuSetting, NavMarker};
 use crate::{
     config::{graphics::GraphicsConfig, LoadConfigSet},
     ui::{
-        setup_submenu,
+        sub_menus::setup_submenu,
         widgets::{
             spawn_button, spawn_combo, spawn_numaric_input, BackButton, Combo, NumaricInput,
             RangeLimit,

@@ -1,12 +1,12 @@
 use bevy::prelude::*;
 use bevy_ui_navigation::menu::{MenuBuilder, MenuSetting, NavMarker};
 
-use crate::config::graphics::GraphicsConfig;
-
-use super::{
-    setup_submenu,
-    widgets::{spawn_button, BackButton},
+use crate::{
+    config::graphics::GraphicsConfig,
+    ui::widgets::{spawn_button, BackButton},
 };
+
+use super::setup_submenu;
 
 mod controls;
 mod graphics;

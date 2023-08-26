@@ -6,12 +6,11 @@ use bevy_ui_navigation::{
     prelude::{NavEvent, NavRequest},
 };
 
+use super::setup_submenu;
+
 use crate::{
     config::Config,
-    ui::{
-        setup_submenu,
-        widgets::{spawn_button, BackButton},
-    },
+    ui::widgets::{spawn_button, BackButton},
 };
 
 #[derive(Component)]

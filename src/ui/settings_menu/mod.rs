@@ -8,6 +8,7 @@ use super::{
     widgets::{spawn_button, BackButton},
 };
 
+mod controls;
 mod graphics;
 
 #[derive(Component)]
@@ -65,14 +66,19 @@ pub fn spawn(commands: &mut Commands, parent: Entity, graphics_config: &Graphics
     let graphics_button_entity = spawn_button(commands, "Graphics", GraphicsButton)
         .set_parent(menu_entity)
         .id();
-    spawn_button(commands, "Controls", ControlsButton).set_parent(menu_entity);
+    let controls_button_entity = spawn_button(commands, "Controls", ControlsButton)
+        .set_parent(menu_entity)
+        .id();
+
     spawn_button(commands, "Back", BackButton).set_parent(menu_entity);
 
     graphics::spawn(commands, graphics_button_entity, graphics_config);
+    controls::spawn(commands, controls_button_entity);
 }
 
 pub fn setup(app: &mut App) {
     setup_submenu::<SettingsMenu, SettingsMenuMarker>(app);
 
     graphics::setup(app);
+    controls::setup(app);
 }

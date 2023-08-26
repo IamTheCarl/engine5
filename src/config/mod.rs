@@ -42,7 +42,10 @@ pub trait Config: Sized + Default + Serialize + DeserializeOwned + Resource {
 
     fn load_or_default() -> Self {
         match Self::load() {
-            Ok(map) => map,
+            Ok(config) => {
+                log::info!("Loaded config file  `{}`.", Self::CONFIG_FILE);
+                config
+            }
             Err(error) => {
                 log::error!(
                     "Failed to load config file `{}`: {:?}",
@@ -50,13 +53,13 @@ pub trait Config: Sized + Default + Serialize + DeserializeOwned + Resource {
                     error
                 );
                 log::info!("A new config file will be overwritten to `{}`, replacing the old one if present.", Self::CONFIG_FILE);
-                let map = Self::default();
+                let config = Self::default();
 
-                if let Err(error) = map.save() {
+                if let Err(error) = config.save() {
                     log::error!("Failed to save `{}`: {:?}", Self::CONFIG_FILE, error);
                 }
 
-                map
+                config
             }
         }
     }

@@ -22,6 +22,7 @@ bevy-ui-navigation = "0.28.0"
 copypasta = "0.8.2"
 nom = "7.1"
 nobcd = "0.2.0"
+open = "5.0.0"
 
 [features]
 default = ["fast-compile"]

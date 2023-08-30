@@ -1,4 +1,5 @@
 use bevy::{app::AppExit, asset::ChangeWatcher, prelude::*, window::ExitCondition};
+use bevy_console::{ConsoleConfiguration, ConsolePlugin};
 use bevy_prototype_debug_lines::DebugLinesPlugin;
 use bevy_ui_navigation::DefaultNavigationPlugins;
 use std::time::Duration;
@@ -26,8 +27,10 @@ fn main() {
                     exit_condition: ExitCondition::DontExit, // We handle the exit ourselves.
                     ..default()
                 }),
+            ConsolePlugin,
             Engine5::new(),
         ))
+        .insert_resource(ConsoleConfiguration::default())
         .run();
 }
 

@@ -24,6 +24,9 @@ nom = "7.1"
 nobcd = "0.2.0"
 open = "5.0.0"
 bevy_console = "0.8.0"
+clap = { version = "4", features = ["derive"] }
+renet = "0.0.13"
+renet_visualizer = "0.0.6"
 
 [features]
 default = ["fast-compile"]

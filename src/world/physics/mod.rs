@@ -1,4 +1,4 @@
-use crate::{config::graphics::DebugRenderSettings, world::terrain::LoadTerrain, AppState};
+use crate::{config::graphics::DebugRenderSettings, world::terrain::LoadTerrain, GameState};
 use bevy::{prelude::*, render::render_resource::PrimitiveTopology};
 use ordered_float::NotNan;
 use serde::{Deserialize, Serialize};
@@ -300,7 +300,7 @@ impl Plugin for PhysicsPlugin {
             Update,
             PhysicsPlugin
                 .after(LoadTerrain)
-                .run_if(in_state(AppState::InGame))
+                .run_if(in_state(GameState::InGame))
                 .run_if(in_state(WorldState::Running)),
         );
 

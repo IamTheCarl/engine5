@@ -3,7 +3,7 @@ use crate::{
         widgets::{spawn_button, spawn_prioritized_button},
         Clipboard,
     },
-    AppState,
+    GameState,
 };
 
 use bevy::prelude::*;
@@ -121,7 +121,7 @@ fn despawn(mut commands: Commands, main_menu: Query<Entity, With<FatalErrorDispl
 
 fn handle_selections(
     mut events: EventReader<NavEvent>,
-    mut next_state: ResMut<NextState<AppState>>,
+    mut next_state: ResMut<NextState<GameState>>,
     quit_buttons: Query<(), With<QuitButton>>,
     copy_buttons: Query<(), With<CopyButton>>,
     error_context: Option<Res<ErrorContext>>,
@@ -131,7 +131,7 @@ fn handle_selections(
         if let NavEvent::NoChanges { from, request } = event {
             if matches!(request, NavRequest::Action) {
                 if quit_buttons.contains(*from.first()) {
-                    next_state.set(AppState::ShuttingDown);
+                    next_state.set(GameState::ShuttingDown);
                 }
 
                 if copy_buttons.contains(*from.first()) {
@@ -165,12 +165,12 @@ fn handle_selections(
 }
 
 pub fn setup(app: &mut App) {
-    app.add_systems(OnEnter(AppState::FatalError), spawn);
-    app.add_systems(OnExit(AppState::FatalError), despawn);
+    app.add_systems(OnEnter(GameState::FatalError), spawn);
+    app.add_systems(OnExit(GameState::FatalError), despawn);
     app.add_systems(
         Update,
         handle_selections
             .after(NavRequestSystem)
-            .run_if(in_state(AppState::FatalError)),
+            .run_if(in_state(GameState::FatalError)),
     );
 }

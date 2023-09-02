@@ -9,7 +9,7 @@ use ordered_float::NotNan;
 use serde::{Deserialize, Serialize};
 
 use super::{Config, LoadConfigSet};
-use crate::{world::WorldState, AppState};
+use crate::{world::WorldState, GameState};
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
 pub enum RealButton {
@@ -562,7 +562,7 @@ impl Plugin for PlayerControlsPlugin {
             Update,
             (
                 detect_gamepads,
-                update_inputs.run_if(in_state(AppState::InGame)),
+                update_inputs.run_if(in_state(GameState::InGame)),
             ),
         );
     }

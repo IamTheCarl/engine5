@@ -36,7 +36,7 @@ pub struct ToUnloadSpatial;
 #[component(storage = "SparseSet")]
 pub struct ToDeleteSpatial;
 
-type TracerId = u64;
+pub type TracerId = u64;
 
 fn tree_name_for_entity(
     tracer_id: TracerId,

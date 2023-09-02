@@ -8,7 +8,7 @@ use crate::{
         widgets::{spawn_button, spawn_prioritized_button},
     },
     world::{self, terrain::BlockRegistry, WorldState},
-    AppState,
+    GameState,
 };
 use anyhow::Result;
 use bevy::prelude::*;
@@ -104,7 +104,7 @@ fn despawn(mut commands: Commands, main_menu: Query<Entity, With<MenuSetting>>) 
 fn handle_selections(
     mut commands: Commands,
     mut events: EventReader<NavEvent>,
-    mut next_app_state: ResMut<NextState<AppState>>,
+    mut next_app_state: ResMut<NextState<GameState>>,
     mut next_world_state: ResMut<NextState<WorldState>>,
 
     block_registry: Res<BlockRegistry>,
@@ -115,17 +115,17 @@ fn handle_selections(
         if let NavEvent::NoChanges { from, request } = event {
             if matches!(request, NavRequest::Action) {
                 if quit_buttons.contains(*from.first()) {
-                    next_app_state.set(AppState::ShuttingDown);
+                    next_app_state.set(GameState::ShuttingDown);
                 }
 
                 if single_player_buttons.contains(*from.first()) {
-                    world::open_world(
+                    world::raw_open_world(
                         &mut commands,
                         &block_registry,
                         Path::new(file_paths::SAVE_DIRECTORY).join("test"),
                     )?;
 
-                    next_app_state.set(AppState::InGame);
+                    next_app_state.set(GameState::InGame);
                     next_world_state.set(WorldState::Running);
                 }
             }
@@ -136,8 +136,8 @@ fn handle_selections(
 }
 
 pub fn setup(app: &mut App) {
-    app.add_systems(OnEnter(AppState::MainMenu), spawn);
-    app.add_systems(OnExit(AppState::MainMenu), despawn);
+    app.add_systems(OnEnter(GameState::MainMenu), spawn);
+    app.add_systems(OnExit(GameState::MainMenu), despawn);
 
     setup_submenu::<MainMenu, MainMenuMarker>(app);
     app.add_systems(
@@ -145,6 +145,6 @@ pub fn setup(app: &mut App) {
         (handle_selections
             .pipe(error_handler)
             .after(NavRequestSystem)
-            .run_if(in_state(AppState::MainMenu)),),
+            .run_if(in_state(GameState::MainMenu)),),
     );
 }

@@ -1,11 +1,12 @@
 use bevy::prelude::*;
 
+mod commands;
 pub mod physics;
 pub mod player;
 pub mod spatial_entities;
 pub mod terrain;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use std::path::PathBuf;
 
 use terrain::{BlockRegistry, BlockTag};
@@ -14,7 +15,7 @@ mod dynamic_terrain;
 pub mod generation;
 mod global_terrain;
 
-use crate::AppState;
+use crate::GameState;
 
 use self::{
     generation::OscillatingHills, global_terrain::GlobalTerrainEntity,
@@ -30,6 +31,32 @@ struct WorldEntity {
 }
 
 pub fn open_world(
+    commands: &mut Commands,
+    block_registry: &BlockRegistry,
+    path: impl Into<PathBuf>,
+) -> Result<()> {
+    let path = path.into();
+    if path.exists() {
+        raw_open_world(commands, block_registry, path)
+    } else {
+        bail!("World does not exist.");
+    }
+}
+
+pub fn create_world(
+    commands: &mut Commands,
+    block_registry: &BlockRegistry,
+    path: impl Into<PathBuf>,
+) -> Result<()> {
+    let path = path.into();
+    if !path.exists() {
+        raw_open_world(commands, block_registry, path)
+    } else {
+        bail!("World already exists.");
+    }
+}
+
+pub fn raw_open_world(
     commands: &mut Commands,
     block_registry: &BlockRegistry,
     path: impl Into<PathBuf>,
@@ -111,10 +138,11 @@ impl Plugin for WorldPlugin {
         ));
 
         app.add_state::<WorldState>();
-        app.add_systems(OnExit(AppState::InGame), unload_world);
+        app.add_systems(OnExit(GameState::InGame), unload_world);
 
         generation::setup_terrain_generation(app);
         global_terrain::setup(app);
         dynamic_terrain::setup(app);
+        commands::setup(app);
     }
 }

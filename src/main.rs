@@ -7,7 +7,8 @@ use std::time::Duration;
 use crate::ui::ErrorContext;
 
 pub mod config;
-mod ui;
+pub mod multiplayer;
+pub mod ui;
 pub mod world;
 
 fn main() {
@@ -35,7 +36,7 @@ fn main() {
 }
 
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash, States)]
-pub enum AppState {
+pub enum GameState {
     #[default]
     MainMenu,
     InGame,
@@ -57,7 +58,7 @@ impl Plugin for Engine5 {
         // I wait until here to do this so that at least the log should be working.
         config::file_paths::create_folders();
 
-        app.add_state::<AppState>();
+        app.add_state::<GameState>();
 
         app.add_plugins((
             world::WorldPlugin,
@@ -65,6 +66,7 @@ impl Plugin for Engine5 {
             DefaultNavigationPlugins,
             ui::UserInterface,
             config::ConfigPlugin,
+            multiplayer::MultiplayerPlugin,
         ));
 
         app.add_systems(PostUpdate, exit_on_all_windows_closed);
@@ -80,7 +82,7 @@ impl Plugin for Engine5 {
 
         // TODO this is a temporary way to shutdown. I want this to verify all worlds have been saved and closed before application exits.
         app.add_systems(
-            OnEnter(AppState::ShuttingDown),
+            OnEnter(GameState::ShuttingDown),
             |mut exit_event: EventWriter<AppExit>| exit_event.send(AppExit),
         );
     }
@@ -88,23 +90,23 @@ impl Plugin for Engine5 {
 
 // Reworked from the original in Bevy to
 pub fn exit_on_all_windows_closed(
-    mut next_state: ResMut<NextState<AppState>>,
+    mut next_state: ResMut<NextState<GameState>>,
     windows: Query<&Window>,
 ) {
     if windows.is_empty() {
         log::info!("No windows are open, exiting");
-        next_state.set(AppState::ShuttingDown);
+        next_state.set(GameState::ShuttingDown);
     }
 }
 
 pub fn error_handler(
     In(result): In<anyhow::Result<()>>,
     mut commands: Commands,
-    mut next_state: ResMut<NextState<AppState>>,
+    mut next_state: ResMut<NextState<GameState>>,
 ) {
     // Only switch to error state if there was actually an error.
     if let Err(error) = result {
         commands.insert_resource(ErrorContext { error });
-        next_state.set(AppState::FatalError);
+        next_state.set(GameState::FatalError);
     }
 }

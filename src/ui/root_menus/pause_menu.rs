@@ -6,7 +6,7 @@ use crate::{
         widgets::{spawn_button, spawn_prioritized_button},
     },
     world::WorldState,
-    AppState,
+    GameState,
 };
 
 use anyhow::Result;
@@ -96,7 +96,7 @@ fn despawn(mut commands: Commands, main_menu: Query<Entity, With<MenuSetting>>) 
 
 fn handle_selections(
     mut events: EventReader<NavEvent>,
-    mut next_app_state: ResMut<NextState<AppState>>,
+    mut next_app_state: ResMut<NextState<GameState>>,
     mut next_world_state: ResMut<NextState<WorldState>>,
 
     return_to_game_buttons: Query<(), With<ReturnToGameButton>>,
@@ -107,12 +107,12 @@ fn handle_selections(
         if let NavEvent::NoChanges { from, request } = event {
             if matches!(request, NavRequest::Action) {
                 if quit_to_desktop_buttons.contains(*from.first()) {
-                    next_app_state.set(AppState::ShuttingDown);
+                    next_app_state.set(GameState::ShuttingDown);
                     next_world_state.set(WorldState::Unloaded);
                 }
 
                 if quit_to_main_menu_buttons.contains(*from.first()) {
-                    next_app_state.set(AppState::MainMenu);
+                    next_app_state.set(GameState::MainMenu);
                     next_world_state.set(WorldState::Unloaded);
                 }
 

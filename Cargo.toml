@@ -27,6 +27,8 @@ bevy_console = "0.8.0"
 clap = { version = "4", features = ["derive"] }
 renet = "0.0.13"
 renet_visualizer = "0.0.6"
+dns-lookup = "2.0.2"
+port-selector = "0.1.6"
 
 [features]
 default = ["fast-compile"]

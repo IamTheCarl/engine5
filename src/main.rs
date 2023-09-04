@@ -1,4 +1,4 @@
-use bevy::{app::AppExit, asset::ChangeWatcher, prelude::*, window::ExitCondition};
+use bevy::{app::AppExit, asset::ChangeWatcher, log::LogPlugin, prelude::*, window::ExitCondition};
 use bevy_console::{ConsoleConfiguration, ConsolePlugin};
 use bevy_prototype_debug_lines::DebugLinesPlugin;
 use bevy_ui_navigation::DefaultNavigationPlugins;
@@ -7,6 +7,7 @@ use std::time::Duration;
 use crate::ui::ErrorContext;
 
 pub mod config;
+mod logging;
 pub mod multiplayer;
 pub mod ui;
 pub mod world;
@@ -27,7 +28,8 @@ fn main() {
                     }),
                     exit_condition: ExitCondition::DontExit, // We handle the exit ourselves.
                     ..default()
-                }),
+                })
+                .disable::<LogPlugin>(),
             ConsolePlugin,
             Engine5::new(),
         ))
@@ -79,6 +81,8 @@ impl Plugin for Engine5 {
                 .after(world::terrain::TerrainPlugin)
                 .before(Engine5),
         );
+
+        logging::setup(app);
 
         // TODO this is a temporary way to shutdown. I want this to verify all worlds have been saved and closed before application exits.
         app.add_systems(

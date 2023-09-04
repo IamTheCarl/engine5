@@ -1713,6 +1713,8 @@ dependencies = [
  "serde",
  "serde_yaml",
  "sled",
+ "tracing-log",
+ "tracing-subscriber",
 ]
 
 [[package]]

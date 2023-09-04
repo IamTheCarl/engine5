@@ -85,12 +85,10 @@ enum WorldSubcommand {
 fn list_worlds(log: &mut ConsoleCommand<WorldCommand>) {
     match std::fs::read_dir(file_paths::SAVE_DIRECTORY) {
         Ok(directory) => {
-            for entry in directory {
-                if let Ok(entry) = entry {
-                    let path = entry.path();
-                    if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
-                        reply!(log, "\t{}", name);
-                    }
+            for entry in directory.flatten() {
+                let path = entry.path();
+                if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+                    reply!(log, "\t{}", name);
                 }
             }
         }

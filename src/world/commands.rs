@@ -66,11 +66,11 @@ enum WorldSubcommand {
     /// Host the current world as a multi-player game.
     /// The world must already be loaded.
     Host {
-        /// The port number to host on.
+        /// The port number to host on. Set to zero to select one at random.
         #[arg(default_value = "5000", short, long)]
         port: u16,
 
-        #[arg(default_value = "0.0.0.0", short, long)]
+        #[arg(default_value = "127.0.0.1", short, long)]
         ip_address: IpAddr,
 
         /// The maximum number of clients we permit to join the session.
@@ -195,7 +195,9 @@ fn world_command_in_menu(
         } => {
             reply!(log, "You must load a world before you can host it.");
         }
-        WorldSubcommand::Close => reply!(log, "No world is being hosted."),
+        WorldSubcommand::Close => {
+            ClientContext::end_session(&mut commands);
+        }
     }
 }
 
@@ -281,13 +283,6 @@ fn world_command_in_game(
                 HostContext::start_session(&mut commands, socket_address, max_players)
             {
                 reply!(log, "Failed to host world: {:?}", error);
-            } else {
-                reply!(
-                    log,
-                    "Hosting world at {} with a max of {} players.",
-                    socket_address,
-                    max_players
-                );
             }
         }
         WorldSubcommand::Close => {

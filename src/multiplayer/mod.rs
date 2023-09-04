@@ -51,6 +51,16 @@ impl HostContext {
         max_clients: usize,
     ) -> Result<()> {
         let socket = UdpSocket::bind(socket_address).context("Failed to bind UDP socket.")?;
+        let socket_address = socket
+            .local_addr()
+            .context("Failed to get local address for UDP socket.")?;
+
+        log::info!(
+            "Opening server session on socket {} with a max of {} players.",
+            socket_address,
+            max_clients
+        );
+
         let server_config = ServerConfig {
             max_clients,
             protocol_id: 0,
@@ -144,9 +154,6 @@ impl ClientContext {
     }
 
     fn select_local_socket(remote_address: &SocketAddr) -> Result<SocketAddr> {
-        let port = port_selector::random_free_udp_port()
-            .context("Could not find any open ports on the local system to connect with.")?;
-
         // In many operating systems, you can only connect to an IPV6 from an IPV6
         // and only an IPV4 can communicate with an IPV4, so make sure to select the right kind of socket when doing that.
         let local_ip_address = if remote_address.is_ipv4() {
@@ -155,7 +162,7 @@ impl ClientContext {
             IpAddr::V6(Ipv6Addr::UNSPECIFIED)
         };
 
-        Ok(SocketAddr::new(local_ip_address, port))
+        Ok(SocketAddr::new(local_ip_address, 0))
     }
 
     fn create_client_transport_pair(

@@ -10,10 +10,13 @@ use renet::{
         ClientAuthentication, NetcodeClientTransport, NetcodeDisconnectReason,
         NetcodeServerTransport, ServerAuthentication, ServerConfig,
     },
-    ConnectionConfig, RenetClient, RenetServer,
+    ChannelConfig, ConnectionConfig, RenetClient, RenetServer, SendType,
 };
 
-use crate::GameState;
+use crate::{
+    world::terrain::{Block, Chunk},
+    GameState,
+};
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 pub struct MultiplayerPlugin;
@@ -28,6 +31,53 @@ impl Plugin for MultiplayerPlugin {
 
         HostContext::setup(app);
         ClientContext::setup(app);
+    }
+}
+
+pub enum Channels {
+    SpawnControl,
+    UpdateEntity,
+    UpdateTerrain,
+}
+
+impl From<Channels> for u8 {
+    fn from(value: Channels) -> Self {
+        match value {
+            Channels::SpawnControl => 0,
+            Channels::UpdateEntity => 1,
+            Channels::UpdateTerrain => 2,
+        }
+    }
+}
+
+impl Channels {
+    const RESEND_TIME: Duration = Duration::from_millis(300);
+
+    fn config() -> Vec<ChannelConfig> {
+        vec![
+            ChannelConfig {
+                channel_id: Channels::SpawnControl.into(),
+                max_memory_usage_bytes: 1024 * 64 * 64,
+                send_type: SendType::ReliableUnordered {
+                    resend_time: Self::RESEND_TIME,
+                },
+            },
+            ChannelConfig {
+                channel_id: Channels::UpdateEntity.into(),
+                max_memory_usage_bytes: 1024 * 64 * 64,
+                send_type: SendType::Unreliable,
+            },
+            ChannelConfig {
+                channel_id: Channels::UpdateTerrain.into(),
+                max_memory_usage_bytes: Chunk::CHUNK_DIAMETER as usize
+                    * Chunk::CHUNK_DIAMETER as usize
+                    * Chunk::CHUNK_DIAMETER as usize
+                    * std::mem::size_of::<Block>(),
+                send_type: SendType::ReliableOrdered {
+                    resend_time: Self::RESEND_TIME,
+                },
+            },
+        ]
     }
 }
 

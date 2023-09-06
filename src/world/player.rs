@@ -9,15 +9,15 @@ use crate::config::controls::{ButtonState, InputState};
 use crate::world::physics::{
     Cylinder, Position, RayCast, RayTerrainIntersection, RayTerrainIntersectionList, Velocity,
 };
-use crate::world::terrain::{
-    Block, BlockRegistry, BlockTag, Chunk, LoadsTerrain, TerrainSpace, UpdateMesh,
-};
+use crate::world::terrain::terrain_space::ModificationRequest;
+use crate::world::terrain::{Block, BlockRegistry, BlockTag, Chunk, LoadsTerrain, TerrainSpace};
 
 use super::physics::PhysicsPlugin;
 use super::spatial_entities::storage::{
     BootstrapEntityInfo, DataLoader, DataSaver, EntitySerializationManager, EntityStorage,
     EntityTypeId, SpatialEntity, Storable, ToSaveSpatial,
 };
+use super::terrain::terrain_space::ModificationRequestList;
 
 const PLAYER_SPEED: f32 = 12.0;
 
@@ -187,22 +187,19 @@ impl PlayerEntity {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn place_block(
-        mut commands: Commands,
         input_state: Res<InputState>,
         mut players: Query<(&mut BlockPlacementContext, &RayTerrainIntersectionList)>,
-        mut terrain_spaces: Query<&mut TerrainSpace>,
-        mut terrain: Query<&mut Chunk>,
+        mut terrain_spaces: Query<(&TerrainSpace, &mut ModificationRequestList)>,
+        terrain: Query<&Chunk>,
         block_registry: Res<BlockRegistry>,
         time: Res<Time>,
     ) -> Result<()> {
         fn place_block(
             ray: &RayTerrainIntersectionList,
-            terrain_spaces: &mut Query<&mut TerrainSpace>,
-            terrain: &mut Query<&mut Chunk>,
+            terrain_spaces: &mut Query<(&TerrainSpace, &mut ModificationRequestList)>,
+            terrain: &Query<&Chunk>,
             block: Block,
-            commands: &mut Commands,
         ) {
             let mut contact_iter = ray.contacts.iter();
 
@@ -228,25 +225,23 @@ impl PlayerEntity {
 
             // None just means there weren't any contacts at all.
             if let Some((terrain_entity, intersection)) = closest_contact {
-                if let Ok(terrain_space) = terrain_spaces.get_mut(terrain_entity) {
-                    terrain_space.get_block_mut(
-                        terrain,
-                        |terrain, entity| terrain.get_mut(entity).ok(),
-                        intersection.block_coordinate + intersection.normal,
-                        |block_memory| {
-                            if let Some((chunk_entity, block_memory)) = block_memory {
-                                if block_memory.is_none() {
-                                    *block_memory = Some(block);
+                if let Ok((terrain_space, mut modification_request_list)) =
+                    terrain_spaces.get_mut(terrain_entity)
+                {
+                    let block_coordinate = intersection.block_coordinate + intersection.normal;
 
-                                    if let Some(mut command_list) =
-                                        commands.get_entity(chunk_entity)
-                                    {
-                                        command_list.insert(UpdateMesh);
-                                    }
-                                }
-                            }
-                        },
+                    let old_block = terrain_space.get_block(
+                        terrain,
+                        |terrain, entity| terrain.get(entity).ok(),
+                        block_coordinate,
                     );
+
+                    if old_block.is_none() {
+                        modification_request_list.push(ModificationRequest::ReplaceBlock {
+                            coordinate: block_coordinate,
+                            new_block: Some(block),
+                        })
+                    }
                 } else {
                     log::warn!("Terrain disappeared after the closest intersection was found.")
                 }
@@ -264,7 +259,7 @@ impl PlayerEntity {
                     context.timer.reset();
                     context.button_held = true;
 
-                    place_block(ray, &mut terrain_spaces, &mut terrain, block, &mut commands)
+                    place_block(ray, &mut terrain_spaces, &terrain, block)
                 }
             }
             ButtonState::Released => {
@@ -280,7 +275,7 @@ impl PlayerEntity {
                 context.timer.tick(time.delta());
 
                 for _ in 0..context.timer.times_finished_this_tick() {
-                    place_block(ray, &mut terrain_spaces, &mut terrain, block, &mut commands);
+                    place_block(ray, &mut terrain_spaces, &terrain, block);
                 }
             }
         }
@@ -291,18 +286,14 @@ impl PlayerEntity {
     // TODO this can probably be combined with the `place_block` system using some generics.
     #[allow(clippy::too_many_arguments)]
     fn remove_block(
-        mut commands: Commands,
         input_state: Res<InputState>,
         mut players: Query<(&mut BlockRemovalContext, &RayTerrainIntersectionList)>,
-        mut terrain_spaces: Query<&mut TerrainSpace>,
-        mut terrain: Query<&mut Chunk>,
+        mut terrain_spaces: Query<&mut ModificationRequestList, With<TerrainSpace>>,
         time: Res<Time>,
     ) {
         fn remove_block(
             ray: &RayTerrainIntersectionList,
-            terrain_spaces: &mut Query<&mut TerrainSpace>,
-            terrain: &mut Query<&mut Chunk>,
-            commands: &mut Commands,
+            terrain_spaces: &mut Query<&mut ModificationRequestList, With<TerrainSpace>>,
         ) {
             let mut contact_iter = ray.contacts.iter();
 
@@ -328,25 +319,11 @@ impl PlayerEntity {
 
             // None just means there weren't any contacts at all.
             if let Some((terrain_entity, intersection)) = closest_contact {
-                if let Ok(terrain_space) = terrain_spaces.get_mut(terrain_entity) {
-                    terrain_space.get_block_mut(
-                        terrain,
-                        |terrain: &mut Query<&mut Chunk>, entity| terrain.get_mut(entity).ok(),
-                        intersection.block_coordinate,
-                        |block_memory| {
-                            if let Some((chunk_entity, block_memory)) = block_memory {
-                                if block_memory.is_some() {
-                                    *block_memory = None;
-
-                                    if let Some(mut command_list) =
-                                        commands.get_entity(chunk_entity)
-                                    {
-                                        command_list.insert(UpdateMesh);
-                                    }
-                                }
-                            }
-                        },
-                    );
+                if let Ok(mut modification_request_list) = terrain_spaces.get_mut(terrain_entity) {
+                    modification_request_list.push(ModificationRequest::ReplaceBlock {
+                        coordinate: intersection.block_coordinate,
+                        new_block: None,
+                    });
                 } else {
                     log::warn!("Terrain disappeared after the closest intersection was found.")
                 }
@@ -359,7 +336,7 @@ impl PlayerEntity {
                     context.timer.reset();
                     context.button_held = true;
 
-                    remove_block(ray, &mut terrain_spaces, &mut terrain, &mut commands)
+                    remove_block(ray, &mut terrain_spaces)
                 }
             }
             ButtonState::Released => {
@@ -375,7 +352,7 @@ impl PlayerEntity {
                 context.timer.tick(time.delta());
 
                 for _ in 0..context.timer.times_finished_this_tick() {
-                    remove_block(ray, &mut terrain_spaces, &mut terrain, &mut commands);
+                    remove_block(ray, &mut terrain_spaces);
                 }
             }
         }

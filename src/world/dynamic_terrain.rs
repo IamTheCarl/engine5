@@ -9,7 +9,9 @@ use super::{
         DataLoader, DataSaver, EntitySerializationManager, EntityStorage, EntityTypeId,
         SpatialEntity, Storable, ToSaveSpatial,
     },
-    terrain::{TerrainSpace, TerrainSpaceBundle, TerrainStorage},
+    terrain::{
+        terrain_space::ModificationRequestList, TerrainSpace, TerrainSpaceBundle, TerrainStorage,
+    },
 };
 
 #[derive(Deserialize)]
@@ -111,6 +113,7 @@ impl DynamicTerrainEntity {
                     terrain_space: TerrainSpace::local(parameters.generator),
                     position: parameters.position,
                     storage,
+                    modification_request_list: ModificationRequestList::default(),
                     transform: Transform::default(),
                     global_transform: GlobalTransform::default(),
                     visibility: Visibility::Inherited,

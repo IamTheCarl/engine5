@@ -14,7 +14,7 @@ use bevy::{
         texture::Volume,
     },
 };
-use serde::{Deserialize, Serialize};
+use serde::{de::Visitor, ser::SerializeSeq, Deserialize, Serialize};
 use std::{
     borrow::Cow, collections::HashMap, mem::size_of, num::NonZeroU16, ops::Range, str::FromStr,
 };
@@ -579,6 +579,23 @@ fn terrain_vertex_encode() {
     assert_eq!(extract_unsigned(value, 9, 20), 348);
 }
 
+#[test]
+fn test_size_in_memory() {
+    use std::mem::size_of;
+
+    // Strictly verify the size of these things.
+    // The size in memory can be very costly if unexpected things happen.
+
+    assert_eq!(size_of::<Block>(), 2);
+    assert_eq!(size_of::<Option<Block>>(), 2);
+
+    let chunk_diameter = Chunk::CHUNK_DIAMETER as usize;
+    assert_eq!(
+        size_of::<Chunk>(),
+        2 * chunk_diameter * chunk_diameter * chunk_diameter
+    );
+}
+
 #[derive(Component, Clone)]
 pub struct Chunk {
     // Blocks are organized as x, z, y.
@@ -589,6 +606,9 @@ pub struct Chunk {
 impl Chunk {
     pub const CHUNK_BIT_SHIFT: u32 = 4;
     pub const CHUNK_DIAMETER: i32 = 1 << Self::CHUNK_BIT_SHIFT as i32;
+    pub const NUM_BLOCKS: usize = Self::CHUNK_DIAMETER as usize
+        * Self::CHUNK_DIAMETER as usize
+        * Self::CHUNK_DIAMETER as usize;
 
     pub fn new(block: Option<Block>) -> Self {
         Self {
@@ -794,6 +814,85 @@ impl Chunk {
 
         mesh
     }
+}
+
+impl Serialize for Chunk {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut blocks = serializer.serialize_seq(Some(Self::NUM_BLOCKS))?;
+
+        for (_position, block) in self.iter() {
+            let block_id = block.map(|block| block.id.get()).unwrap_or(0);
+            blocks.serialize_element(&block_id)?;
+        }
+
+        blocks.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Chunk {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct ChunkVisitor;
+
+        impl<'de> Visitor<'de> for ChunkVisitor {
+            type Value = Chunk;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("an array of 4096 U16 integers")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut chunk = Chunk {
+                    blocks: [[[None; Chunk::CHUNK_DIAMETER as usize];
+                        Chunk::CHUNK_DIAMETER as usize];
+                        Chunk::CHUNK_DIAMETER as usize],
+                };
+
+                for (_position, block) in chunk.iter_mut() {
+                    let block_id = seq.next_element::<u16>()?.unwrap_or(0);
+                    *block = NonZeroU16::new(block_id).map(|id| Block { id });
+                }
+
+                Ok(chunk)
+            }
+        }
+
+        deserializer.deserialize_seq(ChunkVisitor)
+    }
+}
+
+#[test]
+fn test_serialized_size() {
+    // Strictly verify the size of these things once serialized. We can waste a lot of
+    // bandwidth and hard drive space if we get careless with these.
+
+    let block = Block {
+        id: NonZeroU16::new(1).unwrap(),
+    };
+
+    let mut storage = Vec::new();
+    ciborium::into_writer(&block, &mut storage).unwrap();
+    assert_eq!(storage.len(), 5);
+
+    storage.clear();
+    let blocks = [block; 25];
+    ciborium::into_writer(&blocks, &mut storage).unwrap();
+    assert_eq!(storage.len(), 127);
+
+    // You can conclude from this that storing blocks with cbor is very inefficient.
+
+    // But we make a custom serializer for Chunks that makes it much more efficient.
+    let chunk = Chunk::new(Some(block));
+    ciborium::into_writer(&chunk, &mut storage).unwrap();
+    assert_eq!(storage.len(), 4226);
 }
 
 // TODO this was just copied from the core of Bevy. At this rate I'm starting to think I should customize it more to only have the features I actually use.
@@ -1546,7 +1645,7 @@ impl Plugin for TerrainPlugin {
         app.add_systems(
             Update,
             (
-                generate_chunk_mesh,
+                generate_chunk_mesh.after(terrain_space::ModifyTerrain),
                 terrain_texture_loading.pipe(crate::error_handler),
             ),
         );

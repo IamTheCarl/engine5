@@ -9,7 +9,9 @@ use super::{
         BootstrapEntityInfo, DataLoader, DataSaver, EntitySerializationManager, EntityStorage,
         EntityTypeId, SpatialEntity, Storable, ToSaveSpatial,
     },
-    terrain::{TerrainSpace, TerrainSpaceBundle, TerrainStorage},
+    terrain::{
+        terrain_space::ModificationRequestList, TerrainSpace, TerrainSpaceBundle, TerrainStorage,
+    },
 };
 
 #[derive(Deserialize)]
@@ -98,6 +100,7 @@ impl GlobalTerrainEntity {
                         rotation: 0.0,
                     },
                     storage,
+                    modification_request_list: ModificationRequestList::default(),
                     transform: Transform::default(),
                     global_transform: GlobalTransform::default(),
                     visibility: Visibility::Inherited,

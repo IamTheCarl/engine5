@@ -1,7 +1,7 @@
 use super::{
     storage::{TerrainStorage, ToLoadTerrain, ToSaveTerrain},
     Block, Chunk, ChunkIndex, ChunkPosition, GlobalBlockCoordinate, LocalBlockCoordinate,
-    PreChunkBundle, TerrainTime,
+    PreChunkBundle, TerrainTime, UpdateMesh,
 };
 use crate::world::{
     generation::WorldGeneratorEnum, physics::Position, spatial_entities::storage::ToLoadSpatial,
@@ -10,6 +10,7 @@ use bevy::{
     ecs::query::{ReadOnlyWorldQuery, WorldQuery},
     prelude::*,
 };
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 pub const CHUNK_TIME_TO_LIVE_TICKS: usize = 30;
@@ -138,7 +139,7 @@ impl TerrainSpace {
         chunk.get_block_local(local_block_coordinate)
     }
 
-    pub fn get_block_mut<'a, Q: WorldQuery, F: ReadOnlyWorldQuery>(
+    fn get_block_mut<'a, Q: WorldQuery, F: ReadOnlyWorldQuery>(
         &self,
         query: &'a mut Query<Q, F>,
         query_wrapper: impl FnOnce(&'a mut Query<Q, F>, Entity) -> Option<Mut<'a, Chunk>>,
@@ -160,6 +161,88 @@ impl TerrainSpace {
         } else {
             callback(None)
         }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum ModificationRequest {
+    /// Replace the entire content of a specific chunk.
+    /// This is used by the multi-player system to upload terrain to clients.
+    ReplaceChunk {
+        index: ChunkIndex,
+        new_chunk: Box<Chunk>,
+    },
+
+    /// Set a block to a value, replacing whatever was there before.
+    ReplaceBlock {
+        coordinate: GlobalBlockCoordinate,
+        new_block: Option<Block>,
+    },
+}
+
+// TODO it may be a good idea to redistribute these commands to their individual chunks and *then* apply them.
+// This would give terrain a moment to load (if needed) before applying the effect, and also reduce memory
+// thrashing since we can keep a chunk loaded as we're applying all the commands to it.
+#[derive(Component, Default)]
+pub struct ModificationRequestList {
+    requests: Vec<ModificationRequest>,
+}
+
+impl ModificationRequestList {
+    pub fn push(&mut self, request: ModificationRequest) {
+        self.requests.push(request);
+    }
+}
+
+fn apply_modification_request_lists(
+    mut commands: Commands,
+    spaces: Query<(&TerrainSpace, &ModificationRequestList)>,
+    mut chunks: Query<&mut Chunk>,
+) {
+    for (space, request_list) in spaces.iter() {
+        for request in request_list.requests.iter() {
+            match request {
+                ModificationRequest::ReplaceChunk { index, new_chunk } => {
+                    if let Some((chunk_entity, mut chunk)) =
+                        space.loaded_terrain.get(index).and_then(|chunk_entity| {
+                            chunks
+                                .get_mut(*chunk_entity)
+                                .ok()
+                                .map(|chunk| (chunk_entity, chunk))
+                        })
+                    {
+                        *chunk = *new_chunk.clone();
+
+                        if let Some(mut command_list) = commands.get_entity(*chunk_entity) {
+                            command_list.insert(UpdateMesh);
+                        }
+                    }
+                }
+                ModificationRequest::ReplaceBlock {
+                    coordinate,
+                    new_block,
+                } => space.get_block_mut(
+                    &mut chunks,
+                    |chunks, entity| chunks.get_mut(entity).ok(),
+                    *coordinate,
+                    |block_memory| {
+                        if let Some((chunk_entity, block_memory)) = block_memory {
+                            *block_memory = *new_block;
+
+                            if let Some(mut command_list) = commands.get_entity(chunk_entity) {
+                                command_list.insert(UpdateMesh);
+                            }
+                        }
+                    },
+                ),
+            }
+        }
+    }
+}
+
+fn clear_modification_request_lists(mut request_lists: Query<&mut ModificationRequestList>) {
+    for mut request_list in request_lists.iter_mut() {
+        request_list.requests.clear();
     }
 }
 
@@ -203,6 +286,7 @@ pub struct TerrainSpaceBundle {
     pub terrain_space: TerrainSpace,
     pub position: Position,
     pub storage: TerrainStorage,
+    pub modification_request_list: ModificationRequestList,
     // pub storable: Storable, // FIXME we can't store this yet with the current system. Implement that later.
     pub transform: Transform,
     pub global_transform: GlobalTransform,
@@ -363,6 +447,12 @@ fn setup_system(mut commands: Commands) {
 pub struct LoadTerrain;
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
+pub struct ModifyTerrain;
+
+#[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
+pub struct PostModifyTerrain;
+
+#[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 pub struct UnloadTerrain;
 
 pub fn register_terrain_space(app: &mut App) {
@@ -380,17 +470,23 @@ pub fn register_terrain_space(app: &mut App) {
     // We check to clean up chunks once a second.
     // We don't run this after `load_all_terrain` because that terrain doesn't dynamically unload.
     app.configure_set(Update, UnloadTerrain.after(LoadTerrain));
+    app.configure_set(
+        Update,
+        ModifyTerrain.after(LoadTerrain).before(PostModifyTerrain),
+    );
+    app.configure_set(Update, PostModifyTerrain);
 
     app.add_systems(
         Update,
-        delete_chunks
-            .before(super::terrain_time_tick)
-            .in_set(UnloadTerrain),
-    );
-    app.add_systems(
-        Update,
-        mark_chunk_for_save_and_unload
-            .before(delete_chunks)
-            .in_set(UnloadTerrain),
+        (
+            delete_chunks
+                .before(super::terrain_time_tick)
+                .in_set(UnloadTerrain),
+            apply_modification_request_lists.in_set(ModifyTerrain),
+            clear_modification_request_lists.in_set(PostModifyTerrain),
+            mark_chunk_for_save_and_unload
+                .before(delete_chunks)
+                .in_set(UnloadTerrain),
+        ),
     );
 }

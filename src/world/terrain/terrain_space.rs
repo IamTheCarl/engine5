@@ -11,7 +11,10 @@ use bevy::{
     prelude::*,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    num::NonZeroUsize,
+};
 
 pub const CHUNK_TIME_TO_LIVE_TICKS: usize = 30;
 
@@ -35,6 +38,7 @@ struct ActiveTerrainTimer {
 pub struct TerrainSpace {
     pub(crate) generator: WorldGeneratorEnum,
     loaded_terrain: HashMap<ChunkIndex, Entity>,
+    chunk_time_to_live_ticks: Option<NonZeroUsize>,
     is_global: bool,
     pub(crate) non_empty_chunks: HashSet<Entity>,
 }
@@ -43,6 +47,7 @@ impl TerrainSpace {
     pub fn global(generator: WorldGeneratorEnum) -> Self {
         Self {
             generator,
+            chunk_time_to_live_ticks: NonZeroUsize::new(CHUNK_TIME_TO_LIVE_TICKS),
             is_global: true,
             ..Default::default()
         }
@@ -68,20 +73,24 @@ impl TerrainSpace {
         commands: &mut Commands,
         space_entity: Entity,
         chunk_position: ChunkPosition,
-        despawn_deadline: Option<usize>,
-    ) -> bool {
+        chunk_time: &TerrainTime,
+    ) -> (bool, Entity) {
+        let despawn_deadline = self
+            .chunk_time_to_live_ticks
+            .map(|time_to_live| chunk_time.time + time_to_live.get());
+
         match self.loaded_terrain.entry(chunk_position.index) {
             std::collections::hash_map::Entry::Occupied(already_loaded) => {
                 // Oh, already loaded? Just update the timer then.
+                let entity = *already_loaded.get();
+
                 if let Some(despawn_deadline) = despawn_deadline {
-                    commands
-                        .entity(*already_loaded.get())
-                        .insert(ActiveTerrainTimer {
-                            deadline: despawn_deadline,
-                        });
+                    commands.entity(entity).insert(ActiveTerrainTimer {
+                        deadline: despawn_deadline,
+                    });
                 }
 
-                false
+                (false, entity)
             }
             std::collections::hash_map::Entry::Vacant(to_load) => {
                 let mut entity = commands.spawn((
@@ -111,7 +120,7 @@ impl TerrainSpace {
                 to_load.insert(entity);
 
                 // Indicate that we're going to load this.
-                true
+                (true, entity)
             }
         }
     }
@@ -138,41 +147,10 @@ impl TerrainSpace {
         let chunk = query_wrapper(query, *chunk_entity)?;
         chunk.get_block_local(local_block_coordinate)
     }
-
-    fn get_block_mut<'a, Q: WorldQuery, F: ReadOnlyWorldQuery>(
-        &self,
-        query: &'a mut Query<Q, F>,
-        query_wrapper: impl FnOnce(&'a mut Query<Q, F>, Entity) -> Option<Mut<'a, Chunk>>,
-        coordinate: GlobalBlockCoordinate,
-        callback: impl FnOnce(Option<(Entity, &mut Option<Block>)>),
-    ) {
-        let (chunk_index, local_block_coordinate) = Self::calculate_block_indexes(coordinate);
-
-        if let Some(chunk_entity) = self.loaded_terrain.get(&chunk_index) {
-            if let Some(mut chunk) = query_wrapper(query, *chunk_entity) {
-                if let Some(block) = chunk.get_block_local_mut(local_block_coordinate) {
-                    callback(Some((*chunk_entity, block)))
-                } else {
-                    callback(None)
-                }
-            } else {
-                callback(None)
-            }
-        } else {
-            callback(None)
-        }
-    }
 }
 
 #[derive(Serialize, Deserialize)]
-pub enum ModificationRequest {
-    /// Replace the entire content of a specific chunk.
-    /// This is used by the multi-player system to upload terrain to clients.
-    ReplaceChunk {
-        index: ChunkIndex,
-        new_chunk: Box<Chunk>,
-    },
-
+pub enum SpaceModificationRequest {
     /// Set a block to a value, replacing whatever was there before.
     ReplaceBlock {
         coordinate: GlobalBlockCoordinate,
@@ -180,69 +158,165 @@ pub enum ModificationRequest {
     },
 }
 
-// TODO it may be a good idea to redistribute these commands to their individual chunks and *then* apply them.
-// This would give terrain a moment to load (if needed) before applying the effect, and also reduce memory
-// thrashing since we can keep a chunk loaded as we're applying all the commands to it.
-#[derive(Component, Default)]
-pub struct ModificationRequestList {
-    requests: Vec<ModificationRequest>,
-}
+impl SpaceModificationRequest {
+    fn into_chunk_modification_requests(
+        self,
+    ) -> impl Iterator<Item = (ChunkIndex, ChunkModificationRequest)> {
+        match self {
+            SpaceModificationRequest::ReplaceBlock {
+                coordinate,
+                new_block,
+            } => {
+                let (chunk_index, local_block_coordinate) =
+                    TerrainSpace::calculate_block_indexes(coordinate);
 
-impl ModificationRequestList {
-    pub fn push(&mut self, request: ModificationRequest) {
-        self.requests.push(request);
-    }
-}
-
-fn apply_modification_request_lists(
-    mut commands: Commands,
-    spaces: Query<(&TerrainSpace, &ModificationRequestList)>,
-    mut chunks: Query<&mut Chunk>,
-) {
-    for (space, request_list) in spaces.iter() {
-        for request in request_list.requests.iter() {
-            match request {
-                ModificationRequest::ReplaceChunk { index, new_chunk } => {
-                    if let Some((chunk_entity, mut chunk)) =
-                        space.loaded_terrain.get(index).and_then(|chunk_entity| {
-                            chunks
-                                .get_mut(*chunk_entity)
-                                .ok()
-                                .map(|chunk| (chunk_entity, chunk))
-                        })
-                    {
-                        *chunk = *new_chunk.clone();
-
-                        if let Some(mut command_list) = commands.get_entity(*chunk_entity) {
-                            command_list.insert(UpdateMesh);
-                        }
-                    }
-                }
-                ModificationRequest::ReplaceBlock {
-                    coordinate,
-                    new_block,
-                } => space.get_block_mut(
-                    &mut chunks,
-                    |chunks, entity| chunks.get_mut(entity).ok(),
-                    *coordinate,
-                    |block_memory| {
-                        if let Some((chunk_entity, block_memory)) = block_memory {
-                            *block_memory = *new_block;
-
-                            if let Some(mut command_list) = commands.get_entity(chunk_entity) {
-                                command_list.insert(UpdateMesh);
-                            }
-                        }
+                [(
+                    chunk_index,
+                    ChunkModificationRequest::ReplaceBlock {
+                        coordinate: local_block_coordinate,
+                        new_block,
                     },
-                ),
+                )]
+                .into_iter()
             }
         }
     }
 }
 
-fn clear_modification_request_lists(mut request_lists: Query<&mut ModificationRequestList>) {
-    for mut request_list in request_lists.iter_mut() {
-        request_list.requests.clear();
+#[derive(Component, Default)]
+pub struct SpaceModificationRequestList {
+    requests: Vec<SpaceModificationRequest>,
+}
+
+impl SpaceModificationRequestList {
+    pub fn push(&mut self, request: SpaceModificationRequest) {
+        self.requests.push(request);
+    }
+}
+
+fn distribute_space_modification_requests_to_chunks(
+    mut commands: Commands,
+    mut spaces: Query<(Entity, &mut TerrainSpace, &mut SpaceModificationRequestList)>,
+    mut chunks: Query<&mut ChunkModificationRequestList>,
+    terrain_time: Res<TerrainTime>,
+) {
+    for (space_entity, mut space, mut modification_request_list) in spaces.iter_mut() {
+        for modification_request in modification_request_list.requests.drain(..) {
+            for (chunk_index, modification_request) in
+                modification_request.into_chunk_modification_requests()
+            {
+                // As an added benifit (probably), this makes it so that modifications to terrain will refresh it and keep it loaded for
+                // a little longer.
+                let (_created, chunk_entity) = space.load_chunk(
+                    &mut commands,
+                    space_entity,
+                    ChunkPosition { index: chunk_index },
+                    &terrain_time,
+                );
+
+                let mut chunk_modification_request = chunks
+                    .get_mut(chunk_entity)
+                    .expect("Chunk was not created.");
+                chunk_modification_request.push(modification_request);
+            }
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum ChunkModificationRequest {
+    /// Set a block to a value, replacing whatever was there before.
+    ReplaceBlock {
+        coordinate: LocalBlockCoordinate,
+        new_block: Option<Block>,
+    },
+}
+
+#[derive(Component, Default)]
+pub struct ChunkModificationRequestList {
+    requests: Vec<ChunkModificationRequest>,
+}
+
+impl ChunkModificationRequestList {
+    pub fn push(&mut self, request: ChunkModificationRequest) {
+        self.requests.push(request);
+    }
+}
+
+fn apply_modification_request_lists_to_chunks(
+    mut commands: Commands,
+    mut chunks: Query<(Entity, &mut Chunk, &mut ChunkModificationRequestList)>,
+) {
+    for (chunk_entity, mut chunk, mut request_list) in chunks.iter_mut() {
+        for request in request_list.requests.drain(..) {
+            match request {
+                ChunkModificationRequest::ReplaceBlock {
+                    coordinate,
+                    new_block,
+                } => {
+                    let block_memory = chunk
+                        .get_block_local_mut(coordinate)
+                        .expect("Local coordinate was outside of chunk range.");
+
+                    *block_memory = new_block;
+                    let mut command_list = commands.entity(chunk_entity);
+                    command_list.insert(UpdateMesh);
+                }
+            }
+        }
+    }
+}
+
+#[allow(clippy::complexity)]
+fn insert_empty_chunks_for_modification(
+    mut commands: Commands,
+    chunks: Query<
+        (Entity, &Parent, &ChunkModificationRequestList),
+        (
+            Without<Chunk>,
+            Without<ToLoadTerrain>,
+            Changed<ChunkModificationRequestList>,
+        ),
+    >,
+    mut terrain_spaces: Query<&mut TerrainSpace>,
+) {
+    for (chunk_entity, chunk_parent, request_list) in chunks.iter() {
+        if !request_list.requests.is_empty() {
+            commands.entity(chunk_entity).insert(Chunk::new(None));
+
+            let terrain_space_entity = chunk_parent.get();
+            let mut terrain_space = terrain_spaces
+                .get_mut(terrain_space_entity)
+                .expect("Chunk did not have terrain space parent.");
+            terrain_space.non_empty_chunks.insert(chunk_entity);
+        }
+    }
+}
+
+fn remove_empty_chunks_after_modification(
+    mut commands: Commands,
+    chunks: Query<(Entity, &Parent, &Chunk), Changed<Chunk>>,
+    mut terrain_spaces: Query<&mut TerrainSpace>,
+) {
+    const EMPTY_CHUNK: Chunk = Chunk::new(None);
+
+    for (chunk_entity, chunk_parent, chunk) in chunks.iter() {
+        // I have found that the fastest way to verify that an array of fixed length is all of a specific
+        // sequence of values (in this case, all being None) is to just compare it to another array.
+        // Yes, this is even faster than folding the values with xor. I suspect this is using memcmp under the hood.
+        if *chunk == EMPTY_CHUNK {
+            // That's an empty chunk!
+            commands
+                .entity(chunk_entity)
+                .remove::<Chunk>()
+                .insert((UpdateMesh, ToSaveTerrain));
+        }
+
+        let terrain_space_entity = chunk_parent.get();
+        let mut terrain_space = terrain_spaces
+            .get_mut(terrain_space_entity)
+            .expect("Chunk did not have terrain space parent.");
+        terrain_space.non_empty_chunks.remove(&chunk_entity);
     }
 }
 
@@ -286,7 +360,7 @@ pub struct TerrainSpaceBundle {
     pub terrain_space: TerrainSpace,
     pub position: Position,
     pub storage: TerrainStorage,
-    pub modification_request_list: ModificationRequestList,
+    pub modification_request_list: SpaceModificationRequestList,
     // pub storable: Storable, // FIXME we can't store this yet with the current system. Implement that later.
     pub transform: Transform,
     pub global_transform: GlobalTransform,
@@ -302,13 +376,16 @@ fn load_all_terrain(
         &TerrainStorage,
         With<LoadAllTerrain>,
     )>,
+    terrain_time: Res<TerrainTime>,
 ) {
     for (space_entity, mut space, terrain_file, _keep_all_terrain_loaded) in spaces.iter_mut() {
         for position in terrain_file.iter_chunk_indexes() {
             // Returns false if the chunk was already loaded.
             // We'll just assume that if anything is loaded, everything is loaded.
-            // Also we don't put a despawn deadline on this, because we assume it'll never unload.
-            if !space.load_chunk(&mut commands, space_entity, position, None) {
+            if !space
+                .load_chunk(&mut commands, space_entity, position, &terrain_time)
+                .0
+            {
                 break;
             }
         }
@@ -323,8 +400,6 @@ fn load_terrain(
     mut terrain_spaces: Query<(Entity, &Position, &mut TerrainSpace, With<TerrainStorage>)>,
     terrain_time: Res<TerrainTime>,
 ) {
-    let despawn_deadline = terrain_time.time + CHUNK_TIME_TO_LIVE_TICKS;
-
     for (space_entity, space_position, mut space, _terrain_file) in terrain_spaces.iter_mut() {
         for (loader_position, loads_terrain) in terrain_loaders.iter() {
             let loader_position_in_chunk_space =
@@ -347,7 +422,7 @@ fn load_terrain(
                             &mut commands,
                             space_entity,
                             ChunkPosition { index: chunk_index },
-                            Some(despawn_deadline),
+                            &terrain_time,
                         );
                     }
                 }
@@ -421,8 +496,6 @@ fn bootstrap_terrain_space(
     )>,
     terrain_time: Res<TerrainTime>,
 ) {
-    let despawn_deadline = terrain_time.time + CHUNK_TIME_TO_LIVE_TICKS;
-
     for (space_entity, mut space, _without_initialized, _without_load_all_terrain) in
         spaces.iter_mut()
     {
@@ -432,7 +505,7 @@ fn bootstrap_terrain_space(
             ChunkPosition {
                 index: ChunkIndex::ZERO,
             },
-            Some(despawn_deadline),
+            &terrain_time,
         );
 
         commands.entity(space_entity).insert(Initialized);
@@ -450,7 +523,7 @@ pub struct LoadTerrain;
 pub struct ModifyTerrain;
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
-pub struct PostModifyTerrain;
+pub struct PreModifyTerrain;
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 pub struct UnloadTerrain;
@@ -470,11 +543,8 @@ pub fn register_terrain_space(app: &mut App) {
     // We check to clean up chunks once a second.
     // We don't run this after `load_all_terrain` because that terrain doesn't dynamically unload.
     app.configure_set(Update, UnloadTerrain.after(LoadTerrain));
-    app.configure_set(
-        Update,
-        ModifyTerrain.after(LoadTerrain).before(PostModifyTerrain),
-    );
-    app.configure_set(Update, PostModifyTerrain);
+    app.configure_set(Update, PreModifyTerrain.before(ModifyTerrain));
+    app.configure_set(Update, ModifyTerrain.after(LoadTerrain));
 
     app.add_systems(
         Update,
@@ -482,8 +552,14 @@ pub fn register_terrain_space(app: &mut App) {
             delete_chunks
                 .before(super::terrain_time_tick)
                 .in_set(UnloadTerrain),
-            apply_modification_request_lists.in_set(ModifyTerrain),
-            clear_modification_request_lists.in_set(PostModifyTerrain),
+            distribute_space_modification_requests_to_chunks.in_set(PreModifyTerrain),
+            insert_empty_chunks_for_modification
+                .in_set(ModifyTerrain)
+                .before(apply_modification_request_lists_to_chunks),
+            apply_modification_request_lists_to_chunks.in_set(ModifyTerrain),
+            remove_empty_chunks_after_modification
+                .in_set(ModifyTerrain)
+                .after(apply_modification_request_lists_to_chunks),
             mark_chunk_for_save_and_unload
                 .before(delete_chunks)
                 .in_set(UnloadTerrain),

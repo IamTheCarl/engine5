@@ -9,7 +9,7 @@ use crate::config::controls::{ButtonState, InputState};
 use crate::world::physics::{
     Cylinder, Position, RayCast, RayTerrainIntersection, RayTerrainIntersectionList, Velocity,
 };
-use crate::world::terrain::terrain_space::ModificationRequest;
+use crate::world::terrain::terrain_space::SpaceModificationRequest;
 use crate::world::terrain::{Block, BlockRegistry, BlockTag, Chunk, LoadsTerrain, TerrainSpace};
 
 use super::physics::PhysicsPlugin;
@@ -17,7 +17,7 @@ use super::spatial_entities::storage::{
     BootstrapEntityInfo, DataLoader, DataSaver, EntitySerializationManager, EntityStorage,
     EntityTypeId, SpatialEntity, Storable, ToSaveSpatial,
 };
-use super::terrain::terrain_space::ModificationRequestList;
+use super::terrain::terrain_space::SpaceModificationRequestList;
 
 const PLAYER_SPEED: f32 = 12.0;
 
@@ -190,14 +190,14 @@ impl PlayerEntity {
     fn place_block(
         input_state: Res<InputState>,
         mut players: Query<(&mut BlockPlacementContext, &RayTerrainIntersectionList)>,
-        mut terrain_spaces: Query<(&TerrainSpace, &mut ModificationRequestList)>,
+        mut terrain_spaces: Query<(&TerrainSpace, &mut SpaceModificationRequestList)>,
         terrain: Query<&Chunk>,
         block_registry: Res<BlockRegistry>,
         time: Res<Time>,
     ) -> Result<()> {
         fn place_block(
             ray: &RayTerrainIntersectionList,
-            terrain_spaces: &mut Query<(&TerrainSpace, &mut ModificationRequestList)>,
+            terrain_spaces: &mut Query<(&TerrainSpace, &mut SpaceModificationRequestList)>,
             terrain: &Query<&Chunk>,
             block: Block,
         ) {
@@ -237,7 +237,7 @@ impl PlayerEntity {
                     );
 
                     if old_block.is_none() {
-                        modification_request_list.push(ModificationRequest::ReplaceBlock {
+                        modification_request_list.push(SpaceModificationRequest::ReplaceBlock {
                             coordinate: block_coordinate,
                             new_block: Some(block),
                         })
@@ -288,12 +288,12 @@ impl PlayerEntity {
     fn remove_block(
         input_state: Res<InputState>,
         mut players: Query<(&mut BlockRemovalContext, &RayTerrainIntersectionList)>,
-        mut terrain_spaces: Query<&mut ModificationRequestList, With<TerrainSpace>>,
+        mut terrain_spaces: Query<&mut SpaceModificationRequestList, With<TerrainSpace>>,
         time: Res<Time>,
     ) {
         fn remove_block(
             ray: &RayTerrainIntersectionList,
-            terrain_spaces: &mut Query<&mut ModificationRequestList, With<TerrainSpace>>,
+            terrain_spaces: &mut Query<&mut SpaceModificationRequestList, With<TerrainSpace>>,
         ) {
             let mut contact_iter = ray.contacts.iter();
 
@@ -320,7 +320,7 @@ impl PlayerEntity {
             // None just means there weren't any contacts at all.
             if let Some((terrain_entity, intersection)) = closest_contact {
                 if let Ok(mut modification_request_list) = terrain_spaces.get_mut(terrain_entity) {
-                    modification_request_list.push(ModificationRequest::ReplaceBlock {
+                    modification_request_list.push(SpaceModificationRequest::ReplaceBlock {
                         coordinate: intersection.block_coordinate,
                         new_block: None,
                     });

@@ -10,7 +10,8 @@ use super::{
         EntityTypeId, SpatialEntity, Storable, ToSaveSpatial,
     },
     terrain::{
-        terrain_space::ModificationRequestList, TerrainSpace, TerrainSpaceBundle, TerrainStorage,
+        terrain_space::SpaceModificationRequestList, TerrainSpace, TerrainSpaceBundle,
+        TerrainStorage,
     },
 };
 
@@ -100,7 +101,7 @@ impl GlobalTerrainEntity {
                         rotation: 0.0,
                     },
                     storage,
-                    modification_request_list: ModificationRequestList::default(),
+                    modification_request_list: SpaceModificationRequestList::default(),
                     transform: Transform::default(),
                     global_transform: GlobalTransform::default(),
                     visibility: Visibility::Inherited,

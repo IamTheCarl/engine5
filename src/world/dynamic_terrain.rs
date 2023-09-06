@@ -10,7 +10,8 @@ use super::{
         SpatialEntity, Storable, ToSaveSpatial,
     },
     terrain::{
-        terrain_space::ModificationRequestList, TerrainSpace, TerrainSpaceBundle, TerrainStorage,
+        terrain_space::SpaceModificationRequestList, TerrainSpace, TerrainSpaceBundle,
+        TerrainStorage,
     },
 };
 
@@ -113,7 +114,7 @@ impl DynamicTerrainEntity {
                     terrain_space: TerrainSpace::local(parameters.generator),
                     position: parameters.position,
                     storage,
-                    modification_request_list: ModificationRequestList::default(),
+                    modification_request_list: SpaceModificationRequestList::default(),
                     transform: Transform::default(),
                     global_transform: GlobalTransform::default(),
                     visibility: Visibility::Inherited,

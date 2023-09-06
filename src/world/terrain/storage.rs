@@ -33,7 +33,7 @@ impl TerrainStorage {
         Ok(Self::Local { tree })
     }
 
-    pub fn read_chunk(&self, position: &ChunkPosition) -> Result<Option<Chunk>> {
+    pub fn read_chunk(&self, position: &ChunkPosition) -> Result<Option<Option<Chunk>>> {
         match self {
             TerrainStorage::None => Ok(None),
             TerrainStorage::Local { tree } => {
@@ -44,7 +44,12 @@ impl TerrainStorage {
                     .context("Failed to read chunk from database.")?;
 
                 if let Some(value) = value {
-                    Ok(Some(Chunk::deserialize(&value)))
+                    if value.is_empty() {
+                        // An empty array indicates an empty chunk.
+                        Ok(Some(None))
+                    } else {
+                        Ok(Some(Some(Chunk::deserialize(&value))))
+                    }
                 } else {
                     Ok(None)
                 }
@@ -52,19 +57,26 @@ impl TerrainStorage {
         }
     }
 
-    pub fn write_chunk(&self, chunk: &Chunk, position: &ChunkPosition) -> Result<()> {
+    pub fn write_chunk(&self, chunk: Option<&Chunk>, position: &ChunkPosition) -> Result<()> {
         match self {
             TerrainStorage::None => Ok(()), // We don't save it so we just do nothing.
             TerrainStorage::Local { tree } => {
                 let key = position.to_database_key();
-                let mut value = Vec::new();
-                chunk.serialize(&mut value);
 
-                tree.insert(key, value)
-                    .context("Failed to insert terrain chunk into database.")?;
+                if let Some(chunk) = chunk {
+                    let mut value = Vec::new();
+                    chunk.serialize(&mut value);
+
+                    tree.insert(key, value)
+                        .context("Failed to insert terrain chunk into database.")?;
+                } else {
+                    // An empty array indicates this chunk is empty.
+                    tree.insert(key, &[])
+                        .context("Failed to insert empty terrain chunk into database.")?;
+                }
+
                 tree.flush()
                     .context("Failed to flush terrain chunk to database.")?;
-
                 Ok(())
             }
         }
@@ -100,18 +112,28 @@ fn load_terrain(
         entity.remove::<ToLoadTerrain>();
 
         if let Ok((storage, mut terrain_space)) = space.get_mut(parent.get()) {
-            if let Some(chunk) = storage.read_chunk(position)? {
-                // Sweet, add that into the world.
-                entity.insert((
-                    chunk,
-                    UpdateMesh, // TODO this should probably be controlled by some kind of mobile entity that actually loads terrain.
-                    position.as_transform(),
-                    SpatialHashOffset {
-                        translation: Vec3::new(8.0, 0.0, 8.0),
-                    },
-                ));
+            if let Some(storage_content) = storage.read_chunk(position)? {
+                if let Some(chunk) = storage_content {
+                    // Sweet, add that into the world.
+                    entity.insert((
+                        chunk,
+                        UpdateMesh, // TODO this should probably be controlled by some kind of mobile entity that actually loads terrain.
+                        position.as_transform(),
+                        SpatialHashOffset {
+                            translation: Vec3::new(8.0, 0.0, 8.0),
+                        },
+                    ));
 
-                terrain_space.non_empty_chunks.insert(entity.id());
+                    terrain_space.non_empty_chunks.insert(entity.id());
+                } else {
+                    // The storage indicated that this chunk is empty.
+                    entity.insert((
+                        position.as_transform(),
+                        SpatialHashOffset {
+                            translation: Vec3::new(8.0, 0.0, 8.0),
+                        },
+                    ));
+                }
             } else {
                 // Looks like it wasn't in the storage.
                 entity.insert(ToGenerateTerrain);
@@ -130,7 +152,7 @@ fn load_terrain(
 fn save_terrain(
     mut commands: Commands,
     storage: Query<&TerrainStorage>,
-    terrain: Query<(Entity, &Parent, &ChunkPosition, &Chunk), With<ToSaveTerrain>>,
+    terrain: Query<(Entity, &Parent, &ChunkPosition, Option<&Chunk>), With<ToSaveTerrain>>,
 ) {
     for (entity, this_storage, position, chunk) in terrain.iter() {
         if let Ok(storage) = storage.get(this_storage.get()) {

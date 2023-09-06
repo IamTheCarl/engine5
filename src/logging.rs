@@ -83,7 +83,7 @@ impl<S: Subscriber> Layer<S> for ConsoleSubscriber {
             if let Err(TrySendError::Full(_attempted_message)) =
                 self.sender.try_send(PrintConsoleLine::new(message.into()))
             {
-                log::warn!("Too many log messages in one frame. Not all of them can be forwarded to the console.");
+                eprintln!("Too many log messages in one frame. Not all of them can be forwarded to the console.");
             }
         }
     }

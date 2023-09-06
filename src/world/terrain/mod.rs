@@ -27,6 +27,8 @@ pub use terrain_space::{
     LoadAllTerrain, LoadTerrain, LoadsTerrain, TerrainSpace, TerrainSpaceBundle,
 };
 
+use self::terrain_space::ChunkModificationRequestList;
+
 #[derive(Resource)]
 pub struct TerrainTime {
     time: usize,
@@ -359,7 +361,7 @@ impl BlockRegistry {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Block {
     id: BlockID,
 }
@@ -596,7 +598,7 @@ fn test_size_in_memory() {
     );
 }
 
-#[derive(Component, Clone)]
+#[derive(Component, Clone, PartialEq, Eq)]
 pub struct Chunk {
     // Blocks are organized as x, z, y.
     blocks: [[[Option<Block>; Self::CHUNK_DIAMETER as usize]; Self::CHUNK_DIAMETER as usize];
@@ -610,7 +612,7 @@ impl Chunk {
         * Self::CHUNK_DIAMETER as usize
         * Self::CHUNK_DIAMETER as usize;
 
-    pub fn new(block: Option<Block>) -> Self {
+    pub const fn new(block: Option<Block>) -> Self {
         Self {
             blocks: [[[block; Self::CHUNK_DIAMETER as usize]; Self::CHUNK_DIAMETER as usize];
                 Self::CHUNK_DIAMETER as usize],
@@ -1526,6 +1528,7 @@ struct PreChunkBundle {
     global_transform: GlobalTransform,
     visibility: Visibility,
     computed_visibility: ComputedVisibility,
+    modification_request_list: ChunkModificationRequestList,
 }
 
 impl Default for PreChunkBundle {
@@ -1535,6 +1538,7 @@ impl Default for PreChunkBundle {
             global_transform: Default::default(),
             visibility: Default::default(),
             computed_visibility: Default::default(),
+            modification_request_list: ChunkModificationRequestList::default(),
         }
     }
 }
@@ -1611,15 +1615,28 @@ fn generate_chunk_mesh(
     mut commands: Commands,
     terrain_material: Res<TerrainMaterialHandle>,
     block_registry: Res<BlockRegistry>,
-    chunks: Query<(Entity, &Chunk, With<UpdateMesh>)>,
+    chunks: Query<(Entity, &Chunk), With<UpdateMesh>>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    for (entity, chunk, _with_update_mesh) in chunks.iter() {
+    for (entity, chunk) in chunks.iter() {
         let chunk_mesh = chunk.build_mesh(&block_registry);
 
         commands
             .entity(entity)
             .insert((meshes.add(chunk_mesh), terrain_material.0.clone()))
+            .remove::<UpdateMesh>();
+    }
+}
+
+fn remove_chunk_mesh(
+    mut commands: Commands,
+    chunks: Query<Entity, (With<UpdateMesh>, Without<Chunk>)>,
+) {
+    for entity in chunks.iter() {
+        commands
+            .entity(entity)
+            .remove::<Handle<TerrainMaterial>>()
+            .remove::<Handle<Mesh>>()
             .remove::<UpdateMesh>();
     }
 }
@@ -1646,6 +1663,7 @@ impl Plugin for TerrainPlugin {
             Update,
             (
                 generate_chunk_mesh.after(terrain_space::ModifyTerrain),
+                remove_chunk_mesh.after(terrain_space::ModifyTerrain),
                 terrain_texture_loading.pipe(crate::error_handler),
             ),
         );

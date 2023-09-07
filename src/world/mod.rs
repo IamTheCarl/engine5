@@ -2,7 +2,6 @@ use bevy::prelude::*;
 
 mod commands;
 pub mod physics;
-pub mod player;
 pub mod spatial_entities;
 pub mod terrain;
 
@@ -10,16 +9,13 @@ use anyhow::{bail, Context, Result};
 use std::path::PathBuf;
 
 use terrain::{BlockRegistry, BlockTag};
-
-mod dynamic_terrain;
 pub mod generation;
-mod global_terrain;
 
 use crate::GameState;
 
 use self::{
-    generation::OscillatingHills, global_terrain::GlobalTerrainEntity,
-    spatial_entities::storage::EntityStorage,
+    generation::OscillatingHills,
+    spatial_entities::{storage::EntityStorage, types::global_terrain::GlobalTerrainEntity},
 };
 
 #[derive(Component)]
@@ -133,7 +129,6 @@ impl Plugin for WorldPlugin {
         app.add_plugins((
             terrain::TerrainPlugin,
             physics::PhysicsPlugin,
-            player::PlayerPlugin,
             spatial_entities::SpatialEntityPlugin,
         ));
 
@@ -141,8 +136,6 @@ impl Plugin for WorldPlugin {
         app.add_systems(OnExit(GameState::InGame), unload_world);
 
         generation::setup_terrain_generation(app);
-        global_terrain::setup(app);
-        dynamic_terrain::setup(app);
         commands::setup(app);
     }
 }

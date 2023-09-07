@@ -1,23 +1,27 @@
 use anyhow::Result;
-use bevy::math::Vec3Swizzles;
-use bevy::prelude::*;
+use bevy::{math::Vec3Swizzles, prelude::*};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
-use crate::config::controls::{ButtonState, InputState, PlayerControlsPlugin};
-use crate::world::physics::{
-    Cylinder, Position, RayCast, RayTerrainIntersection, RayTerrainIntersectionList, Velocity,
+use crate::{
+    config::controls::{ButtonState, InputState, PlayerControlsPlugin},
+    world::{
+        physics::{
+            Cylinder, PhysicsPlugin, Position, RayCast, RayTerrainIntersection,
+            RayTerrainIntersectionList, Velocity,
+        },
+        spatial_entities::storage::{
+            BootstrapEntityInfo, DataLoader, DataSaver, EntitySerializationManager, EntityStorage,
+            EntityTypeId, SpatialEntity, Storable, ToSaveSpatial,
+        },
+        terrain::{
+            terrain_space::{
+                ModifyTerrain, SpaceModificationRequest, SpaceModificationRequestList,
+            },
+            Block, BlockRegistry, BlockTag, Chunk, LoadsTerrain, TerrainSpace,
+        },
+    },
 };
-use crate::world::terrain::terrain_space::SpaceModificationRequest;
-use crate::world::terrain::{Block, BlockRegistry, BlockTag, Chunk, LoadsTerrain, TerrainSpace};
-
-use super::physics::PhysicsPlugin;
-use super::spatial_entities::storage::{
-    BootstrapEntityInfo, DataLoader, DataSaver, EntitySerializationManager, EntityStorage,
-    EntityTypeId, SpatialEntity, Storable, ToSaveSpatial,
-};
-use super::terrain::terrain_space::{ModifyTerrain, SpaceModificationRequestList};
 
 const PLAYER_SPEED: f32 = 12.0;
 
@@ -30,6 +34,15 @@ struct PlayerEntityParameters {
 
 #[derive(Component)]
 struct LocalPlayer;
+
+#[derive(Component)]
+struct RemotePlayer;
+
+#[derive(Component)]
+struct OfflinePlayer;
+
+#[derive(Component)]
+struct PlayerSpawn;
 
 #[derive(Component)]
 pub struct PlayerEntity {

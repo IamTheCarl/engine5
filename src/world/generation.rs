@@ -2,16 +2,17 @@ use anyhow::{Context, Result};
 use bevy::{math::Vec3Swizzles, prelude::*};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    world::physics::{Cylinder, Position, Velocity},
-    world::terrain::storage::ToSaveTerrain,
-    world::{player::PlayerEntity, spatial_entities::SpatialHashOffset},
-};
-
-use super::{
-    dynamic_terrain::DynamicTerrainEntity,
-    spatial_entities::storage::{EntityStorage, ToSaveSpatial},
-    terrain::{Block, Chunk, ChunkIndex, ChunkPosition, LocalBlockCoordinate, TerrainSpace},
+use crate::world::{
+    physics::{Cylinder, Position, Velocity},
+    spatial_entities::{
+        storage::{EntityStorage, ToSaveSpatial},
+        types::{dynamic_terrain::DynamicTerrainEntity, player::PlayerEntity},
+        SpatialHashOffset,
+    },
+    terrain::{
+        storage::ToSaveTerrain, Block, Chunk, ChunkIndex, ChunkPosition, LocalBlockCoordinate,
+        TerrainSpace,
+    },
     WorldEntity,
 };
 

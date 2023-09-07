@@ -14,6 +14,7 @@ use super::{
 };
 
 pub mod storage;
+pub mod types;
 
 // TODO experiment with storing entities by archtype.
 #[derive(Resource)]
@@ -259,6 +260,11 @@ pub struct SpatialEntityPlugin;
 
 impl Plugin for SpatialEntityPlugin {
     fn build(&self, app: &mut App) {
+        app.add_plugins(types::player::PlayerPlugin);
+
+        types::global_terrain::setup(app);
+        types::dynamic_terrain::setup(app);
+
         app.add_systems(Startup, |mut commands: Commands| {
             // TODO make this accessible from a menu or terminal.
             commands.insert_resource(DebugRenderSettings {

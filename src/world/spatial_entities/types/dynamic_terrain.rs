@@ -2,7 +2,7 @@ use anyhow::Result;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::{
+use crate::world::{
     generation::WorldGeneratorEnum,
     physics::{Position, Velocity},
     spatial_entities::storage::{

@@ -5,7 +5,6 @@ use crate::world::spatial_entities::SpatialHashOffset;
 
 use super::{
     super::generation::ToGenerateTerrain, Chunk, ChunkPosition, TerrainSpace, TerrainTime,
-    UpdateMesh,
 };
 
 pub const CHUNK_TIME_TO_SAVE: usize = 60 * 5;
@@ -117,7 +116,6 @@ fn load_terrain(
                     // Sweet, add that into the world.
                     entity.insert((
                         chunk,
-                        UpdateMesh, // TODO this should probably be controlled by some kind of mobile entity that actually loads terrain.
                         position.as_transform(),
                         SpatialHashOffset {
                             translation: Vec3::new(8.0, 0.0, 8.0),

@@ -11,9 +11,7 @@ use crate::{
 use super::{
     dynamic_terrain::DynamicTerrainEntity,
     spatial_entities::storage::{EntityStorage, ToSaveSpatial},
-    terrain::{
-        Block, Chunk, ChunkIndex, ChunkPosition, LocalBlockCoordinate, TerrainSpace, UpdateMesh,
-    },
+    terrain::{Block, Chunk, ChunkIndex, ChunkPosition, LocalBlockCoordinate, TerrainSpace},
     WorldEntity,
 };
 
@@ -439,7 +437,6 @@ fn generate_terrain(
             let mut entity = commands.entity(entity_id);
 
             entity.remove::<ToGenerateTerrain>().insert((
-                UpdateMesh, // TODO this should probably be controlled by some kind of mobile entity that actually loads terrain.
                 position.as_transform(),
                 SpatialHashOffset {
                     translation: Vec3::new(8.0, 0.0, 8.0),

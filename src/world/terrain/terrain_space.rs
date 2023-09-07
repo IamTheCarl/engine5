@@ -1,7 +1,7 @@
 use super::{
     storage::{TerrainStorage, ToLoadTerrain, ToSaveTerrain},
     Block, Chunk, ChunkIndex, ChunkPosition, GlobalBlockCoordinate, LocalBlockCoordinate,
-    PreChunkBundle, TerrainTime, UpdateMesh,
+    PreChunkBundle, TerrainTime,
 };
 use crate::world::{
     generation::WorldGeneratorEnum, physics::Position, spatial_entities::storage::ToLoadSpatial,
@@ -244,10 +244,9 @@ impl ChunkModificationRequestList {
 }
 
 fn apply_modification_request_lists_to_chunks(
-    mut commands: Commands,
-    mut chunks: Query<(Entity, &mut Chunk, &mut ChunkModificationRequestList)>,
+    mut chunks: Query<(&mut Chunk, &mut ChunkModificationRequestList)>,
 ) {
-    for (chunk_entity, mut chunk, mut request_list) in chunks.iter_mut() {
+    for (mut chunk, mut request_list) in chunks.iter_mut() {
         for request in request_list.requests.drain(..) {
             match request {
                 ChunkModificationRequest::ReplaceBlock {
@@ -259,8 +258,6 @@ fn apply_modification_request_lists_to_chunks(
                         .expect("Local coordinate was outside of chunk range.");
 
                     *block_memory = new_block;
-                    let mut command_list = commands.entity(chunk_entity);
-                    command_list.insert(UpdateMesh);
                 }
             }
         }
@@ -309,7 +306,7 @@ fn remove_empty_chunks_after_modification(
             commands
                 .entity(chunk_entity)
                 .remove::<Chunk>()
-                .insert((UpdateMesh, ToSaveTerrain));
+                .insert(ToSaveTerrain);
         }
 
         let terrain_space_entity = chunk_parent.get();

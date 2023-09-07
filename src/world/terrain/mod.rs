@@ -1529,6 +1529,7 @@ struct PreChunkBundle {
     visibility: Visibility,
     computed_visibility: ComputedVisibility,
     modification_request_list: ChunkModificationRequestList,
+    update_mesh: UpdateMesh,
 }
 
 impl Default for PreChunkBundle {
@@ -1539,6 +1540,7 @@ impl Default for PreChunkBundle {
             visibility: Default::default(),
             computed_visibility: Default::default(),
             modification_request_list: ChunkModificationRequestList::default(),
+            update_mesh: UpdateMesh,
         }
     }
 }
@@ -1611,11 +1613,12 @@ fn terrain_setup(
 #[component(storage = "SparseSet")]
 pub struct UpdateMesh;
 
+#[allow(clippy::complexity)]
 fn generate_chunk_mesh(
     mut commands: Commands,
     terrain_material: Res<TerrainMaterialHandle>,
     block_registry: Res<BlockRegistry>,
-    chunks: Query<(Entity, &Chunk), With<UpdateMesh>>,
+    chunks: Query<(Entity, &Chunk), (With<UpdateMesh>, Changed<Chunk>)>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     for (entity, chunk) in chunks.iter() {
@@ -1623,21 +1626,18 @@ fn generate_chunk_mesh(
 
         commands
             .entity(entity)
-            .insert((meshes.add(chunk_mesh), terrain_material.0.clone()))
-            .remove::<UpdateMesh>();
+            .insert((meshes.add(chunk_mesh), terrain_material.0.clone()));
     }
 }
 
-fn remove_chunk_mesh(
-    mut commands: Commands,
-    chunks: Query<Entity, (With<UpdateMesh>, Without<Chunk>)>,
-) {
-    for entity in chunks.iter() {
-        commands
-            .entity(entity)
-            .remove::<Handle<TerrainMaterial>>()
-            .remove::<Handle<Mesh>>()
-            .remove::<UpdateMesh>();
+fn remove_chunk_mesh(mut commands: Commands, mut removed: RemovedComponents<Chunk>) {
+    for entity in &mut removed {
+        // Sometimes the whole entity was removed.
+        if let Some(mut commands) = commands.get_entity(entity) {
+            commands
+                .remove::<Handle<TerrainMaterial>>()
+                .remove::<Handle<Mesh>>();
+        }
     }
 }
 

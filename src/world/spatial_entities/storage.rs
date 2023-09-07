@@ -262,62 +262,51 @@ impl EntityStorage {
 
 fn new_tracings(
     new_tracings: Query<(Entity, &Storable), Changed<Storable>>,
-    storage: Option<ResMut<EntityStorage>>,
+    mut storage: ResMut<EntityStorage>,
 ) {
-    if let Some(mut storage) = storage {
-        for (entity_id, traceable) in new_tracings.iter() {
-            let tracer_id = traceable.id;
+    for (entity_id, traceable) in new_tracings.iter() {
+        let tracer_id = traceable.id;
 
-            storage.tracers_to_entities.insert(tracer_id, entity_id);
-            storage.entities_to_tracers.insert(entity_id, tracer_id);
+        storage.tracers_to_entities.insert(tracer_id, entity_id);
+        storage.entities_to_tracers.insert(entity_id, tracer_id);
+    }
+}
+
+fn clean_up_tracings(mut removed: RemovedComponents<Storable>, mut storage: ResMut<EntityStorage>) {
+    for entity_id in removed.iter() {
+        if let Some(tracker_id) = storage.entities_to_tracers.remove(&entity_id) {
+            storage.tracers_to_entities.remove(&tracker_id);
+        } else {
+            log::warn!("Removed traceable without an associated entity.");
         }
     }
 }
 
-fn clean_up_tracings(
-    mut removed: RemovedComponents<Storable>,
-    storage: Option<ResMut<EntityStorage>>,
-) {
-    if let Some(mut storage) = storage {
-        for entity_id in removed.iter() {
-            if let Some(tracker_id) = storage.entities_to_tracers.remove(&entity_id) {
-                storage.tracers_to_entities.remove(&tracker_id);
-            } else {
-                log::warn!("Removed traceable without an associated entity.");
-            }
-        }
-    }
-}
-
-fn save_bootstrap_entity_list(storage: Option<Res<EntityStorage>>) {
-    if let Some(storage) = storage {
-        if let Err(error) = storage.save_bootstrap_entities_list() {
-            log::error!("Failed to save bootstrap entities list: {:?}", error);
-        }
+fn save_bootstrap_entity_list(storage: Res<EntityStorage>) {
+    if let Err(error) = storage.save_bootstrap_entities_list() {
+        log::error!("Failed to save bootstrap entities list: {:?}", error);
     }
 }
 
 fn bootstrap_entities(
     mut commands: Commands,
-    storage: Option<Res<EntityStorage>>,
+    storage: Res<EntityStorage>,
     serialization_manager: Res<EntitySerializationManager>,
-    world_entity: Option<Res<WorldEntity>>,
+    world_entity: Res<WorldEntity>,
 ) {
-    if let (Some(storage), Some(world_entity)) = (storage, world_entity) {
-        if !storage.bootstrap_complete.swap(true, Ordering::SeqCst) {
-            let bootstrap_list = storage
-                .bootstrap_list
-                .lock()
-                .expect("Bootstrap list has been poisoned!");
-            for tracer_id in bootstrap_list.bootstrap_entities.keys() {
-                if let Err(error) = serialization_manager.load_entity(
-                    *tracer_id,
-                    &storage,
-                    world_entity.entity,
-                    &mut commands,
-                ) {
-                    log::error!("Failed to load entity {}: {:?}", tracer_id, error);
-                }
+    if !storage.bootstrap_complete.swap(true, Ordering::SeqCst) {
+        let bootstrap_list = storage
+            .bootstrap_list
+            .lock()
+            .expect("Bootstrap list has been poisoned!");
+        for tracer_id in bootstrap_list.bootstrap_entities.keys() {
+            if let Err(error) = serialization_manager.load_entity(
+                *tracer_id,
+                &storage,
+                world_entity.entity,
+                &mut commands,
+            ) {
+                log::error!("Failed to load entity {}: {:?}", tracer_id, error);
             }
         }
     }
@@ -328,7 +317,7 @@ fn save_spatial_hashes(
     spatial_entity_tracker: Res<SpatialEntityTracker>,
     spatial_entities: Query<(Entity, &Storable)>,
     chunks: Query<(Entity, &ChunkPosition), With<ToSaveSpatial>>,
-    storage: Option<Res<EntityStorage>>,
+    storage: Res<EntityStorage>,
 ) {
     fn save_spatial_hash(
         commands: &mut Commands,
@@ -364,35 +353,33 @@ fn save_spatial_hashes(
         Ok(())
     }
 
-    if let Some(storage) = storage {
-        // An empty set we can use to write to the database in the case that there are no entities in this space.
-        let default_entity_set = HashSet::new();
+    // An empty set we can use to write to the database in the case that there are no entities in this space.
+    let default_entity_set = HashSet::new();
 
-        for (chunk_entity, chunk_position) in chunks.iter() {
-            commands.entity(chunk_entity).remove::<ToSaveSpatial>();
+    for (chunk_entity, chunk_position) in chunks.iter() {
+        commands.entity(chunk_entity).remove::<ToSaveSpatial>();
 
-            let entity_set = if let Some(entity_set) =
-                spatial_entity_tracker.get_cell_entities(&chunk_position.into())
-            {
-                entity_set
-            } else {
-                // We still need to save something, otherwise we'll think this chunk hadn't been generated when we go to load the world.
-                &default_entity_set
-            };
+        let entity_set = if let Some(entity_set) =
+            spatial_entity_tracker.get_cell_entities(&chunk_position.into())
+        {
+            entity_set
+        } else {
+            // We still need to save something, otherwise we'll think this chunk hadn't been generated when we go to load the world.
+            &default_entity_set
+        };
 
-            if let Err(error) = save_spatial_hash(
-                &mut commands,
-                entity_set,
-                &spatial_entities,
-                chunk_position,
-                &storage,
-            ) {
-                log::error!(
-                    "Failed to save spatial hash for position {}: {:?}",
-                    chunk_position.index,
-                    error
-                );
-            }
+        if let Err(error) = save_spatial_hash(
+            &mut commands,
+            entity_set,
+            &spatial_entities,
+            chunk_position,
+            &storage,
+        ) {
+            log::error!(
+                "Failed to save spatial hash for position {}: {:?}",
+                chunk_position.index,
+                error
+            );
         }
     }
 }
@@ -600,9 +587,9 @@ impl EntitySerializationManager {
 
 fn load_entities(
     mut commands: Commands,
-    world_entity: Option<Res<WorldEntity>>,
+    world_entity: Res<WorldEntity>,
     terrain_chunks: Query<(Entity, &ChunkPosition), With<ToLoadSpatial>>,
-    storage: Option<Res<EntityStorage>>,
+    storage: Res<EntityStorage>,
     serialization_manager: Res<EntitySerializationManager>,
 ) {
     fn load_spatial_hash(
@@ -626,39 +613,37 @@ fn load_entities(
         }
     }
 
-    if let (Some(storage), Some(world_entity)) = (storage, world_entity) {
-        for (chunk_entity, chunk_position) in terrain_chunks.iter() {
-            match load_spatial_hash(chunk_position, &storage) {
-                Ok(spatial_hash) => {
-                    if let Some(entities) = spatial_hash {
-                        // We now have a list of tracer IDs for entities that belong in this chunk.
+    for (chunk_entity, chunk_position) in terrain_chunks.iter() {
+        match load_spatial_hash(chunk_position, &storage) {
+            Ok(spatial_hash) => {
+                if let Some(entities) = spatial_hash {
+                    // We now have a list of tracer IDs for entities that belong in this chunk.
 
-                        for tracer_id in entities {
-                            if let Err(error) = serialization_manager.load_entity(
-                                tracer_id,
-                                &storage,
-                                world_entity.entity,
-                                &mut commands,
-                            ) {
-                                log::error!("Failed to load entity {}: {:?}", tracer_id, error);
-                            }
+                    for tracer_id in entities {
+                        if let Err(error) = serialization_manager.load_entity(
+                            tracer_id,
+                            &storage,
+                            world_entity.entity,
+                            &mut commands,
+                        ) {
+                            log::error!("Failed to load entity {}: {:?}", tracer_id, error);
                         }
-                        // Make sure we don't try to load it a second time.
-                        commands.entity(chunk_entity).remove::<ToLoadSpatial>();
-                    } else {
-                        // Looks like we have to generate it.
-                        commands
-                            .entity(chunk_entity)
-                            .insert(ToGenerateSpatial)
-                            .remove::<ToLoadSpatial>();
                     }
+                    // Make sure we don't try to load it a second time.
+                    commands.entity(chunk_entity).remove::<ToLoadSpatial>();
+                } else {
+                    // Looks like we have to generate it.
+                    commands
+                        .entity(chunk_entity)
+                        .insert(ToGenerateSpatial)
+                        .remove::<ToLoadSpatial>();
                 }
-                Err(error) => log::error!(
-                    "Failed to load spatial hash for chunk {}: {:?}",
-                    chunk_position.index,
-                    error
-                ),
             }
+            Err(error) => log::error!(
+                "Failed to load spatial hash for chunk {}: {:?}",
+                chunk_position.index,
+                error
+            ),
         }
     }
 }
@@ -726,12 +711,16 @@ pub(super) fn register_storage(app: &mut App) {
     app.add_systems(
         Update,
         (
-            new_tracings,
-            clean_up_tracings,
-            load_entities,
-            save_spatial_hashes,
-            save_bootstrap_entity_list,
-            bootstrap_entities,
+            new_tracings.run_if(resource_exists::<EntityStorage>()),
+            clean_up_tracings.run_if(resource_exists::<EntityStorage>()),
+            load_entities
+                .run_if(resource_exists::<EntityStorage>())
+                .run_if(resource_exists::<WorldEntity>()),
+            save_spatial_hashes.run_if(resource_exists::<EntityStorage>()),
+            save_bootstrap_entity_list.run_if(resource_exists::<EntityStorage>()),
+            bootstrap_entities
+                .run_if(resource_exists::<EntityStorage>())
+                .run_if(resource_exists::<WorldEntity>()),
         ),
     );
 

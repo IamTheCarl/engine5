@@ -398,26 +398,24 @@ type GenerateEntitiesQuery<'a, 'b, 'c> =
 
 fn generate_spatial_entities(
     mut commands: Commands,
-    world_entity: Option<Res<WorldEntity>>,
+    world_entity: Res<WorldEntity>,
     terrain_spaces: Query<&TerrainSpace>,
     to_generate: GenerateEntitiesQuery,
-    storage: Option<ResMut<EntityStorage>>,
+    mut storage: ResMut<EntityStorage>,
 ) -> Result<()> {
-    if let (Some(mut storage), Some(world_entity)) = (storage, world_entity) {
-        // TODO the generation calls should be done outside of the ECS so that this system becomes non-blocking.
-        for (entity_id, position, parent) in to_generate.iter() {
-            if let Ok(terrain_space) = terrain_spaces.get(parent.get()) {
-                terrain_space.generator.generate_spatial(
-                    position,
-                    &mut storage,
-                    world_entity.entity,
-                    &mut commands,
-                )?;
+    // TODO the generation calls should be done outside of the ECS so that this system becomes non-blocking.
+    for (entity_id, position, parent) in to_generate.iter() {
+        if let Ok(terrain_space) = terrain_spaces.get(parent.get()) {
+            terrain_space.generator.generate_spatial(
+                position,
+                &mut storage,
+                world_entity.entity,
+                &mut commands,
+            )?;
 
-                let mut entity = commands.entity(entity_id);
+            let mut entity = commands.entity(entity_id);
 
-                entity.remove::<ToGenerateSpatial>().insert(ToSaveSpatial);
-            }
+            entity.remove::<ToGenerateSpatial>().insert(ToSaveSpatial);
         }
     }
 
@@ -459,7 +457,10 @@ pub fn setup_terrain_generation(app: &mut App) {
         Update,
         (
             generate_terrain.pipe(crate::error_handler),
-            generate_spatial_entities.pipe(crate::error_handler),
+            generate_spatial_entities
+                .pipe(crate::error_handler)
+                .run_if(resource_exists::<EntityStorage>())
+                .run_if(resource_exists::<WorldEntity>()),
         ),
     );
 }

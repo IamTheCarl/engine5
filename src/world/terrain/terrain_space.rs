@@ -256,7 +256,6 @@ fn apply_modification_request_lists_to_chunks(
                     let block_memory = chunk
                         .get_block_local_mut(coordinate)
                         .expect("Local coordinate was outside of chunk range.");
-
                     *block_memory = new_block;
                 }
             }
@@ -358,7 +357,6 @@ pub struct TerrainSpaceBundle {
     pub position: Position,
     pub storage: TerrainStorage,
     pub modification_request_list: SpaceModificationRequestList,
-    // pub storable: Storable, // FIXME we can't store this yet with the current system. Implement that later.
     pub transform: Transform,
     pub global_transform: GlobalTransform,
     pub visibility: Visibility,

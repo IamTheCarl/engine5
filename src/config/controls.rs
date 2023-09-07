@@ -554,16 +554,32 @@ impl Plugin for PlayerControlsPlugin {
         }
 
         app.add_systems(Startup, setup.after(LoadConfigSet));
+
+        app.configure_set(Update, PlayerControlsPlugin);
+
         InputMap::app_setup(app);
-        app.add_systems(OnEnter(WorldState::Running), initial_grab_cursor);
-        app.add_systems(OnExit(WorldState::Running), release_cursor);
-        app.add_systems(Update, update_ui_input_map.before(NavRequestSystem));
+        app.add_systems(
+            OnEnter(WorldState::Running),
+            initial_grab_cursor.in_set(PlayerControlsPlugin),
+        );
+        app.add_systems(
+            OnExit(WorldState::Running),
+            release_cursor.in_set(PlayerControlsPlugin),
+        );
+        app.add_systems(
+            Update,
+            update_ui_input_map
+                .before(NavRequestSystem)
+                .in_set(PlayerControlsPlugin),
+        );
 
         app.add_systems(
             Update,
             (
-                detect_gamepads,
-                update_inputs.run_if(in_state(GameState::InGame)),
+                detect_gamepads.in_set(PlayerControlsPlugin),
+                update_inputs
+                    .run_if(in_state(GameState::InGame))
+                    .in_set(PlayerControlsPlugin),
             ),
         );
     }

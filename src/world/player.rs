@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
 
-use crate::config::controls::{ButtonState, InputState};
+use crate::config::controls::{ButtonState, InputState, PlayerControlsPlugin};
 use crate::world::physics::{
     Cylinder, Position, RayCast, RayTerrainIntersection, RayTerrainIntersectionList, Velocity,
 };
@@ -17,7 +17,7 @@ use super::spatial_entities::storage::{
     BootstrapEntityInfo, DataLoader, DataSaver, EntitySerializationManager, EntityStorage,
     EntityTypeId, SpatialEntity, Storable, ToSaveSpatial,
 };
-use super::terrain::terrain_space::SpaceModificationRequestList;
+use super::terrain::terrain_space::{ModifyTerrain, SpaceModificationRequestList};
 
 const PLAYER_SPEED: f32 = 12.0;
 
@@ -400,9 +400,13 @@ impl Plugin for PlayerPlugin {
         app.add_systems(
             Update,
             (
-                PlayerEntity::process_inputs.before(PhysicsPlugin),
-                PlayerEntity::place_block.pipe(crate::error_handler),
-                PlayerEntity::remove_block,
+                PlayerEntity::process_inputs
+                    .before(PhysicsPlugin)
+                    .after(PlayerControlsPlugin),
+                PlayerEntity::place_block
+                    .pipe(crate::error_handler)
+                    .before(ModifyTerrain),
+                PlayerEntity::remove_block.before(ModifyTerrain),
             ),
         );
 

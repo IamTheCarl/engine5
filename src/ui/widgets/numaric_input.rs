@@ -1205,7 +1205,6 @@ fn number_parsing() {
     );
 }
 
-// TODO Support copy and pasting of numbers.
 #[allow(clippy::complexity)]
 fn copy(
     keyboard_status: Res<Input<KeyCode>>,

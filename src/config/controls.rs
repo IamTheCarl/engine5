@@ -416,7 +416,8 @@ fn update_inputs(
                     mouse_movement += Vec2::new(
                         (-event.delta.x * window_scale).to_radians(),
                         (-event.delta.y * window_scale).to_radians(),
-                    );
+                    ) * time.delta().as_secs_f32()
+                        * 100.0;
                 }
             }
             CursorGrabMode::None => {}

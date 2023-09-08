@@ -6,7 +6,7 @@ use crate::world::{
     physics::{Cylinder, Position, Velocity},
     spatial_entities::{
         storage::{EntityStorage, ToSaveSpatial},
-        types::{dynamic_terrain::DynamicTerrainEntity, player::PlayerEntity},
+        types::{dynamic_terrain::DynamicTerrainEntity, player::spawner::PlayerSpawner},
         SpatialHashOffset,
     },
     terrain::{
@@ -43,7 +43,7 @@ impl WorldGenerator for EmptyWorld {
         // Spawn a player.
         if chunk_position.index == ChunkIndex::ZERO {
             let middle = Chunk::CHUNK_DIAMETER / 2;
-            PlayerEntity::spawn(
+            PlayerSpawner::spawn(
                 parent,
                 commands,
                 storage,
@@ -51,7 +51,6 @@ impl WorldGenerator for EmptyWorld {
                     translation: Vec3::new(middle as f32, middle as f32, middle as f32),
                     rotation: 0.0,
                 },
-                0.0,
             )?;
         }
 
@@ -91,7 +90,7 @@ impl WorldGenerator for FlatWorld {
     ) -> Result<()> {
         if chunk_position.index == ChunkIndex::ZERO {
             let middle = Chunk::CHUNK_DIAMETER / 2;
-            PlayerEntity::spawn(
+            PlayerSpawner::spawn(
                 parent,
                 commands,
                 storage,
@@ -99,7 +98,6 @@ impl WorldGenerator for FlatWorld {
                     translation: Vec3::new(middle as f32, 1.0, middle as f32),
                     rotation: 0.0,
                 },
-                0.0,
             )?;
         }
 
@@ -179,7 +177,7 @@ impl WorldGenerator for OscillatingHills {
             let middle = Chunk::CHUNK_DIAMETER / 2;
 
             let height = self.calculate_height_for_index(base_offset, IVec2::splat(middle));
-            PlayerEntity::spawn(
+            PlayerSpawner::spawn(
                 parent,
                 commands,
                 storage,
@@ -187,7 +185,6 @@ impl WorldGenerator for OscillatingHills {
                     translation: Vec3::new(middle as f32, height, middle as f32),
                     rotation: 0.0,
                 },
-                0.0,
             )?;
         }
 
@@ -264,7 +261,7 @@ impl WorldGenerator for CheckerBoard {
 
         if chunk_position.index == ChunkIndex::ZERO {
             let middle = Chunk::CHUNK_DIAMETER / 2;
-            PlayerEntity::spawn(
+            PlayerSpawner::spawn(
                 parent,
                 commands,
                 storage,
@@ -272,7 +269,6 @@ impl WorldGenerator for CheckerBoard {
                     translation: Vec3::new(middle as f32, height as f32, middle as f32),
                     rotation: 0.0,
                 },
-                0.0,
             )?;
         }
 

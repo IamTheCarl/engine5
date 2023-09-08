@@ -23,6 +23,8 @@ use crate::{
     },
 };
 
+pub mod spawner;
+
 const PLAYER_SPEED: f32 = 12.0;
 
 #[derive(Deserialize)]
@@ -30,32 +32,37 @@ struct PlayerEntityParameters {
     velocity: Velocity,
     position: Position,
     pitch: f32,
+    name: String,
 }
 
+/// Marks a player as being local, making it responsive to local input controls.
 #[derive(Component)]
-struct LocalPlayer;
+pub struct LocalPlayer;
 
+/// Marks a player as being remote, making it responsive to its associated client.
 #[derive(Component)]
-struct RemotePlayer;
+pub struct RemotePlayer {
+    client_id: u64,
+}
 
+/// Indicates that this entity is a player's head.
+/// Only local players get a head.
 #[derive(Component)]
-struct OfflinePlayer;
-
-#[derive(Component)]
-struct PlayerSpawn;
+pub struct PlayerHead;
 
 #[derive(Component)]
 pub struct PlayerEntity {
+    pub name: String,
     pitch: f32,
 }
 
 impl SpatialEntity<(Entity, &Storable, &Position, &Velocity, &Self)> for PlayerEntity {
-    const TYPE_ID: EntityTypeId = 0;
+    const TYPE_ID: EntityTypeId = 3;
     const BOOTSTRAP: BootstrapEntityInfo = BootstrapEntityInfo::LocalPlayer;
 
     fn load(data_loader: DataLoader, parent: Entity, commands: &mut Commands) -> Result<()> {
         let (storable, parameters) = data_loader.load::<PlayerEntityParameters>()?;
-        Self::spawn_internal(parent, commands, storable, parameters);
+        Self::spawn_internal(parent, commands, storable, (), parameters);
         Ok(())
     }
 
@@ -73,6 +80,7 @@ impl SpatialEntity<(Entity, &Storable, &Position, &Velocity, &Self)> for PlayerE
         struct PlayerStorageSerialization<'a> {
             velocity: &'a Velocity,
             position: &'a Position,
+            name: &'a String,
             pitch: f32,
         }
 
@@ -82,6 +90,7 @@ impl SpatialEntity<(Entity, &Storable, &Position, &Velocity, &Self)> for PlayerE
             &PlayerStorageSerialization {
                 position,
                 velocity,
+                name: &player.name,
                 pitch: player.pitch,
             },
         );
@@ -89,12 +98,12 @@ impl SpatialEntity<(Entity, &Storable, &Position, &Velocity, &Self)> for PlayerE
 }
 
 impl PlayerEntity {
-    /// Spawns the `Camera3dBundle` to be controlled
-    pub fn spawn(
+    pub fn spawn_local(
         parent: Entity,
         commands: &mut Commands,
         storage: &EntityStorage,
         position: Position,
+        name: String,
         pitch: f32,
     ) -> Result<()> {
         let storable = storage.new_storable_component::<PlayerEntity, _>()?;
@@ -103,10 +112,12 @@ impl PlayerEntity {
             parent,
             commands,
             storable,
+            LocalPlayer,
             PlayerEntityParameters {
                 velocity: Velocity::default(),
                 position,
                 pitch,
+                name,
             },
         );
         Ok(())
@@ -116,12 +127,14 @@ impl PlayerEntity {
         parent: Entity,
         commands: &mut Commands,
         storable: Storable,
+        state: impl Bundle,
         parameters: PlayerEntityParameters,
     ) {
         commands
             .spawn((
                 Self {
                     pitch: parameters.pitch,
+                    name: parameters.name,
                 },
                 Cylinder {
                     height: 2.5,
@@ -134,34 +147,38 @@ impl PlayerEntity {
                 LoadsTerrain { radius: 8 },
                 storable,
                 ToSaveSpatial, // We want to save this as soon as its spawned.
-                LocalPlayer, // FIXME this shouldn't just be a local player by default, but it's okay since multiplayer isn't implemented yet.
+                state,
             ))
-            .set_parent(parent)
-            .with_children(|parent| {
-                parent
-                    .spawn((
-                        Transform::from_translation(Vec3::new(0.0, 2.0, 0.0)),
-                        GlobalTransform::default(),
-                    ))
-                    .with_children(|parent| {
-                        parent.spawn((
-                            Camera3dBundle {
-                                transform: Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
-                                ..Default::default()
-                            },
-                            RayCast {
-                                direction: Vec3::NEG_Z,
-                                length: 256.0,
-                            },
-                            RayTerrainIntersectionList {
-                                contact_limit: Some(std::num::NonZeroUsize::new(1).unwrap()),
-                                contacts: HashMap::new(),
-                            },
-                            BlockPlacementContext::default(),
-                            BlockRemovalContext::default(),
-                        ));
-                    });
-            });
+            .set_parent(parent);
+    }
+
+    pub fn spawn_head(commands: &mut Commands, player_entity: Entity) {
+        commands.entity(player_entity).with_children(|parent| {
+            parent
+                .spawn((
+                    Transform::from_translation(Vec3::new(0.0, 2.0, 0.0)),
+                    GlobalTransform::default(),
+                    PlayerHead,
+                ))
+                .with_children(|parent| {
+                    parent.spawn((
+                        Camera3dBundle {
+                            transform: Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
+                            ..Default::default()
+                        },
+                        RayCast {
+                            direction: Vec3::NEG_Z,
+                            length: 256.0,
+                        },
+                        RayTerrainIntersectionList {
+                            contact_limit: Some(std::num::NonZeroUsize::new(1).unwrap()),
+                            contacts: HashMap::new(),
+                        },
+                        BlockPlacementContext::default(),
+                        BlockRemovalContext::default(),
+                    ));
+                });
+        });
     }
 
     fn process_inputs(
@@ -404,7 +421,26 @@ impl Default for BlockRemovalContext {
     }
 }
 
-/// Contains everything needed to add first-person fly camera behavior to your game
+fn head_spawner(mut commands: Commands, players: Query<Entity, Added<LocalPlayer>>) {
+    for player in players.iter() {
+        PlayerEntity::spawn_head(&mut commands, player);
+    }
+}
+
+fn head_remover(
+    mut commands: Commands,
+    heads: Query<(Entity, &Parent), With<PlayerHead>>,
+    mut removed: RemovedComponents<LocalPlayer>,
+) {
+    for removed in &mut removed {
+        for (head, player) in heads.iter() {
+            if player.get() == removed {
+                commands.entity(head).despawn_recursive();
+            }
+        }
+    }
+}
+
 #[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 pub struct PlayerPlugin;
 
@@ -420,6 +456,8 @@ impl Plugin for PlayerPlugin {
                     .pipe(crate::error_handler)
                     .before(ModifyTerrain),
                 PlayerEntity::remove_block.before(ModifyTerrain),
+                head_spawner,
+                head_remover,
             ),
         );
 

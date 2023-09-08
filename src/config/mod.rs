@@ -7,6 +7,7 @@ use serde::{de::DeserializeOwned, Serialize};
 pub mod controls;
 pub mod file_paths;
 pub mod graphics;
+pub mod player_info;
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 pub struct LoadConfigSet;
@@ -92,6 +93,7 @@ impl Plugin for ConfigPlugin {
     fn build(&self, app: &mut App) {
         app.configure_set(Startup, LoadConfigPreSet);
         app.configure_set(Startup, LoadConfigSet.after(LoadConfigPreSet));
+        player_info::setup(app);
 
         app.add_systems(
             Startup,

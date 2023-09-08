@@ -60,7 +60,7 @@ pub enum BootstrapEntityInfo {
     LocalPlayer,
     GlobalTerrain,
     RemotePlayer,
-    PlayerSpawnPoint,
+    PlayerSpawner,
 }
 
 impl Default for BootstrapEntityInfo {

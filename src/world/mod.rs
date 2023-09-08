@@ -11,11 +11,18 @@ use std::path::PathBuf;
 use terrain::{BlockRegistry, BlockTag};
 pub mod generation;
 
-use crate::GameState;
+use crate::{config::player_info::PlayerInfo, error_handler, GameState};
 
 use self::{
     generation::OscillatingHills,
-    spatial_entities::{storage::EntityStorage, types::global_terrain::GlobalTerrainEntity},
+    physics::Position,
+    spatial_entities::{
+        storage::EntityStorage,
+        types::{
+            global_terrain::GlobalTerrainEntity,
+            player::{spawner::PlayerSpawner, LocalPlayer, PlayerEntity, RemotePlayer},
+        },
+    },
 };
 
 #[derive(Component)]
@@ -64,6 +71,10 @@ pub fn raw_open_world(
         sled::open(path).context("Failed to open or create database for world.")?;
     let storage = EntityStorage::new(&world_database)?;
 
+    // TODO we shouldn't make this request if we're running a headless server.
+    // Request that the local player be spawned as soon as possible.
+    commands.insert_resource(SpawnLocalPlayerRequest);
+
     let entity = commands
         .spawn((
             World,
@@ -103,6 +114,47 @@ pub fn raw_open_world(
     Ok(())
 }
 
+/// This resource is used as a marker, telling the ECS that we need to spawn the local player.
+#[derive(Resource)]
+struct SpawnLocalPlayerRequest;
+
+#[allow(clippy::complexity)]
+fn spawn_local_player(
+    mut commands: Commands,
+    player_info: Res<PlayerInfo>,
+    world_entity: Res<WorldEntity>,
+    storage: ResMut<EntityStorage>,
+    offline_players: Query<(Entity, &PlayerEntity), Without<RemotePlayer>>,
+    player_spawn: Query<&Position, With<PlayerSpawner>>,
+) -> Result<()> {
+    // Check if the player already exists in the world.
+    for (player_entity, offline_player) in offline_players.iter() {
+        if offline_player.name == player_info.name {
+            // This is our player! Activate it!
+            commands.entity(player_entity).insert(LocalPlayer);
+
+            return Ok(());
+        }
+    }
+
+    // Looks like they don't.
+    // Spawn them in.
+    if let Ok(spawn_position) = player_spawn.get_single() {
+        PlayerEntity::spawn_local(
+            world_entity.entity,
+            &mut commands,
+            &storage,
+            spawn_position.clone(),
+            player_info.name.clone(),
+            0.0,
+        )?;
+
+        commands.remove_resource::<SpawnLocalPlayerRequest>();
+    }
+
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash, States)]
 pub enum WorldState {
     #[default]
@@ -134,6 +186,14 @@ impl Plugin for WorldPlugin {
 
         app.add_state::<WorldState>();
         app.add_systems(OnExit(GameState::InGame), unload_world);
+        app.add_systems(
+            Update,
+            spawn_local_player
+                .pipe(error_handler)
+                .run_if(resource_exists::<WorldEntity>())
+                .run_if(resource_exists::<SpawnLocalPlayerRequest>())
+                .run_if(in_state(WorldState::Running)),
+        );
 
         generation::setup_terrain_generation(app);
         commands::setup(app);

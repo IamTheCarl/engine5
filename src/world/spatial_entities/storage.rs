@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use bevy::{app::AppExit, ecs::query::WorldQuery, prelude::*};
+use bevy::{ecs::query::WorldQuery, prelude::*};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -671,19 +671,6 @@ fn save_timer(
     }
 }
 
-fn save_on_shutdown(
-    mut commands: Commands,
-    mut events: EventReader<AppExit>,
-    chunks: Query<Entity, With<ChunkPosition>>,
-) {
-    if events.iter().next().is_some() {
-        // Save! Save everything!
-        for chunk in chunks.iter() {
-            commands.entity(chunk).insert(ToSaveSpatial);
-        }
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, Hash, Clone, SystemSet)]
 struct SerializationSetup;
 
@@ -727,6 +714,4 @@ pub(super) fn register_storage(app: &mut App) {
     );
 
     app.add_systems(FixedUpdate, save_timer.before(SaveSystemSet));
-
-    app.add_systems(PostUpdate, save_on_shutdown.before(SaveSystemSet));
 }

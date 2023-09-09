@@ -1,5 +1,6 @@
 use anyhow::Result;
-use bevy::{math::Vec3Swizzles, prelude::*};
+use bevy::{ecs::system::EntityCommands, math::Vec3Swizzles, prelude::*};
+use proc_macros::entity_serialization;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, time::Duration};
 
@@ -11,8 +12,7 @@ use crate::{
             RayTerrainIntersectionList, Velocity,
         },
         spatial_entities::storage::{
-            BootstrapEntityInfo, DataLoader, DataSaver, EntitySerializationManager, EntityStorage,
-            EntityTypeId, SpatialEntity, Storable, ToSaveSpatial,
+            EntitySerializationManager, EntityStorage, Storable, ToSaveSpatial,
         },
         terrain::{
             terrain_space::{
@@ -27,13 +27,20 @@ pub mod spawner;
 
 const PLAYER_SPEED: f32 = 12.0;
 
-#[derive(Deserialize)]
+#[entity_serialization(type_id = 3, marker = PlayerEntity, bootstrap = BootstrapEntityInfo::LocalPlayer)]
 struct PlayerEntityParameters {
     velocity: Velocity,
     position: Position,
-    pitch: f32,
-    name: String,
+    player_info: PlayerEntity,
 }
+
+// #[derive(Deserialize)]
+// struct PlayerEntityParameters {
+//     velocity: Velocity,
+//     position: Position,
+//     pitch: f32,
+//     name: String,
+// }
 
 /// Marks a player as being local, making it responsive to local input controls.
 #[derive(Component)]
@@ -50,51 +57,10 @@ pub struct RemotePlayer {
 #[derive(Component)]
 pub struct PlayerHead;
 
-#[derive(Component)]
+#[derive(Component, Serialize, Deserialize)]
 pub struct PlayerEntity {
     pub name: String,
     pitch: f32,
-}
-
-impl SpatialEntity<(Entity, &Storable, &Position, &Velocity, &Self)> for PlayerEntity {
-    const TYPE_ID: EntityTypeId = 3;
-    const BOOTSTRAP: BootstrapEntityInfo = BootstrapEntityInfo::LocalPlayer;
-
-    fn load(data_loader: DataLoader, parent: Entity, commands: &mut Commands) -> Result<()> {
-        let (storable, parameters) = data_loader.load::<PlayerEntityParameters>()?;
-        Self::spawn_internal(parent, commands, storable, (), parameters);
-        Ok(())
-    }
-
-    fn save(
-        (entity, storable, position, velocity, player): (
-            Entity,
-            &Storable,
-            &Position,
-            &Velocity,
-            &Self,
-        ),
-        data_saver: DataSaver,
-    ) {
-        #[derive(Serialize)]
-        struct PlayerStorageSerialization<'a> {
-            velocity: &'a Velocity,
-            position: &'a Position,
-            name: &'a String,
-            pitch: f32,
-        }
-
-        data_saver.save(
-            entity,
-            storable,
-            &PlayerStorageSerialization {
-                position,
-                velocity,
-                name: &player.name,
-                pitch: player.pitch,
-            },
-        );
-    }
 }
 
 impl PlayerEntity {
@@ -112,44 +78,38 @@ impl PlayerEntity {
             parent,
             commands,
             storable,
-            LocalPlayer,
             PlayerEntityParameters {
                 velocity: Velocity::default(),
                 position,
-                pitch,
-                name,
+                player_info: PlayerEntity { pitch, name },
             },
-        );
+        )
+        .insert(LocalPlayer);
         Ok(())
     }
 
-    fn spawn_internal(
+    fn spawn_internal<'w, 's, 'a>(
         parent: Entity,
-        commands: &mut Commands,
+        commands: &'a mut Commands<'w, 's>,
         storable: Storable,
-        state: impl Bundle,
         parameters: PlayerEntityParameters,
-    ) {
-        commands
-            .spawn((
-                Self {
-                    pitch: parameters.pitch,
-                    name: parameters.name,
-                },
-                Cylinder {
-                    height: 2.5,
-                    radius: 0.3,
-                },
-                parameters.position,
-                parameters.velocity,
-                Transform::default(),
-                GlobalTransform::default(),
-                LoadsTerrain { radius: 8 },
-                storable,
-                ToSaveSpatial, // We want to save this as soon as its spawned.
-                state,
-            ))
-            .set_parent(parent);
+    ) -> EntityCommands<'w, 's, 'a> {
+        let mut entity_commands = commands.spawn((
+            parameters.player_info,
+            Cylinder {
+                height: 2.5,
+                radius: 0.3,
+            },
+            parameters.position,
+            parameters.velocity,
+            Transform::default(),
+            GlobalTransform::default(),
+            LoadsTerrain { radius: 8 },
+            storable,
+            ToSaveSpatial, // We want to save this as soon as its spawned.
+        ));
+        entity_commands.set_parent(parent);
+        entity_commands
     }
 
     pub fn spawn_head(commands: &mut Commands, player_entity: Entity) {
@@ -462,5 +422,6 @@ impl Plugin for PlayerPlugin {
         );
 
         EntitySerializationManager::register::<PlayerEntity, _>(app);
+        spawner::setup(app);
     }
 }

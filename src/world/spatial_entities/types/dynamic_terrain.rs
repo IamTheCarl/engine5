@@ -1,13 +1,12 @@
 use anyhow::Result;
 use bevy::prelude::*;
-use serde::{Deserialize, Serialize};
+use proc_macros::entity_serialization;
 
 use crate::world::{
     generation::WorldGeneratorEnum,
     physics::{Position, Velocity},
     spatial_entities::storage::{
-        DataLoader, DataSaver, EntitySerializationManager, EntityStorage, EntityTypeId,
-        SpatialEntity, Storable, ToSaveSpatial,
+        EntitySerializationManager, EntityStorage, Storable, ToSaveSpatial,
     },
     terrain::{
         terrain_space::SpaceModificationRequestList, TerrainSpace, TerrainSpaceBundle,
@@ -15,8 +14,10 @@ use crate::world::{
     },
 };
 
-#[derive(Deserialize)]
+#[entity_serialization(type_id = 2, marker = DynamicTerrainEntity, load_tree)]
 pub struct DynamicTerrainParameters {
+    #[query = TerrainSpace]
+    #[get = generator]
     generator: WorldGeneratorEnum,
     position: Position,
     velocity: Velocity,
@@ -24,53 +25,6 @@ pub struct DynamicTerrainParameters {
 
 #[derive(Component)]
 pub struct DynamicTerrainEntity;
-
-impl SpatialEntity<(Entity, &Storable, &Position, &Velocity, &TerrainSpace)>
-    for DynamicTerrainEntity
-{
-    const TYPE_ID: EntityTypeId = 2;
-
-    fn load(data_loader: DataLoader, parent: Entity, commands: &mut Commands) -> Result<()> {
-        let (storable, parameters, tree) =
-            data_loader.load_with_tree::<DynamicTerrainParameters>()?;
-        Self::spawn_internal(
-            parent,
-            commands,
-            storable,
-            TerrainStorage::Local { tree },
-            parameters,
-        );
-        Ok(())
-    }
-
-    fn save(
-        (entity, storable, position, velocity, terrain_space): (
-            Entity,
-            &Storable,
-            &Position,
-            &Velocity,
-            &TerrainSpace,
-        ),
-        data_saver: DataSaver,
-    ) {
-        #[derive(Serialize)]
-        pub struct DynamicTerrainSave<'a> {
-            generator: &'a WorldGeneratorEnum,
-            position: &'a Position,
-            velocity: &'a Velocity,
-        }
-
-        data_saver.save(
-            entity,
-            storable,
-            &DynamicTerrainSave {
-                generator: &terrain_space.generator,
-                position,
-                velocity,
-            },
-        );
-    }
-}
 
 impl DynamicTerrainEntity {
     pub fn spawn(

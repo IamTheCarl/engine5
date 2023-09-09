@@ -1,13 +1,12 @@
 use anyhow::Result;
 use bevy::prelude::*;
-use serde::{Deserialize, Serialize};
+use proc_macros::entity_serialization;
 
 use crate::world::{
     generation::WorldGeneratorEnum,
     physics::{Position, Velocity},
     spatial_entities::storage::{
-        BootstrapEntityInfo, DataLoader, DataSaver, EntitySerializationManager, EntityStorage,
-        EntityTypeId, SpatialEntity, Storable, ToSaveSpatial,
+        EntitySerializationManager, EntityStorage, Storable, ToSaveSpatial,
     },
     terrain::{
         terrain_space::SpaceModificationRequestList, TerrainSpace, TerrainSpaceBundle,
@@ -15,49 +14,15 @@ use crate::world::{
     },
 };
 
-#[derive(Deserialize)]
+#[entity_serialization(type_id = 1, marker = GlobalTerrainEntity, bootstrap = BootstrapEntityInfo::GlobalTerrain, load_tree)]
 pub struct GlobalTerrainParameters {
+    #[query = TerrainSpace]
+    #[get = generator]
     generator: WorldGeneratorEnum,
 }
 
 #[derive(Component)]
 pub struct GlobalTerrainEntity;
-
-impl SpatialEntity<(Entity, &Storable, &TerrainSpace)> for GlobalTerrainEntity {
-    const TYPE_ID: EntityTypeId = 1;
-    const BOOTSTRAP: BootstrapEntityInfo = BootstrapEntityInfo::GlobalTerrain;
-
-    fn load(data_loader: DataLoader, parent: Entity, commands: &mut Commands) -> Result<()> {
-        let (storable, parameters, tree) =
-            data_loader.load_with_tree::<GlobalTerrainParameters>()?;
-        Self::spawn_internal(
-            parent,
-            commands,
-            storable,
-            TerrainStorage::Local { tree },
-            parameters,
-        );
-        Ok(())
-    }
-
-    fn save(
-        (entity, storable, terrain_space): (Entity, &Storable, &TerrainSpace),
-        data_saver: DataSaver,
-    ) {
-        #[derive(Serialize)]
-        pub struct GlobalTerrainSave<'a> {
-            generator: &'a WorldGeneratorEnum,
-        }
-
-        data_saver.save(
-            entity,
-            storable,
-            &GlobalTerrainSave {
-                generator: &terrain_space.generator,
-            },
-        );
-    }
-}
 
 impl GlobalTerrainEntity {
     pub fn create_new(

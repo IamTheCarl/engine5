@@ -1,41 +1,21 @@
 use anyhow::Result;
 use bevy::prelude::*;
-use serde::{Deserialize, Serialize};
+
+use proc_macros::entity_serialization;
 
 use crate::world::{
     physics::Position,
     spatial_entities::storage::{
-        BootstrapEntityInfo, DataLoader, DataSaver, EntityStorage, EntityTypeId, SpatialEntity,
-        Storable, ToSaveSpatial,
+        EntitySerializationManager, EntityStorage, Storable, ToSaveSpatial,
     },
 };
 
 #[derive(Component)]
 pub struct PlayerSpawner;
 
-#[derive(Deserialize)]
-struct PlayerSpawnerParameters {
+#[entity_serialization(type_id = 0, marker = PlayerSpawner, bootstrap = BootstrapEntityInfo::PlayerSpawner)]
+struct PlayerSpawnerStorage {
     position: Position,
-}
-
-impl SpatialEntity<(Entity, &Storable, &Position)> for PlayerSpawner {
-    const TYPE_ID: EntityTypeId = 0;
-    const BOOTSTRAP: BootstrapEntityInfo = BootstrapEntityInfo::PlayerSpawner;
-
-    fn load(data_loader: DataLoader, parent: Entity, commands: &mut Commands) -> Result<()> {
-        let (storable, parameters) = data_loader.load::<PlayerSpawnerParameters>()?;
-        Self::spawn_internal(parent, commands, storable, parameters);
-        Ok(())
-    }
-
-    fn save((entity, storable, position): (Entity, &Storable, &Position), data_saver: DataSaver) {
-        #[derive(Serialize)]
-        struct PlayerSpawnSerialization<'a> {
-            position: &'a Position,
-        }
-
-        data_saver.save(entity, storable, &PlayerSpawnSerialization { position });
-    }
 }
 
 impl PlayerSpawner {
@@ -51,7 +31,7 @@ impl PlayerSpawner {
             parent,
             commands,
             storable,
-            PlayerSpawnerParameters { position },
+            PlayerSpawnerStorage { position },
         );
 
         Ok(())
@@ -61,7 +41,7 @@ impl PlayerSpawner {
         parent: Entity,
         commands: &mut Commands,
         storable: Storable,
-        parameters: PlayerSpawnerParameters,
+        parameters: PlayerSpawnerStorage,
     ) {
         commands
             .spawn((
@@ -74,4 +54,8 @@ impl PlayerSpawner {
             ))
             .set_parent(parent);
     }
+}
+
+pub fn setup(app: &mut App) {
+    EntitySerializationManager::register::<PlayerSpawner, _>(app);
 }

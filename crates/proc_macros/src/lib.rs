@@ -1,8 +1,17 @@
 use proc_macro::TokenStream;
 use proc_macro2::Span;
-use quote::quote;
-use syn::{parse_macro_input, Attribute, DeriveInput, Expr, Fields, Ident};
+use quote::{format_ident, quote};
+use syn::{
+    parse_macro_input, punctuated::Punctuated, Attribute, DeriveInput, Expr, Field, Fields, Ident,
+    Lifetime, Token, Type, TypeNever, TypeReference,
+};
 
+/// Makes an entity archtype serializable.
+/// # Arguments:
+/// * `type_id` - a unique integer used to represent this entity in save files.
+/// * `marker` - an ECS component used to tag entities as being of this archtype.
+/// * `bootstrap_info` - the bootstrap type of this entity. Uses default value for BootstrapEntityInfo if unspecified.
+/// * `load_tree` - if present, entity will be provided its own tree namespace within the world database.
 #[proc_macro_attribute]
 pub fn entity_serialization(attribute_input: TokenStream, input: TokenStream) -> TokenStream {
     let mut type_id = None;
@@ -139,12 +148,12 @@ pub fn entity_serialization(attribute_input: TokenStream, input: TokenStream) ->
             const TYPE_ID: crate::world::spatial_entities::storage::EntityTypeId = #type_id;
 	    #bootstrap_info
 	    
-            fn load(data_loader: crate::world::spatial_entities::storage::DataLoader, parent: bevy::prelude::Entity, commands: &mut bevy::prelude::Commands) -> Result<()> {
+            fn load(data_loader: impl crate::world::spatial_entities::storage::DataLoader, parent: bevy::prelude::Entity, commands: &mut bevy::prelude::Commands) -> Result<()> {
 		#load_func
 		Ok(())
             }
 
-            fn save((entity, storable, #(#parameter_names),*): (bevy::prelude::Entity, &crate::world::spatial_entities::storage::Storable, #(#query_types_2),*), data_saver: crate::world::spatial_entities::storage::DataSaver) {
+            fn save((entity, storable, #(#parameter_names),*): (bevy::prelude::Entity, &crate::world::spatial_entities::storage::Storable, #(#query_types_2),*), data_saver: impl crate::world::spatial_entities::storage::DataSaver) {
 		#serialize_struct
 
 		data_saver.save(
@@ -191,4 +200,124 @@ fn parse_field_attributes(attributes: &Vec<Attribute>) -> FieldConfig {
     }
 
     field_config
+}
+
+#[proc_macro_attribute]
+pub fn ref_serializable(_attribute_input: TokenStream, input: TokenStream) -> TokenStream {
+    let original_input = parse_macro_input!(input as DeriveInput);
+
+    let box_struct = process_struct(&original_input, make_into_box, |_| {});
+
+    let mut ref_struct = process_struct(&original_input, |_| {}, make_into_reference);
+    ref_struct.ident = format_ident!("{}Ref", original_input.ident);
+    ref_struct
+        .generics
+        .params
+        .push(syn::GenericParam::Lifetime(syn::LifetimeParam {
+            attrs: vec![],
+            lifetime: Lifetime {
+                apostrophe: Span::call_site(),
+                ident: format_ident!("make_ref_lifetime"),
+            },
+            colon_token: None,
+            bounds: Punctuated::default(),
+        }));
+
+    TokenStream::from(quote! {
+    #[derive(serde::Serialize, serde::Deserialize)]
+    #[allow(dead_code)]
+    #box_struct
+    #[derive(serde::Serialize)]
+    #[allow(dead_code)]
+    #ref_struct
+    })
+}
+
+/// Sometimes when you need to serialize something, it references a very large block of data. Boxing that up and copying it over into the struct is very inefficient.
+/// This will derive Serialize and Deserialize for the struct of interest, but will also produce a "referenced" version so that you can serialize it with fewer copy
+/// operations.
+fn process_struct(
+    input: &DeriveInput,
+    owned_box: impl Fn(&mut Type) + Copy,
+    borrowed_ref: impl Fn(&mut Type) + Copy,
+) -> DeriveInput {
+    match &input.data {
+        syn::Data::Struct(data_struct) => {
+            let mut new_struct = data_struct.clone();
+
+            for field in new_struct.fields.iter_mut() {
+                modify_field(field, owned_box, borrowed_ref);
+            }
+
+            let mut output = input.clone();
+            output.data = syn::Data::Struct(new_struct);
+            output
+        }
+        syn::Data::Enum(data_enum) => {
+            let mut new_enum = data_enum.clone();
+
+            for variant in new_enum.variants.iter_mut() {
+                for field in variant.fields.iter_mut() {
+                    modify_field(field, owned_box, borrowed_ref);
+                }
+            }
+
+            let mut output = input.clone();
+            output.data = syn::Data::Enum(new_enum);
+            output
+        }
+        syn::Data::Union(_) => todo!(),
+    }
+}
+
+fn modify_field(
+    field: &mut Field,
+    owned_box: impl Fn(&mut Type),
+    borrowed_ref: impl Fn(&mut Type),
+) {
+    let attrs = &mut field.attrs;
+
+    attrs.retain(|attribute| match &attribute.meta {
+        syn::Meta::Path(path) => {
+            if path.is_ident("owned_box") {
+                owned_box(&mut field.ty);
+                false
+            } else if path.is_ident("borrowed_ref") {
+                borrowed_ref(&mut field.ty);
+                false
+            } else {
+                true
+            }
+        }
+        _ => true,
+    });
+}
+
+fn make_into_reference(ty: &mut Type) {
+    // We need a filler to hold the space. We'll ust set it to "never".
+    let mut original_ty = Type::Never(TypeNever {
+        bang_token: Token![!](Span::call_site()),
+    });
+    std::mem::swap(&mut original_ty, ty);
+
+    // Now we do the actual conversion.
+    *ty = Type::Reference(TypeReference {
+        and_token: Token![&](Span::call_site()),
+        lifetime: Some(Lifetime {
+            apostrophe: Span::call_site(),
+            ident: format_ident!("make_ref_lifetime"),
+        }),
+        mutability: None,
+        elem: Box::new(original_ty),
+    });
+}
+
+fn make_into_box(ty: &mut Type) {
+    // We need a filler to hold the space. We'll ust set it to "never".
+    let mut original_ty = Type::Never(TypeNever {
+        bang_token: Token![!](Span::call_site()),
+    });
+    std::mem::swap(&mut original_ty, ty);
+
+    *ty = Type::Verbatim(quote! { Box<#original_ty> })
 }

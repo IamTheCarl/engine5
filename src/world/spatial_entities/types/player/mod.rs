@@ -6,6 +6,7 @@ use std::{collections::HashMap, time::Duration};
 
 use crate::{
     config::controls::{ButtonState, InputState, PlayerControlsPlugin},
+    multiplayer::RemotePlayer,
     world::{
         physics::{
             Cylinder, PhysicsPlugin, Position, RayCast, RayTerrainIntersection,
@@ -20,6 +21,7 @@ use crate::{
             },
             Block, BlockRegistry, BlockTag, Chunk, LoadsTerrain, TerrainSpace,
         },
+        ViewRadius,
     },
 };
 
@@ -34,23 +36,9 @@ struct PlayerEntityParameters {
     player_info: PlayerEntity,
 }
 
-// #[derive(Deserialize)]
-// struct PlayerEntityParameters {
-//     velocity: Velocity,
-//     position: Position,
-//     pitch: f32,
-//     name: String,
-// }
-
 /// Marks a player as being local, making it responsive to local input controls.
 #[derive(Component)]
 pub struct LocalPlayer;
-
-/// Marks a player as being remote, making it responsive to its associated client.
-#[derive(Component)]
-pub struct RemotePlayer {
-    client_id: u64,
-}
 
 /// Indicates that this entity is a player's head.
 /// Only local players get a head.
@@ -88,6 +76,39 @@ impl PlayerEntity {
         Ok(())
     }
 
+    pub fn spawn_deactivated<'w, 's, 'a>(
+        parent: Entity,
+        commands: &'a mut Commands<'w, 's>,
+        storage: &EntityStorage,
+        position: Position,
+        name: String,
+        pitch: f32,
+    ) -> Result<EntityCommands<'w, 's, 'a>> {
+        let storable = storage.new_storable_component::<PlayerEntity, _>()?;
+
+        Ok(Self::spawn_internal(
+            parent,
+            commands,
+            storable,
+            PlayerEntityParameters {
+                velocity: Velocity::default(),
+                position,
+                player_info: PlayerEntity { pitch, name },
+            },
+        ))
+    }
+
+    pub fn add_body(commands: &mut EntityCommands) {
+        commands.insert(Cylinder {
+            height: 2.5,
+            radius: 0.3,
+        });
+    }
+
+    pub fn remove_body(commands: &mut EntityCommands) {
+        commands.remove::<Cylinder>();
+    }
+
     fn spawn_internal<'w, 's, 'a>(
         parent: Entity,
         commands: &'a mut Commands<'w, 's>,
@@ -96,15 +117,12 @@ impl PlayerEntity {
     ) -> EntityCommands<'w, 's, 'a> {
         let mut entity_commands = commands.spawn((
             parameters.player_info,
-            Cylinder {
-                height: 2.5,
-                radius: 0.3,
-            },
             parameters.position,
             parameters.velocity,
             Transform::default(),
             GlobalTransform::default(),
-            LoadsTerrain { radius: 8 },
+            LoadsTerrain,
+            ViewRadius { chunks: 8 },
             storable,
             ToSaveSpatial, // We want to save this as soon as its spawned.
         ));
@@ -381,6 +399,27 @@ impl Default for BlockRemovalContext {
     }
 }
 
+fn activate_players<C>(mut commands: Commands, players: Query<Entity, Added<C>>)
+where
+    C: Component,
+{
+    for player in players.iter() {
+        let mut player = commands.entity(player);
+        PlayerEntity::add_body(&mut player);
+    }
+}
+
+fn deactivate_players<C>(mut commands: Commands, mut players: RemovedComponents<C>)
+where
+    C: Component,
+{
+    for player in &mut players {
+        if let Some(mut player) = commands.get_entity(player) {
+            PlayerEntity::remove_body(&mut player);
+        }
+    }
+}
+
 fn head_spawner(mut commands: Commands, players: Query<Entity, Added<LocalPlayer>>) {
     for player in players.iter() {
         PlayerEntity::spawn_head(&mut commands, player);
@@ -418,6 +457,10 @@ impl Plugin for PlayerPlugin {
                 PlayerEntity::remove_block.before(ModifyTerrain),
                 head_spawner,
                 head_remover,
+                activate_players::<LocalPlayer>,
+                deactivate_players::<LocalPlayer>,
+                activate_players::<RemotePlayer>,
+                deactivate_players::<RemotePlayer>,
             ),
         );
 

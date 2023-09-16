@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{ecs::system::EntityCommands, prelude::*};
 
 mod commands;
 pub mod physics;
@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use terrain::{BlockRegistry, BlockTag};
 pub mod generation;
 
-use crate::{config::player_info::PlayerInfo, error_handler, GameState};
+use crate::{config::player_info::PlayerInfo, error_handler, multiplayer::RemotePlayer, GameState};
 
 use self::{
     generation::OscillatingHills,
@@ -20,7 +20,7 @@ use self::{
         storage::EntityStorage,
         types::{
             global_terrain::GlobalTerrainEntity,
-            player::{spawner::PlayerSpawner, LocalPlayer, PlayerEntity, RemotePlayer},
+            player::{spawner::PlayerSpawner, LocalPlayer, PlayerEntity},
         },
     },
 };
@@ -29,7 +29,7 @@ use self::{
 struct World;
 
 #[derive(Resource)]
-struct WorldEntity {
+pub struct WorldEntity {
     pub entity: Entity,
 }
 
@@ -40,7 +40,7 @@ pub fn open_world(
 ) -> Result<()> {
     let path = path.into();
     if path.exists() {
-        raw_open_world(commands, block_registry, path)
+        raw_open_file_backed_world(commands, block_registry, path)
     } else {
         bail!("World does not exist.");
     }
@@ -53,13 +53,13 @@ pub fn create_world(
 ) -> Result<()> {
     let path = path.into();
     if !path.exists() {
-        raw_open_world(commands, block_registry, path)
+        raw_open_file_backed_world(commands, block_registry, path)
     } else {
         bail!("World already exists.");
     }
 }
 
-pub fn raw_open_world(
+pub fn raw_open_file_backed_world(
     commands: &mut Commands,
     block_registry: &BlockRegistry,
     path: impl Into<PathBuf>,
@@ -75,14 +75,7 @@ pub fn raw_open_world(
     // Request that the local player be spawned as soon as possible.
     commands.insert_resource(SpawnLocalPlayerRequest);
 
-    let entity = commands
-        .spawn((
-            World,
-            TransformBundle::default(),
-            VisibilityBundle::default(),
-        ))
-        .id();
-    commands.insert_resource(WorldEntity { entity });
+    let entity = client_world(commands).id();
 
     if is_new_world {
         // New world. Nothing to bootstrap, insert our initial state.
@@ -112,6 +105,19 @@ pub fn raw_open_world(
     commands.insert_resource(storage);
 
     Ok(())
+}
+
+pub fn client_world<'w, 's, 'a>(commands: &'a mut Commands<'w, 's>) -> EntityCommands<'w, 's, 'a> {
+    let world_commands = commands.spawn((
+        World,
+        TransformBundle::default(),
+        VisibilityBundle::default(),
+    ));
+
+    let entity = world_commands.id();
+    commands.insert_resource(WorldEntity { entity });
+
+    commands.entity(entity)
 }
 
 /// This resource is used as a marker, telling the ECS that we need to spawn the local player.
@@ -161,6 +167,11 @@ pub enum WorldState {
     Unloaded,
     Running,
     Paused,
+}
+
+#[derive(Component)]
+pub struct ViewRadius {
+    pub chunks: i32,
 }
 
 fn unload_world(mut commands: Commands, world_entities: Query<Entity, With<World>>) {

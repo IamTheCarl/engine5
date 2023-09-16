@@ -5,6 +5,7 @@ use super::{
 };
 use crate::world::{
     generation::WorldGeneratorEnum, physics::Position, spatial_entities::storage::ToLoadSpatial,
+    ViewRadius,
 };
 use bevy::{
     ecs::query::{ReadOnlyWorldQuery, WorldQuery},
@@ -20,10 +21,7 @@ pub const CHUNK_TIME_TO_LIVE_TICKS: usize = 30;
 
 #[derive(Component, Reflect, Default)]
 #[reflect(Component)]
-pub struct LoadsTerrain {
-    pub radius: i32,
-}
-
+pub struct LoadsTerrain;
 #[derive(Component)]
 #[component(storage = "SparseSet")]
 pub struct LoadAllTerrain;
@@ -68,7 +66,11 @@ impl TerrainSpace {
         self.loaded_terrain.values()
     }
 
-    fn load_chunk(
+    pub fn get_loaded_chunk_entity(&self, index: &ChunkIndex) -> Option<Entity> {
+        self.loaded_terrain.get(index).copied()
+    }
+
+    fn mark_chunk_for_load(
         &mut self,
         commands: &mut Commands,
         space_entity: Entity,
@@ -207,7 +209,7 @@ fn distribute_space_modification_requests_to_chunks(
             {
                 // As an added benifit (probably), this makes it so that modifications to terrain will refresh it and keep it loaded for
                 // a little longer.
-                let (_created, chunk_entity) = space.load_chunk(
+                let (_created, chunk_entity) = space.mark_chunk_for_load(
                     &mut commands,
                     space_entity,
                     ChunkPosition { index: chunk_index },
@@ -378,7 +380,7 @@ fn load_all_terrain(
             // Returns false if the chunk was already loaded.
             // We'll just assume that if anything is loaded, everything is loaded.
             if !space
-                .load_chunk(&mut commands, space_entity, position, &terrain_time)
+                .mark_chunk_for_load(&mut commands, space_entity, position, &terrain_time)
                 .0
             {
                 break;
@@ -389,21 +391,21 @@ fn load_all_terrain(
     }
 }
 
-fn load_terrain(
+fn mark_terrain_for_load(
     mut commands: Commands,
-    terrain_loaders: Query<(&Position, &LoadsTerrain)>,
+    terrain_loaders: Query<(&Position, &ViewRadius), With<LoadsTerrain>>,
     mut terrain_spaces: Query<(Entity, &Position, &mut TerrainSpace, With<TerrainStorage>)>,
     terrain_time: Res<TerrainTime>,
 ) {
     for (space_entity, space_position, mut space, _terrain_file) in terrain_spaces.iter_mut() {
-        for (loader_position, loads_terrain) in terrain_loaders.iter() {
+        for (loader_position, view_radius) in terrain_loaders.iter() {
             let loader_position_in_chunk_space =
                 space_position.quat() * (loader_position.translation - space_position.translation);
             let base_chunk_index =
                 (loader_position_in_chunk_space / Chunk::CHUNK_DIAMETER as f32).as_ivec3();
 
-            let radius_squared = (loads_terrain.radius * loads_terrain.radius) as f32;
-            for x in -loads_terrain.radius..loads_terrain.radius {
+            let radius_squared = (view_radius.chunks * view_radius.chunks) as f32;
+            for x in -view_radius.chunks..view_radius.chunks {
                 let z_range = (radius_squared - (x * x) as f32).sqrt().ceil() as i32;
                 for z in -z_range..z_range {
                     let y_range = (radius_squared - (x * x) as f32 - (z * z) as f32)
@@ -413,7 +415,7 @@ fn load_terrain(
                     for y in -y_range..y_range {
                         let chunk_index = base_chunk_index + ChunkIndex::new(x, y, z);
 
-                        space.load_chunk(
+                        space.mark_chunk_for_load(
                             &mut commands,
                             space_entity,
                             ChunkPosition { index: chunk_index },
@@ -494,7 +496,7 @@ fn bootstrap_terrain_space(
     for (space_entity, mut space, _without_initialized, _without_load_all_terrain) in
         spaces.iter_mut()
     {
-        space.load_chunk(
+        space.mark_chunk_for_load(
             &mut commands,
             space_entity,
             ChunkPosition {
@@ -530,7 +532,7 @@ pub fn register_terrain_space(app: &mut App) {
         Update,
         (
             load_all_terrain.in_set(LoadTerrain),
-            load_terrain.in_set(LoadTerrain),
+            mark_terrain_for_load.in_set(LoadTerrain),
             bootstrap_terrain_space.in_set(LoadTerrain),
         ),
     );

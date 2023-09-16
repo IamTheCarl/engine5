@@ -54,6 +54,12 @@ pub struct Storable {
     id: TracerId,
 }
 
+impl Storable {
+    pub fn id(&self) -> TracerId {
+        self.id
+    }
+}
+
 #[derive(Serialize, Deserialize, Reflect, Clone, Copy, Debug)]
 pub enum BootstrapEntityInfo {
     NonBootstrap,
@@ -110,6 +116,15 @@ impl EntityStorage {
             }),
             bootstrap_complete: AtomicBool::new(true),
         })
+    }
+
+    pub fn bootstrap_list(&self) -> Vec<TracerId> {
+        let bootstrap_list = self
+            .bootstrap_list
+            .lock()
+            .expect("Bootstrap list has been poisoned!");
+
+        bootstrap_list.bootstrap_entities.keys().copied().collect()
     }
 
     pub fn request_bootstrap(&self) {
@@ -386,15 +401,20 @@ fn save_spatial_hashes(
     }
 }
 
-pub struct DataLoader<'a> {
+pub trait DataLoader {
+    fn load<D: DeserializeOwned>(self) -> Result<(Storable, D)>;
+    fn load_with_tree<D: DeserializeOwned>(self) -> Result<(Storable, D, sled::Tree)>;
+}
+
+pub struct LocalDataLoader<'a> {
     type_id: EntityTypeId,
     tracer_id: TracerId,
     database: &'a sled::Db,
     bytes: &'a [u8],
 }
 
-impl<'a> DataLoader<'a> {
-    pub fn load<D: DeserializeOwned>(self) -> Result<(Storable, D)> {
+impl<'a> DataLoader for LocalDataLoader<'a> {
+    fn load<D: DeserializeOwned>(self) -> Result<(Storable, D)> {
         Ok((
             Storable { id: self.tracer_id },
             ciborium::from_reader(self.bytes).with_context(|| {
@@ -406,7 +426,7 @@ impl<'a> DataLoader<'a> {
         ))
     }
 
-    pub fn load_with_tree<D: DeserializeOwned>(self) -> Result<(Storable, D, sled::Tree)> {
+    fn load_with_tree<D: DeserializeOwned>(self) -> Result<(Storable, D, sled::Tree)> {
         let storable = Storable { id: self.tracer_id };
         let deserialized = ciborium::from_reader(self.bytes).with_context(|| {
             format!(
@@ -422,17 +442,21 @@ impl<'a> DataLoader<'a> {
     }
 }
 
-pub struct DataSaver<'a> {
+pub trait DataSaver {
+    fn save<S: Serialize>(self, entity: Entity, storable: &Storable, to_serialize: S);
+}
+
+pub struct LocalDataSaver<'a> {
     result: &'a mut Result<()>,
     storage: &'a mut Vec<u8>,
     tracer_id: &'a mut TracerId,
     entity: &'a mut Entity,
 }
 
-impl<'a> DataSaver<'a> {
-    pub fn save<S: Serialize>(self, entity: Entity, storable: &Storable, to_serialize: &S) {
-        *self.result =
-            ciborium::into_writer(to_serialize, self.storage).context("Failed to serialize entity");
+impl<'a> DataSaver for LocalDataSaver<'a> {
+    fn save<S: Serialize>(self, entity: Entity, storable: &Storable, to_serialize: S) {
+        *self.result = ciborium::into_writer(&to_serialize, self.storage)
+            .context("Failed to serialize entity");
         *self.tracer_id = storable.id;
         *self.entity = entity;
     }
@@ -444,8 +468,11 @@ pub trait SpatialEntity<Q: WorldQuery> {
     const TYPE_ID: EntityTypeId;
     const BOOTSTRAP: BootstrapEntityInfo = BootstrapEntityInfo::NonBootstrap;
 
-    fn load(data_loader: DataLoader, parent: Entity, commands: &mut Commands) -> Result<()>;
-    fn save(query: <<Q as WorldQuery>::ReadOnly as WorldQuery>::Item<'_>, data_saver: DataSaver);
+    fn load(data_loader: impl DataLoader, parent: Entity, commands: &mut Commands) -> Result<()>;
+    fn save(
+        query: <<Q as WorldQuery>::ReadOnly as WorldQuery>::Item<'_>,
+        data_saver: impl DataSaver,
+    );
 }
 
 #[derive(Resource)]
@@ -480,7 +507,7 @@ impl EntitySerializationManager {
                     let mut tracer_id = 0;
                     let mut entity = Entity::PLACEHOLDER;
 
-                    let data_saver = DataSaver {
+                    let data_saver = LocalDataSaver {
                         result: &mut save_result,
                         storage: &mut bytes,
                         tracer_id: &mut tracer_id,
@@ -524,7 +551,7 @@ impl EntitySerializationManager {
                 .insert(
                     E::TYPE_ID,
                     &|tracer_id, bytes, database, parent, commands| {
-                        let data_loader = DataLoader {
+                        let data_loader = LocalDataLoader {
                             type_id: E::TYPE_ID,
                             tracer_id,
                             database,

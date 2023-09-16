@@ -57,6 +57,8 @@ impl Engine5 {
 
 impl Plugin for Engine5 {
     fn build(&self, app: &mut App) {
+        logging::setup(app);
+
         // I wait until here to do this so that at least the log should be working.
         config::file_paths::create_folders();
 
@@ -81,8 +83,6 @@ impl Plugin for Engine5 {
                 .after(world::terrain::TerrainPlugin)
                 .before(Engine5),
         );
-
-        logging::setup(app);
 
         // TODO this is a temporary way to shutdown. I want this to verify all worlds have been saved and closed before application exits.
         app.add_systems(

@@ -119,7 +119,7 @@ fn handle_selections(
                 }
 
                 if single_player_buttons.contains(*from.first()) {
-                    world::raw_open_world(
+                    world::raw_open_file_backed_world(
                         &mut commands,
                         &block_registry,
                         Path::new(file_paths::SAVE_DIRECTORY).join("test"),

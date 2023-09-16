@@ -8,9 +8,10 @@ use bevy::prelude::*;
 use anyhow::{Context, Result};
 use bevy_console::{reply, AddConsoleCommand, ConsoleCommand};
 use clap::{Parser, Subcommand};
+use vec_rand::RandVec;
 
 use crate::{
-    config::file_paths,
+    config::{file_paths, player_info::PlayerInfo},
     multiplayer::{ClientContext, HostContext},
     GameState,
 };
@@ -59,8 +60,14 @@ enum WorldSubcommand {
         #[arg(default_value = "5000", short, long)]
         port: u16,
 
-        #[arg(default_value = "0", short, long)]
-        client_id: u64,
+        /// An integer that the server will use to identify your client on the fly.
+        /// Defaults to your default network interface's MAC address or a randomly
+        /// generated number if that fails.
+        #[arg(short, long)]
+        client_id: Option<u64>,
+
+        /// The name to give your player. Defaults to your OS username.
+        your_name: Option<String>,
     },
 
     /// Host the current world as a multi-player game.
@@ -105,6 +112,7 @@ fn world_command(
     next_world_state: ResMut<NextState<WorldState>>,
 
     block_registry: Res<BlockRegistry>,
+    player_info: Res<PlayerInfo>,
 ) {
     if let Some(Ok(WorldCommand { command })) = log.take() {
         match game_state.get() {
@@ -115,6 +123,7 @@ fn world_command(
                 next_app_state,
                 next_world_state,
                 block_registry,
+                player_info,
             ),
             GameState::InGame => {
                 world_command_in_game(command, log, commands, next_app_state, next_world_state)
@@ -136,6 +145,7 @@ fn world_command_in_menu(
     mut next_world_state: ResMut<NextState<WorldState>>,
 
     block_registry: Res<BlockRegistry>,
+    player_info: Res<PlayerInfo>,
 ) {
     match command {
         WorldSubcommand::Load { name } => {
@@ -183,8 +193,38 @@ fn world_command_in_menu(
             ip_address,
             port,
             client_id,
+            your_name,
         } => {
-            if let Err(error) = world_connect(&mut commands, ip_address, port, client_id) {
+            let client_id = client_id.unwrap_or_else(|| {
+                // The MAC address is guarenteed to be unique, so prefer that.
+                // If for some weird reason we can't get one, generate a random number and hope for the best.
+                let client_id_vec = mac_address::get_mac_address()
+                    .ok()
+                    .flatten()
+                    .map(|mac| {
+                        let mut bytes: Vec<u8> = mac.bytes().into();
+                        bytes.extend([0, 0]);
+                        bytes
+                    })
+                    .unwrap_or(RandVec::generate(8));
+
+                let mut client_id = [0; 8];
+                client_id.copy_from_slice(&client_id_vec);
+
+                u64::from_le_bytes(client_id)
+            });
+
+            let player_name = your_name.unwrap_or_else(|| player_info.name.clone());
+
+            if let Err(error) = world_connect(
+                &mut commands,
+                ip_address,
+                port,
+                client_id,
+                player_name,
+                &mut next_app_state,
+                &mut next_world_state,
+            ) {
                 reply!(log, "Failed to connect to host: {:?}", error);
             }
         }
@@ -196,7 +236,7 @@ fn world_command_in_menu(
             reply!(log, "You must load a world before you can host it.");
         }
         WorldSubcommand::Close => {
-            ClientContext::end_session(&mut commands);
+            reply!(log, "You are not in a multi-player session.");
         }
     }
 }
@@ -206,6 +246,9 @@ fn world_connect(
     ip_address: String,
     port: u16,
     client_id: u64,
+    client_name: String,
+    next_app_state: &mut ResMut<NextState<GameState>>,
+    next_world_state: &mut ResMut<NextState<WorldState>>,
 ) -> Result<()> {
     use std::cmp::Ordering;
 
@@ -227,7 +270,12 @@ fn world_connect(
     let addresses = addresses
         .into_iter()
         .map(move |ip_addr| SocketAddr::new(ip_addr, port));
-    ClientContext::start_session(commands, Box::new(addresses), client_id)
+    ClientContext::start_session(commands, Box::new(addresses), client_id, client_name)?;
+
+    next_app_state.set(GameState::InGame);
+    next_world_state.set(WorldState::Running);
+
+    Ok(())
 }
 
 fn world_command_in_game(
@@ -267,6 +315,7 @@ fn world_command_in_game(
             ip_address: _,
             port: _,
             client_id: _,
+            your_name: _,
         } => {
             reply!(
                 log,
@@ -287,6 +336,7 @@ fn world_command_in_game(
         }
         WorldSubcommand::Close => {
             HostContext::end_session(&mut commands);
+            ClientContext::end_session(&mut commands);
             reply!(log, "Session ended.");
         }
     }

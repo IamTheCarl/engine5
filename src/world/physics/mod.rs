@@ -200,12 +200,13 @@ fn add_debug_mesh_cylinders(
     mut meshes: ResMut<Assets<Mesh>>,
     debug_shader_material: Res<DebugShaderMaterial>,
     mut mesh_collections: ResMut<MeshCollection>,
-    cylinders: Query<(Entity, &Cylinder, Without<Handle<Mesh>>)>,
+    cylinders: Query<(Entity, &Cylinder), Without<Handle<Mesh>>>,
 ) {
+    // TODO is there a way we can make a conditional run of this system instead of this?
     if settings.cylinders {
         let material = &debug_shader_material.0;
 
-        for (entity, cylinder, _) in cylinders.iter() {
+        for (entity, cylinder) in cylinders.iter() {
             let mesh = mesh_collections.get_cylinder(&mut meshes, cylinder);
             commands.entity(entity).insert((
                 mesh,
@@ -218,14 +219,23 @@ fn add_debug_mesh_cylinders(
     }
 }
 
-fn remove_debug_mesh_cylinders(
+fn disable_debug_mesh_cylinders(
     mut commands: Commands,
     settings: Res<DebugRenderSettings>,
-    cylinders: Query<(Entity, &Cylinder, &Handle<Mesh>)>,
+    cylinders: Query<Entity, (With<Cylinder>, With<Handle<Mesh>>)>,
 ) {
+    // FIXME this whole system is problematic. Entities can't have a cylender debug mesh *and* a normal mesh at the same time.
     if !settings.cylinders {
-        for (entity, _, _) in cylinders.iter() {
-            commands.entity(entity).despawn();
+        for entity in cylinders.iter() {
+            commands.entity(entity).remove::<Handle<Mesh>>();
+        }
+    }
+}
+
+fn remove_debug_mesh_cylinders(mut commands: Commands, mut cylinders: RemovedComponents<Cylinder>) {
+    for cylinder in &mut cylinders {
+        if let Some(mut cylinder) = commands.get_entity(cylinder) {
+            cylinder.remove::<Handle<Mesh>>();
         }
     }
 }
@@ -305,6 +315,7 @@ impl Plugin for PhysicsPlugin {
         );
 
         app.add_systems(Update, add_debug_mesh_cylinders.in_set(PhysicsPlugin));
+        app.add_systems(Update, disable_debug_mesh_cylinders.in_set(PhysicsPlugin));
         app.add_systems(Update, remove_debug_mesh_cylinders.in_set(PhysicsPlugin));
 
         // TODO we should consider tieing this to a fixed time step.

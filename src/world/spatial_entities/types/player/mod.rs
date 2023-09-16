@@ -6,7 +6,7 @@ use std::{collections::HashMap, time::Duration};
 
 use crate::{
     config::controls::{ButtonState, InputState, PlayerControlsPlugin},
-    multiplayer::RemotePlayer,
+    multiplayer::RemoteClientPlayer,
     world::{
         physics::{
             Cylinder, PhysicsPlugin, Position, RayCast, RayTerrainIntersection,
@@ -459,8 +459,8 @@ impl Plugin for PlayerPlugin {
                 head_remover,
                 activate_players::<LocalPlayer>,
                 deactivate_players::<LocalPlayer>,
-                activate_players::<RemotePlayer>,
-                deactivate_players::<RemotePlayer>,
+                activate_players::<RemoteClientPlayer>,
+                deactivate_players::<RemoteClientPlayer>,
             ),
         );
 

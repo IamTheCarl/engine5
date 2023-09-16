@@ -11,7 +11,9 @@ use std::path::PathBuf;
 use terrain::{BlockRegistry, BlockTag};
 pub mod generation;
 
-use crate::{config::player_info::PlayerInfo, error_handler, multiplayer::RemotePlayer, GameState};
+use crate::{
+    config::player_info::PlayerInfo, error_handler, multiplayer::RemoteClientPlayer, GameState,
+};
 
 use self::{
     generation::OscillatingHills,
@@ -130,7 +132,7 @@ fn spawn_local_player(
     player_info: Res<PlayerInfo>,
     world_entity: Res<WorldEntity>,
     storage: ResMut<EntityStorage>,
-    offline_players: Query<(Entity, &PlayerEntity), Without<RemotePlayer>>,
+    offline_players: Query<(Entity, &PlayerEntity), Without<RemoteClientPlayer>>,
     player_spawn: Query<&Position, With<PlayerSpawner>>,
 ) -> Result<()> {
     // Check if the player already exists in the world.

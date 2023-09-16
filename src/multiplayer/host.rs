@@ -18,7 +18,7 @@ use crate::{
         physics::Position,
         spatial_entities::{
             storage::{EntityStorage, Storable},
-            types::player::{spawner::PlayerSpawner, LocalPlayer, PlayerEntity},
+            types::player::{spawner::PlayerSpawner, ActivePlayer, LocalPlayer, PlayerEntity},
         },
         terrain::{Chunk, ChunkIndex, ChunkPosition, TerrainSpace},
         ViewRadius, WorldEntity,
@@ -178,7 +178,8 @@ impl HostContext {
                     // This is our player! Deactivate it!
                     commands
                         .entity(player_entity)
-                        .remove::<RemoteClientPlayer>();
+                        .remove::<RemoteClientPlayer>()
+                        .remove::<ActivePlayer>();
 
                     break 'event_loop;
                 }
@@ -212,7 +213,10 @@ impl HostContext {
             for (player_entity, offline_player) in offline_players.iter() {
                 if offline_player.name == player_name {
                     // This is our player! Activate it!
-                    commands.entity(player_entity).insert(remote_player);
+                    commands
+                        .entity(player_entity)
+                        .insert(remote_player)
+                        .insert(ActivePlayer);
                     log::info!("Welcome back {}", player_name);
 
                     break 'event_loop;
@@ -232,6 +236,7 @@ impl HostContext {
                 ) {
                     Ok(mut player) => {
                         player.insert(remote_player);
+                        player.insert(ActivePlayer);
                         log::info!("Welcome new player {}", player_name);
                     }
                     Err(error) => log::error!("Failed to spawn remote player: {:?}", error),

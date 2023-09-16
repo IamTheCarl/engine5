@@ -11,9 +11,7 @@ use std::path::PathBuf;
 use terrain::{BlockRegistry, BlockTag};
 pub mod generation;
 
-use crate::{
-    config::player_info::PlayerInfo, error_handler, multiplayer::RemoteClientPlayer, GameState,
-};
+use crate::{config::player_info::PlayerInfo, error_handler, GameState};
 
 use self::{
     generation::OscillatingHills,
@@ -22,7 +20,7 @@ use self::{
         storage::EntityStorage,
         types::{
             global_terrain::GlobalTerrainEntity,
-            player::{spawner::PlayerSpawner, LocalPlayer, PlayerEntity},
+            player::{spawner::PlayerSpawner, ActivePlayer, LocalPlayer, PlayerEntity},
         },
     },
 };
@@ -132,15 +130,19 @@ fn spawn_local_player(
     player_info: Res<PlayerInfo>,
     world_entity: Res<WorldEntity>,
     storage: ResMut<EntityStorage>,
-    offline_players: Query<(Entity, &PlayerEntity), Without<RemoteClientPlayer>>,
+    offline_players: Query<(Entity, &PlayerEntity), Without<ActivePlayer>>,
     player_spawn: Query<&Position, With<PlayerSpawner>>,
 ) -> Result<()> {
     // Check if the player already exists in the world.
     for (player_entity, offline_player) in offline_players.iter() {
         if offline_player.name == player_info.name {
             // This is our player! Activate it!
-            commands.entity(player_entity).insert(LocalPlayer);
+            commands
+                .entity(player_entity)
+                .insert(LocalPlayer)
+                .insert(ActivePlayer);
 
+            commands.remove_resource::<SpawnLocalPlayerRequest>();
             return Ok(());
         }
     }
@@ -148,14 +150,17 @@ fn spawn_local_player(
     // Looks like they don't.
     // Spawn them in.
     if let Ok(spawn_position) = player_spawn.get_single() {
-        PlayerEntity::spawn_local(
+        dbg!();
+        PlayerEntity::spawn_deactivated(
             world_entity.entity,
             &mut commands,
             &storage,
             spawn_position.clone(),
             player_info.name.clone(),
             0.0,
-        )?;
+        )?
+        .insert(LocalPlayer)
+        .insert(ActivePlayer);
 
         commands.remove_resource::<SpawnLocalPlayerRequest>();
     }

@@ -17,7 +17,7 @@ mod client;
 pub use client::ClientContext;
 
 mod host;
-pub use host::{HostContext, RemoteClientPlayer};
+pub use host::HostContext;
 
 const RESEND_TIME: Duration = Duration::from_millis(300);
 

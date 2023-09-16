@@ -6,7 +6,6 @@ use std::{collections::HashMap, time::Duration};
 
 use crate::{
     config::controls::{ButtonState, InputState, PlayerControlsPlugin},
-    multiplayer::RemoteClientPlayer,
     world::{
         physics::{
             Cylinder, PhysicsPlugin, Position, RayCast, RayTerrainIntersection,
@@ -40,6 +39,10 @@ struct PlayerEntityParameters {
 #[derive(Component)]
 pub struct LocalPlayer;
 
+/// Marks a player as being local. It gets a body with that.
+#[derive(Component)]
+pub struct ActivePlayer;
+
 /// Indicates that this entity is a player's head.
 /// Only local players get a head.
 #[derive(Component)]
@@ -52,30 +55,6 @@ pub struct PlayerEntity {
 }
 
 impl PlayerEntity {
-    pub fn spawn_local(
-        parent: Entity,
-        commands: &mut Commands,
-        storage: &EntityStorage,
-        position: Position,
-        name: String,
-        pitch: f32,
-    ) -> Result<()> {
-        let storable = storage.new_storable_component::<PlayerEntity, _>()?;
-
-        Self::spawn_internal(
-            parent,
-            commands,
-            storable,
-            PlayerEntityParameters {
-                velocity: Velocity::default(),
-                position,
-                player_info: PlayerEntity { pitch, name },
-            },
-        )
-        .insert(LocalPlayer);
-        Ok(())
-    }
-
     pub fn spawn_deactivated<'w, 's, 'a>(
         parent: Entity,
         commands: &'a mut Commands<'w, 's>,
@@ -399,20 +378,14 @@ impl Default for BlockRemovalContext {
     }
 }
 
-fn activate_players<C>(mut commands: Commands, players: Query<Entity, Added<C>>)
-where
-    C: Component,
-{
+fn activate_players(mut commands: Commands, players: Query<Entity, Added<ActivePlayer>>) {
     for player in players.iter() {
         let mut player = commands.entity(player);
         PlayerEntity::add_body(&mut player);
     }
 }
 
-fn deactivate_players<C>(mut commands: Commands, mut players: RemovedComponents<C>)
-where
-    C: Component,
-{
+fn deactivate_players(mut commands: Commands, mut players: RemovedComponents<ActivePlayer>) {
     for player in &mut players {
         if let Some(mut player) = commands.get_entity(player) {
             PlayerEntity::remove_body(&mut player);
@@ -457,10 +430,8 @@ impl Plugin for PlayerPlugin {
                 PlayerEntity::remove_block.before(ModifyTerrain),
                 head_spawner,
                 head_remover,
-                activate_players::<LocalPlayer>,
-                deactivate_players::<LocalPlayer>,
-                activate_players::<RemoteClientPlayer>,
-                deactivate_players::<RemoteClientPlayer>,
+                activate_players,
+                deactivate_players,
             ),
         );
 

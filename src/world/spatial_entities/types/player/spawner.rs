@@ -1,13 +1,11 @@
 use anyhow::Result;
-use bevy::prelude::*;
+use bevy::{ecs::system::EntityCommands, prelude::*};
 
 use proc_macros::entity_serialization;
 
 use crate::world::{
     physics::Position,
-    spatial_entities::storage::{
-        EntitySerializationManager, EntityStorage, Storable, ToSaveSpatial,
-    },
+    spatial_entities::storage::{EntityConstruction, EntitySerializationManager, EntityStorage},
 };
 
 #[derive(Component)]
@@ -25,37 +23,28 @@ impl PlayerSpawner {
         storage: &EntityStorage,
         position: Position,
     ) -> Result<()> {
-        let storable = storage.new_storable_component::<PlayerSpawner, _>()?;
+        let storable = storage.new_storable_component::<PlayerSpawner, _, _>()?;
 
-        Self::spawn_internal(
-            parent,
-            commands,
-            storable,
-            PlayerSpawnerStorage { position },
-        );
+        let mut commands = commands.spawn(storable);
+        commands.set_parent(parent);
+
+        Self::construct_entity(PlayerSpawnerStorage { position }, &mut commands);
 
         Ok(())
     }
+}
 
-    fn spawn_internal(
-        parent: Entity,
-        commands: &mut Commands,
-        storable: Storable,
-        parameters: PlayerSpawnerStorage,
-    ) {
-        commands
-            .spawn((
-                Self,
-                parameters.position,
-                Transform::default(),
-                GlobalTransform::default(),
-                storable,
-                ToSaveSpatial, // We want to save this as soon as its spawned.
-            ))
-            .set_parent(parent);
+impl EntityConstruction<PlayerSpawnerStorage> for PlayerSpawner {
+    fn construct_entity(parameters: PlayerSpawnerStorage, commands: &mut EntityCommands) {
+        commands.insert((
+            Self,
+            parameters.position,
+            Transform::default(),
+            GlobalTransform::default(),
+        ));
     }
 }
 
 pub fn setup(app: &mut App) {
-    EntitySerializationManager::register::<PlayerSpawner, _>(app);
+    EntitySerializationManager::register::<PlayerSpawner, _, _>(app);
 }

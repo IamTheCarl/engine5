@@ -23,6 +23,12 @@ pub enum TerrainStorage {
     Local { tree: sled::Tree },
 }
 
+impl Default for TerrainStorage {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
 impl TerrainStorage {
     pub fn open_local(database: &sled::Db, namespace: impl Into<String>) -> Result<Self> {
         let tree = database

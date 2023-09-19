@@ -12,7 +12,7 @@ use crate::{
             RayTerrainIntersectionList, Velocity,
         },
         spatial_entities::storage::{
-            EntitySerializationManager, EntityStorage, Storable, ToSaveSpatial,
+            EntityConstruction, EntitySerializationManager, EntityStorage, ToSaveSpatial,
         },
         terrain::{
             terrain_space::{
@@ -63,18 +63,24 @@ impl PlayerEntity {
         name: String,
         pitch: f32,
     ) -> Result<EntityCommands<'w, 's, 'a>> {
-        let storable = storage.new_storable_component::<PlayerEntity, _>()?;
+        let storable = storage.new_storable_component::<PlayerEntity, _, _>()?;
 
-        Ok(Self::spawn_internal(
-            parent,
-            commands,
+        let mut commands = commands.spawn((
             storable,
+            ToSaveSpatial, // We want to save this as soon as its spawned.
+        ));
+        commands.set_parent(parent);
+
+        Self::construct_entity(
             PlayerEntityParameters {
                 velocity: Velocity::default(),
                 position,
                 player_info: PlayerEntity { pitch, name },
             },
-        ))
+            &mut commands,
+        );
+
+        Ok(commands)
     }
 
     pub fn add_body(commands: &mut EntityCommands) {
@@ -86,27 +92,6 @@ impl PlayerEntity {
 
     pub fn remove_body(commands: &mut EntityCommands) {
         commands.remove::<Cylinder>();
-    }
-
-    fn spawn_internal<'w, 's, 'a>(
-        parent: Entity,
-        commands: &'a mut Commands<'w, 's>,
-        storable: Storable,
-        parameters: PlayerEntityParameters,
-    ) -> EntityCommands<'w, 's, 'a> {
-        let mut entity_commands = commands.spawn((
-            parameters.player_info,
-            parameters.position,
-            parameters.velocity,
-            Transform::default(),
-            GlobalTransform::default(),
-            LoadsTerrain,
-            ViewRadius { chunks: 8 },
-            storable,
-            ToSaveSpatial, // We want to save this as soon as its spawned.
-        ));
-        entity_commands.set_parent(parent);
-        entity_commands
     }
 
     pub fn spawn_head(commands: &mut Commands, player_entity: Entity) {
@@ -346,6 +331,20 @@ impl PlayerEntity {
     }
 }
 
+impl EntityConstruction<PlayerEntityParameters> for PlayerEntity {
+    fn construct_entity(parameters: PlayerEntityParameters, commands: &mut EntityCommands) {
+        commands.insert((
+            parameters.player_info,
+            parameters.position,
+            parameters.velocity,
+            Transform::default(),
+            GlobalTransform::default(),
+            LoadsTerrain,
+            ViewRadius { chunks: 8 },
+        ));
+    }
+}
+
 #[derive(Debug, Component, Reflect)]
 #[reflect(Component)]
 struct BlockPlacementContext {
@@ -435,7 +434,7 @@ impl Plugin for PlayerPlugin {
             ),
         );
 
-        EntitySerializationManager::register::<PlayerEntity, _>(app);
+        EntitySerializationManager::register::<PlayerEntity, _, _>(app);
         spawner::setup(app);
     }
 }

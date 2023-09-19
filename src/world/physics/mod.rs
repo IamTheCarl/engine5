@@ -164,7 +164,7 @@ pub struct Velocity {
     pub rotational: f32,
 }
 
-#[derive(Component, Serialize, Deserialize, Debug, Clone)]
+#[derive(Component, Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Position {
     pub translation: Vec3,
     pub rotation: f32,

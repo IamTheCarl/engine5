@@ -353,7 +353,7 @@ fn block_index_calculation() {
     );
 }
 
-#[derive(Bundle)]
+#[derive(Bundle, Default)]
 pub struct TerrainSpaceBundle {
     pub terrain_space: TerrainSpace,
     pub position: Position,

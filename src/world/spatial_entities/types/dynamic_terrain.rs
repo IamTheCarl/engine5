@@ -1,12 +1,12 @@
 use anyhow::Result;
-use bevy::prelude::*;
+use bevy::{ecs::system::EntityCommands, prelude::*};
 use proc_macros::entity_serialization;
 
 use crate::world::{
     generation::WorldGeneratorEnum,
     physics::{Position, Velocity},
     spatial_entities::storage::{
-        EntitySerializationManager, EntityStorage, Storable, ToSaveSpatial,
+        EntityConstruction, EntitySerializationManager, EntityStorage, Storable, ToSaveSpatial,
     },
     terrain::{
         terrain_space::SpaceModificationRequestList, TerrainSpace, TerrainSpaceBundle,
@@ -14,7 +14,7 @@ use crate::world::{
     },
 };
 
-#[entity_serialization(type_id = 2, marker = DynamicTerrainEntity, load_tree)]
+#[entity_serialization(type_id = 2, marker = DynamicTerrainEntity)]
 pub struct DynamicTerrainParameters {
     #[query = TerrainSpace]
     #[get = generator]
@@ -36,7 +36,7 @@ impl DynamicTerrainEntity {
         velocity: Velocity,
     ) -> Result<()> {
         let (storable, tree) =
-            storage.new_storable_component_with_tree::<DynamicTerrainEntity, _>()?;
+            storage.new_storable_component_with_tree::<DynamicTerrainEntity, _, _>()?;
 
         Self::spawn_internal(
             parent,
@@ -78,8 +78,41 @@ impl DynamicTerrainEntity {
             ))
             .set_parent(parent);
     }
+
+    fn common_construction(
+        parameters: DynamicTerrainParameters,
+        storage: TerrainStorage,
+        commands: &mut EntityCommands,
+    ) {
+        commands.insert((
+            Self,
+            TerrainSpaceBundle {
+                terrain_space: TerrainSpace::local(parameters.generator),
+                position: parameters.position,
+                storage,
+                ..Default::default()
+            },
+            parameters.velocity,
+        ));
+    }
+}
+
+impl EntityConstruction<DynamicTerrainParameters> for DynamicTerrainEntity {
+    const REQUEST_TREE: bool = true;
+
+    fn construct_entity(parameters: DynamicTerrainParameters, commands: &mut EntityCommands) {
+        Self::common_construction(parameters, TerrainStorage::None, commands);
+    }
+
+    fn construct_entity_with_tree(
+        parameters: DynamicTerrainParameters,
+        commands: &mut EntityCommands,
+        tree: sled::Tree,
+    ) {
+        Self::common_construction(parameters, TerrainStorage::Local { tree }, commands);
+    }
 }
 
 pub fn setup(app: &mut App) {
-    EntitySerializationManager::register::<DynamicTerrainEntity, _>(app);
+    EntitySerializationManager::register::<DynamicTerrainEntity, _, _>(app);
 }

@@ -17,7 +17,6 @@ pub fn entity_serialization(attribute_input: TokenStream, input: TokenStream) ->
     let mut type_id = None;
     let mut tag = None;
     let mut bootstrap_info = None;
-    let mut load_tree = false;
 
     let arg_parser = syn::meta::parser(|meta| {
         if meta.path.is_ident("type_id") {
@@ -28,9 +27,6 @@ pub fn entity_serialization(attribute_input: TokenStream, input: TokenStream) ->
             Ok(())
         } else if meta.path.is_ident("bootstrap") {
             bootstrap_info = Some(meta.value()?.parse::<Expr>()?);
-            Ok(())
-        } else if meta.path.is_ident("load_tree") {
-            load_tree = true;
             Ok(())
         } else {
             Err(meta.error("Unsupported property."))
@@ -123,33 +119,29 @@ pub fn entity_serialization(attribute_input: TokenStream, input: TokenStream) ->
     });
     let query_types_2 = query_types.clone();
 
-    let load_func = if load_tree {
-        quote! {
-             let (storable, parameters, tree) =
-                 data_loader.load_with_tree::<#deserialize_struct_name>()?;
-             Self::spawn_internal(
-                 parent,
-                 commands,
-                 storable,
-                 TerrainStorage::Local { tree },
-                 parameters,
-             );
-        }
-    } else {
-        quote! {
-            let (storable, parameters) = data_loader.load::<#deserialize_struct_name>()?;
-            Self::spawn_internal(parent, commands, storable, parameters);
-        }
-    };
-
     #[rustfmt::skip]
     let spatial_entity_impl = quote! {
-        impl crate::world::spatial_entities::storage::SpatialEntity<(bevy::prelude::Entity, &crate::world::spatial_entities::storage::Storable, #(#query_types),*)> for #tag {
+        impl crate::world::spatial_entities::storage::SpatialEntity<(bevy::prelude::Entity, &crate::world::spatial_entities::storage::Storable, #(#query_types),*), #deserialize_struct_name> for #tag {
             const TYPE_ID: crate::world::spatial_entities::storage::EntityTypeId = #type_id;
 	    #bootstrap_info
 	    
-            fn load(data_loader: impl crate::world::spatial_entities::storage::DataLoader, parent: bevy::prelude::Entity, commands: &mut bevy::prelude::Commands) -> Result<()> {
-		#load_func
+            fn load(data_loader: impl crate::world::spatial_entities::storage::DataLoader, entity_commands: &mut bevy::ecs::system::EntityCommands) -> Result<()> {
+		if Self::REQUEST_TREE {
+		    let (parameters, tree) =  
+			data_loader.load_with_tree::<#deserialize_struct_name>()?;
+		    
+		    if let Some(tree) = tree {
+			Self::construct_entity_with_tree(parameters, entity_commands, tree);
+		    } else {
+			Self::construct_entity(parameters, entity_commands);
+		    }
+		} else {
+		    let parameters =
+			data_loader.load::<#deserialize_struct_name>()?;
+		    
+		    Self::construct_entity(parameters, entity_commands);
+		}
+
 		Ok(())
             }
 

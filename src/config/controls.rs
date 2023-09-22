@@ -4,6 +4,7 @@ use bevy::{
     utils::HashSet,
     window::{CursorGrabMode, PrimaryWindow},
 };
+use bevy_console::ConsoleOpen;
 use bevy_ui_navigation::{systems::InputMapping, NavRequestSystem};
 use ordered_float::NotNan;
 use serde::{Deserialize, Serialize};
@@ -554,6 +555,22 @@ impl Plugin for PlayerControlsPlugin {
         }
 
         app.add_systems(Startup, setup.after(LoadConfigSet));
+
+        app.add_systems(
+            Update,
+            |mut ui_input_mapping: ResMut<InputMapping>, console_open_state: Res<ConsoleOpen>| {
+                // Disables the keyboard if the console is open.
+                ui_input_mapping.keyboard_navigation = !console_open_state.open;
+
+                if console_open_state.open {
+                    ui_input_mapping.key_action = KeyCode::Unlabeled;
+                    ui_input_mapping.key_cancel = KeyCode::Unlabeled;
+                } else {
+                    ui_input_mapping.key_action = KeyCode::Return;
+                    ui_input_mapping.key_cancel = KeyCode::Escape;
+                }
+            },
+        );
 
         app.configure_set(Update, PlayerControlsPlugin);
 

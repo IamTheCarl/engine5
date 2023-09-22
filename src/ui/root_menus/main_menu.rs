@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::{
-    config::{file_paths, graphics::GraphicsConfig},
+    config::{file_paths, graphics::GraphicsConfig, player_info::PlayerInfo},
     error_handler,
     ui::{
         sub_menus::{settings, setup_submenu},
@@ -107,6 +107,7 @@ fn handle_selections(
     mut next_app_state: ResMut<NextState<GameState>>,
     mut next_world_state: ResMut<NextState<WorldState>>,
 
+    player_info: Res<PlayerInfo>,
     block_registry: Res<BlockRegistry>,
     single_player_buttons: Query<(), With<SinglePlayerButton>>,
     quit_buttons: Query<(), With<QuitButton>>,
@@ -121,6 +122,7 @@ fn handle_selections(
                 if single_player_buttons.contains(*from.first()) {
                     world::raw_open_file_backed_world(
                         &mut commands,
+                        Some(&player_info),
                         &block_registry,
                         Path::new(file_paths::SAVE_DIRECTORY).join("test"),
                     )?;

@@ -13,6 +13,7 @@ use vec_rand::RandVec;
 use crate::{
     config::{file_paths, player_info::PlayerInfo},
     multiplayer::{ClientContext, HostContext},
+    world::{client_world, SpawnLocalPlayerRequest},
     GameState,
 };
 
@@ -151,6 +152,7 @@ fn world_command_in_menu(
         WorldSubcommand::Load { name } => {
             if let Err(error) = super::open_world(
                 &mut commands,
+                Some(&player_info),
                 &block_registry,
                 Path::new(file_paths::SAVE_DIRECTORY).join(name),
             ) {
@@ -167,6 +169,7 @@ fn world_command_in_menu(
         WorldSubcommand::Create { name } => {
             if let Err(error) = super::create_world(
                 &mut commands,
+                Some(&player_info),
                 &block_registry,
                 Path::new(file_paths::SAVE_DIRECTORY).join(name),
             ) {
@@ -270,7 +273,14 @@ fn world_connect(
     let addresses = addresses
         .into_iter()
         .map(move |ip_addr| SocketAddr::new(ip_addr, port));
-    ClientContext::start_session(commands, Box::new(addresses), client_id, client_name)?;
+    ClientContext::start_session(
+        commands,
+        Box::new(addresses),
+        client_id,
+        client_name.clone(),
+    )?;
+    client_world(commands);
+    commands.insert_resource(SpawnLocalPlayerRequest { name: client_name });
 
     next_app_state.set(GameState::InGame);
     next_world_state.set(WorldState::Running);

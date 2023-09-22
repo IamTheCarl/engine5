@@ -35,12 +35,13 @@ pub struct WorldEntity {
 
 pub fn open_world(
     commands: &mut Commands,
+    local_player: Option<&PlayerInfo>,
     block_registry: &BlockRegistry,
     path: impl Into<PathBuf>,
 ) -> Result<()> {
     let path = path.into();
     if path.exists() {
-        raw_open_file_backed_world(commands, block_registry, path)
+        raw_open_file_backed_world(commands, local_player, block_registry, path)
     } else {
         bail!("World does not exist.");
     }
@@ -48,12 +49,13 @@ pub fn open_world(
 
 pub fn create_world(
     commands: &mut Commands,
+    local_player: Option<&PlayerInfo>,
     block_registry: &BlockRegistry,
     path: impl Into<PathBuf>,
 ) -> Result<()> {
     let path = path.into();
     if !path.exists() {
-        raw_open_file_backed_world(commands, block_registry, path)
+        raw_open_file_backed_world(commands, local_player, block_registry, path)
     } else {
         bail!("World already exists.");
     }
@@ -61,6 +63,7 @@ pub fn create_world(
 
 pub fn raw_open_file_backed_world(
     commands: &mut Commands,
+    local_player: Option<&PlayerInfo>,
     block_registry: &BlockRegistry,
     path: impl Into<PathBuf>,
 ) -> Result<()> {
@@ -71,9 +74,12 @@ pub fn raw_open_file_backed_world(
         sled::open(path).context("Failed to open or create database for world.")?;
     let storage = EntityStorage::new(&world_database)?;
 
-    // TODO we shouldn't make this request if we're running a headless server.
     // Request that the local player be spawned as soon as possible.
-    commands.insert_resource(SpawnLocalPlayerRequest);
+    if let Some(local_player) = local_player {
+        commands.insert_resource(SpawnLocalPlayerRequest {
+            name: local_player.name.clone(),
+        });
+    }
 
     let entity = client_world(commands).id();
 
@@ -122,20 +128,22 @@ pub fn client_world<'w, 's, 'a>(commands: &'a mut Commands<'w, 's>) -> EntityCom
 
 /// This resource is used as a marker, telling the ECS that we need to spawn the local player.
 #[derive(Resource)]
-struct SpawnLocalPlayerRequest;
+struct SpawnLocalPlayerRequest {
+    name: String,
+}
 
 #[allow(clippy::complexity)]
 fn spawn_local_player(
     mut commands: Commands,
-    player_info: Res<PlayerInfo>,
+    local_player_request: Res<SpawnLocalPlayerRequest>,
     world_entity: Res<WorldEntity>,
-    storage: ResMut<EntityStorage>,
+    storage: Option<ResMut<EntityStorage>>,
     offline_players: Query<(Entity, &PlayerEntity), Without<ActivePlayer>>,
     player_spawn: Query<&Position, With<PlayerSpawner>>,
 ) -> Result<()> {
     // Check if the player already exists in the world.
     for (player_entity, offline_player) in offline_players.iter() {
-        if offline_player.name == player_info.name {
+        if offline_player.name == local_player_request.name {
             // This is our player! Activate it!
             commands
                 .entity(player_entity)
@@ -148,22 +156,26 @@ fn spawn_local_player(
     }
 
     // Looks like they don't.
-    // Spawn them in.
-    if let Ok(spawn_position) = player_spawn.get_single() {
-        dbg!();
-        PlayerEntity::spawn_deactivated(
-            world_entity.entity,
-            &mut commands,
-            &storage,
-            spawn_position.clone(),
-            player_info.name.clone(),
-            0.0,
-        )?
-        .insert(LocalPlayer)
-        .insert(ActivePlayer);
+    if let Some(storage) = storage {
+        // Spawn them in, if it's a single player world.
+        if let Ok(spawn_position) = player_spawn.get_single() {
+            dbg!();
+            PlayerEntity::spawn_deactivated(
+                world_entity.entity,
+                &mut commands,
+                &storage,
+                spawn_position.clone(),
+                local_player_request.name.clone(),
+                0.0,
+            )?
+            .insert(LocalPlayer)
+            .insert(ActivePlayer);
 
-        commands.remove_resource::<SpawnLocalPlayerRequest>();
+            commands.remove_resource::<SpawnLocalPlayerRequest>();
+        }
     }
+
+    // If it's not a single-player world, we'll just wait for the server to send us a player.
 
     Ok(())
 }

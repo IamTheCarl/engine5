@@ -15,7 +15,7 @@ use renet::{
 
 use crate::multiplayer::{ClientChannels, ServerChannels};
 
-use super::ClientHeader;
+use super::{ClientHeader, EntityUpdate, MultiplayerPlugin};
 
 #[derive(Resource)]
 pub struct ClientContext {
@@ -30,7 +30,14 @@ impl ClientContext {
     pub fn setup(app: &mut App) {
         app.add_systems(
             FixedUpdate,
-            Self::update_client.run_if(resource_exists::<Self>()),
+            (
+                Self::update_client
+                    .run_if(resource_exists::<Self>())
+                    .in_set(MultiplayerPlugin),
+                Self::send_packets
+                    .after(MultiplayerPlugin)
+                    .run_if(resource_exists::<Self>()),
+            ),
         );
     }
 
@@ -130,7 +137,11 @@ impl ClientContext {
         commands.remove_resource::<Self>();
     }
 
-    fn update(&mut self, time_delta: Duration) -> Result<()> {
+    fn update(
+        &mut self,
+        time_delta: Duration,
+        mut entity_update_event: EventWriter<EntityUpdate>,
+    ) -> Result<()> {
         self.client.update(time_delta);
         match self.transport.update(time_delta, &mut self.client) {
             Err(error) => {
@@ -143,12 +154,39 @@ impl ClientContext {
                     _ => Err(anyhow!(error)),
                 }
             }
-            _ => Ok(()),
+            _ => {
+                while let Some(message) = self.client.receive_message(ServerChannels::UpdateEntity)
+                {
+                    match EntityUpdate::deserialize(&message) {
+                        Ok(entity_update) => entity_update_event.send(entity_update),
+                        Err(error) => log::error!("Failed to decode entity update: {:?}", error),
+                    }
+                }
+
+                Ok(())
+            }
         }
     }
 
-    fn update_client(mut context: ResMut<Self>, mut commands: Commands, time: Res<Time>) {
-        if let Err(error) = context.update(time.delta()) {
+    fn send_packets(mut context: ResMut<Self>) {
+        // Some weirdness needed to have multiple mutable borrows to the content.
+        let context = &mut *context;
+
+        let transport = &mut context.transport;
+        let client = &mut context.client;
+
+        if let Err(error) = transport.send_packets(client) {
+            log::error!("Error while sending packets to server: {:?}", error);
+        }
+    }
+
+    fn update_client(
+        mut context: ResMut<Self>,
+        mut commands: Commands,
+        time: Res<Time>,
+        entity_update_event: EventWriter<EntityUpdate>,
+    ) {
+        if let Err(error) = context.update(time.delta(), entity_update_event) {
             log::error!("Error in transport layer: {:?}", error);
             log::warn!("Client session will be terminated.");
 

@@ -17,8 +17,9 @@ use crate::{
     world::{
         physics::Position,
         spatial_entities::{
-            storage::{EntityStorage, Storable},
+            storage::{EntityStorage, Storable, TracerId},
             types::player::{spawner::PlayerSpawner, ActivePlayer, LocalPlayer, PlayerEntity},
+            SpatialEntityTracker,
         },
         terrain::{Chunk, ChunkIndex, ChunkPosition, TerrainSpace},
         ViewRadius, WorldEntity,
@@ -26,13 +27,13 @@ use crate::{
 };
 
 use super::{
-    ChunkUpdate, ChunkUpdateRef, ClientHeader, PlayerConnect, PlayerDisconnect, SendTerrain,
-    ServerChannels, ToTransmitTerrain,
+    ChunkUpdate, ChunkUpdateRef, ClientHeader, MultiplayerPlugin, PlayerConnect, PlayerDisconnect,
+    ServerChannels,
 };
 
 #[derive(Resource)]
 pub struct HostContext {
-    server: RenetServer,
+    pub server: RenetServer,
     transport: NetcodeServerTransport,
 }
 
@@ -43,16 +44,27 @@ impl HostContext {
             (
                 Self::update_host.run_if(resource_exists::<Self>()),
                 Self::control_client_terrain
+                    .in_set(MultiplayerPlugin)
                     .run_if(resource_exists::<Self>())
                     .after(Self::update_host),
                 Self::transmit_terrain
+                    .in_set(MultiplayerPlugin)
                     .run_if(resource_exists::<Self>())
                     .after(Self::control_client_terrain),
                 Self::spawn_remote_player
+                    .in_set(MultiplayerPlugin)
                     .after(Self::update_host)
                     .run_if(resource_exists::<Self>()),
                 Self::despawn_remote_player
+                    .in_set(MultiplayerPlugin)
                     .after(Self::update_host)
+                    .run_if(resource_exists::<Self>()),
+                Self::select_entities_for_transmission
+                    .in_set(MultiplayerPlugin)
+                    .after(Self::update_host)
+                    .run_if(resource_exists::<Self>()),
+                Self::send_packets
+                    .after(MultiplayerPlugin)
                     .run_if(resource_exists::<Self>()),
             ),
         );
@@ -148,6 +160,16 @@ impl HostContext {
         Ok(())
     }
 
+    fn send_packets(mut context: ResMut<Self>) {
+        // Some weirdness needed to have multiple mutable borrows to the content.
+        let context = &mut *context;
+
+        let transport = &mut context.transport;
+        let server = &mut context.server;
+
+        transport.send_packets(server);
+    }
+
     fn update_host(
         mut context: ResMut<Self>,
         mut commands: Commands,
@@ -213,10 +235,11 @@ impl HostContext {
             for (player_entity, offline_player) in offline_players.iter() {
                 if offline_player.name == player_name {
                     // This is our player! Activate it!
-                    commands
-                        .entity(player_entity)
-                        .insert(remote_player)
-                        .insert(ActivePlayer);
+                    commands.entity(player_entity).insert((
+                        remote_player,
+                        SendEntities,
+                        ActivePlayer,
+                    ));
                     log::info!("Welcome back {}", player_name);
 
                     break 'event_loop;
@@ -362,9 +385,75 @@ impl HostContext {
             commands.entity(chunk_entity).remove::<ToTransmitTerrain>();
         }
     }
+
+    fn select_entities_for_transmission(
+        mut commands: Commands,
+        terrain_loaders: Query<(&Position, &ViewRadius, &RemoteClientPlayer), With<SendEntities>>,
+        mut spatial_entities: Query<Option<&mut ToTransmitEntity>, With<Position>>,
+        entity_tracker: Res<SpatialEntityTracker>,
+    ) {
+        for (loader_position, view_radius, remote_player) in terrain_loaders.iter() {
+            let base_chunk_index =
+                (loader_position.translation / Chunk::CHUNK_DIAMETER as f32).as_ivec3();
+
+            let mut chunks_in_range = HashSet::new();
+
+            let radius_squared = (view_radius.chunks * view_radius.chunks) as f32;
+            for x in -view_radius.chunks..view_radius.chunks {
+                let z_range = (radius_squared - (x * x) as f32).sqrt().ceil() as i32;
+                for z in -z_range..z_range {
+                    let y_range = (radius_squared - (x * x) as f32 - (z * z) as f32)
+                        .sqrt()
+                        .ceil() as i32;
+
+                    for y in -y_range..y_range {
+                        let chunk_index = base_chunk_index + ChunkIndex::new(x, y, z);
+                        chunks_in_range.insert(chunk_index);
+                    }
+                }
+            }
+
+            for chunk in chunks_in_range {
+                if let Some(cell) = entity_tracker.get_cell_entities(&chunk.into()) {
+                    for entity in cell.iter() {
+                        if let Some(mut to_transmit) =
+                            spatial_entities.get_mut(*entity).ok().flatten()
+                        {
+                            to_transmit.clients.insert(remote_player.client_id);
+                        } else {
+                            commands.entity(*entity).insert(ToTransmitEntity {
+                                clients: HashSet::from([remote_player.client_id]),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Component)]
 pub struct RemoteClientPlayer {
     client_id: u64,
+}
+
+#[derive(Debug, Component)]
+#[component(storage = "SparseSet")]
+pub struct ToTransmitEntity {
+    pub clients: HashSet<u64>,
+}
+
+#[derive(Debug, Component)]
+struct SendEntities;
+
+#[derive(Debug, Component)]
+#[component(storage = "SparseSet")]
+struct ToTransmitTerrain {
+    terrain_space_tracer_id: TracerId,
+    to_clients: HashSet<u64>,
+}
+
+#[derive(Debug, Component)]
+struct SendTerrain {
+    loaded_chunks: HashSet<ChunkIndex>,
 }

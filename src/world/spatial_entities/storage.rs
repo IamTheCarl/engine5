@@ -14,10 +14,13 @@ use std::{
     },
 };
 
-use crate::world::{
-    generation::ToGenerateSpatial,
-    terrain::{storage::CHUNK_TIME_TO_SAVE, ChunkPosition},
-    WorldEntity,
+use crate::{
+    multiplayer::{ClientContext, EntityUpdate, HostContext, ServerChannels, ToTransmitEntity},
+    world::{
+        generation::ToGenerateSpatial,
+        terrain::{storage::CHUNK_TIME_TO_SAVE, ChunkPosition},
+        WorldEntity,
+    },
 };
 
 use super::SpatialEntityTracker;
@@ -85,10 +88,27 @@ struct BootstrapList {
     bootstrap_entities_modified: bool,
 }
 
-#[derive(Resource)]
-pub struct EntityStorage {
+#[derive(Resource, Default)]
+pub struct EntityTracer {
     tracers_to_entities: HashMap<TracerId, Entity>,
     entities_to_tracers: HashMap<Entity, TracerId>,
+}
+
+impl EntityTracer {
+    /// Gets the Entity ID for a traceable object.
+    /// Returning None doesn't mean the entity doesn't exist anymore. It's just not loaded.
+    pub fn get_entity(&self, trace_id: Storable) -> Option<Entity> {
+        self.tracers_to_entities.get(&trace_id.id).copied()
+    }
+
+    pub fn insert_entity(&mut self, tracer_id: TracerId, entity: Entity) {
+        self.tracers_to_entities.insert(tracer_id, entity);
+        self.entities_to_tracers.insert(entity, tracer_id);
+    }
+}
+
+#[derive(Resource)]
+pub struct EntityStorage {
     database: sled::Db,
     spatial_hash_storage: sled::Tree,
     spatial_entities_storage: sled::Tree,
@@ -107,8 +127,6 @@ impl EntityStorage {
             .context("Failed to load bootstrap entities.")?;
 
         Ok(EntityStorage {
-            tracers_to_entities: HashMap::new(),
-            entities_to_tracers: HashMap::new(),
             database: database.clone(),
             spatial_hash_storage: database
                 .open_tree("spatial_hash")
@@ -266,12 +284,6 @@ impl EntityStorage {
         }
     }
 
-    /// Gets the Entity ID for a traceable object.
-    /// Returning None doesn't mean the entity doesn't exist anymore. It's just not loaded.
-    pub fn get_entity(&self, trace_id: Storable) -> Option<Entity> {
-        self.tracers_to_entities.get(&trace_id.id).copied()
-    }
-
     /// An entity may need to store complicated data and manipulate it on the fly. You can use this to gain
     /// access to a tree to do that with. You can't create namespaces within the tree, so you'll need to use
     /// a prefix to keep your component's entries from stomping over the entries of other components.
@@ -292,20 +304,19 @@ pub trait EntityConstruction<P> {
 
 fn new_tracings(
     new_tracings: Query<(Entity, &Storable), Changed<Storable>>,
-    mut storage: ResMut<EntityStorage>,
+    mut tracer: ResMut<EntityTracer>,
 ) {
     for (entity_id, traceable) in new_tracings.iter() {
         let tracer_id = traceable.id;
 
-        storage.tracers_to_entities.insert(tracer_id, entity_id);
-        storage.entities_to_tracers.insert(entity_id, tracer_id);
+        tracer.insert_entity(tracer_id, entity_id);
     }
 }
 
-fn clean_up_tracings(mut removed: RemovedComponents<Storable>, mut storage: ResMut<EntityStorage>) {
+fn clean_up_tracings(mut removed: RemovedComponents<Storable>, mut tracer: ResMut<EntityTracer>) {
     for entity_id in removed.iter() {
-        if let Some(tracker_id) = storage.entities_to_tracers.remove(&entity_id) {
-            storage.tracers_to_entities.remove(&tracker_id);
+        if let Some(tracker_id) = tracer.entities_to_tracers.remove(&entity_id) {
+            tracer.tracers_to_entities.remove(&tracker_id);
         } else {
             log::warn!("Removed traceable without an associated entity.");
         }
@@ -321,6 +332,7 @@ fn save_bootstrap_entity_list(storage: Res<EntityStorage>) {
 fn bootstrap_entities(
     mut commands: Commands,
     storage: Res<EntityStorage>,
+    tracer: Res<EntityTracer>,
     serialization_manager: Res<EntitySerializationManager>,
     world_entity: Res<WorldEntity>,
 ) {
@@ -332,6 +344,7 @@ fn bootstrap_entities(
         for tracer_id in bootstrap_list.bootstrap_entities.keys() {
             if let Err(error) = serialization_manager.load_entity(
                 *tracer_id,
+                &tracer,
                 &storage,
                 world_entity.entity,
                 &mut commands,
@@ -495,7 +508,23 @@ impl<'a> DataSaver for LocalDataSaver<'a> {
     }
 }
 
-pub type EntityTypeId = u16;
+pub struct RemoteDataSaver<'a> {
+    result: &'a mut Result<()>,
+    storage: &'a mut Vec<u8>,
+    tracer_id: &'a mut TracerId,
+    entity: &'a mut Entity,
+}
+
+impl<'a> DataSaver for RemoteDataSaver<'a> {
+    fn save<S: Serialize>(self, entity: Entity, storable: &Storable, to_serialize: S) {
+        *self.result = bincode::serialize_into(self.storage, &to_serialize)
+            .context("Failed to serialize entity");
+        *self.tracer_id = storable.id;
+        *self.entity = entity;
+    }
+}
+
+pub type EntityTypeId = u32;
 
 pub trait SpatialEntity<Q: WorldQuery, P>: EntityConstruction<P> {
     const TYPE_ID: EntityTypeId;
@@ -577,6 +606,61 @@ impl EntitySerializationManager {
             }
         }
 
+        fn transmit_system<E, Q, P>(
+            mut commands: Commands,
+            mut host: ResMut<HostContext>,
+            to_transmit: Query<(Entity, &ToTransmitEntity), With<E>>,
+            entities: Query<Q, With<ToTransmitEntity>>,
+        ) where
+            E: SpatialEntity<Q, P> + Component,
+            Q: WorldQuery,
+        {
+            // TODO this could be made more efficient if we generated a "transmit" function that automatically
+            // includes the ToTransmitEntity component.
+            for (entity_to_transmit, target_clients) in to_transmit.iter() {
+                // First we need to serialize the entity.
+                let to_transmit = entities
+                    .get(entity_to_transmit)
+                    .expect("Transmittable entity was missing necessary component(s).");
+
+                let message = EntityUpdate::serialize(|bytes| {
+                    let mut save_result = Err(anyhow::anyhow!("Entity was never saved."));
+                    let mut tracer_id = 0;
+
+                    let mut entity = Entity::PLACEHOLDER;
+                    let data_saver = RemoteDataSaver {
+                        result: &mut save_result,
+                        storage: bytes,
+                        tracer_id: &mut tracer_id,
+                        entity: &mut entity,
+                    };
+
+                    E::save(to_transmit, data_saver);
+
+                    Ok((tracer_id, E::TYPE_ID))
+                });
+
+                match message {
+                    Ok(message) => {
+                        for client_id in target_clients.clients.iter() {
+                            host.server.send_message(
+                                *client_id,
+                                ServerChannels::UpdateEntity,
+                                message.clone(),
+                            );
+                        }
+
+                        commands
+                            .entity(entity_to_transmit)
+                            .remove::<ToTransmitEntity>();
+                    }
+                    Err(error) => {
+                        log::error!("Failed to serialize entity for transmission: {:?}", error)
+                    }
+                }
+            }
+        }
+
         fn setup_deserialization<E, Q, P>(
             mut serialization_manager: ResMut<EntitySerializationManager>,
         ) where
@@ -624,9 +708,14 @@ impl EntitySerializationManager {
 
         app.add_systems(
             Update,
-            save_system::<E, Q, P>
-                .run_if(resource_exists::<EntityStorage>())
-                .in_set(SaveSystemSet),
+            (
+                save_system::<E, Q, P>
+                    .run_if(resource_exists::<EntityStorage>())
+                    .in_set(SaveSystemSet),
+                transmit_system::<E, Q, P>
+                    .run_if(resource_exists::<HostContext>())
+                    .in_set(SaveSystemSet),
+            ),
         );
         app.add_systems(
             Startup,
@@ -637,12 +726,13 @@ impl EntitySerializationManager {
     fn load_entity(
         &self,
         tracer_id: TracerId,
+        tracer: &EntityTracer,
         storage: &EntityStorage,
         parent: Entity,
         commands: &mut Commands,
     ) -> Result<()> {
         // Don't load if already loaded.
-        if !storage.tracers_to_entities.contains_key(&tracer_id) {
+        if !tracer.tracers_to_entities.contains_key(&tracer_id) {
             let bytes = storage
                 .spatial_entities_storage
                 .get(tracer_id.to_be_bytes())
@@ -672,6 +762,63 @@ impl EntitySerializationManager {
 
         Ok(())
     }
+
+    fn update_entity(
+        &self,
+        update: &EntityUpdate,
+        entity_tracer: &mut ResMut<EntityTracer>,
+        parent: Entity,
+        commands: &mut Commands,
+    ) -> Result<()> {
+        let reciver = self
+            .entity_receivers
+            .get(&update.type_id)
+            .with_context(|| format!("Unknown entity type ID: {}", update.type_id))?;
+
+        let entity_commands =
+            if let Some(entity) = entity_tracer.tracers_to_entities.get(&update.tracer_id) {
+                commands.entity(*entity)
+            } else {
+                let mut entity_commands = commands.spawn(Storable {
+                    id: update.tracer_id,
+                });
+                entity_commands.set_parent(parent);
+
+                // We insert this into the entity tracer ourselves.
+                // We can't afford to wait until the system to add those does
+                // its job, because we can recive multiple updates in a single frame.
+                let entity_id = entity_commands.id();
+                entity_tracer.insert_entity(update.tracer_id, entity_id);
+
+                entity_commands
+            };
+
+        // Note that the payload clone is not a deep copy.
+        reciver(update.tracer_id, update.payload.clone(), entity_commands)
+    }
+}
+
+fn receive_entities(
+    mut commands: Commands,
+    mut entity_update_events: EventReader<EntityUpdate>,
+    world_entity: Res<WorldEntity>,
+    mut entity_tracer: ResMut<EntityTracer>,
+    serialization_manager: Res<EntitySerializationManager>,
+) {
+    for entity_update in entity_update_events.iter() {
+        if let Err(error) = serialization_manager.update_entity(
+            entity_update,
+            &mut entity_tracer,
+            world_entity.entity,
+            &mut commands,
+        ) {
+            log::error!(
+                "Failed to update entity {}: {:?}",
+                entity_update.tracer_id,
+                error
+            );
+        }
+    }
 }
 
 fn load_entities(
@@ -679,6 +826,7 @@ fn load_entities(
     world_entity: Res<WorldEntity>,
     terrain_chunks: Query<(Entity, &ChunkPosition), With<ToLoadSpatial>>,
     storage: Res<EntityStorage>,
+    entity_tracer: Res<EntityTracer>,
     serialization_manager: Res<EntitySerializationManager>,
 ) {
     fn load_spatial_hash(
@@ -711,6 +859,7 @@ fn load_entities(
                     for tracer_id in entities {
                         if let Err(error) = serialization_manager.load_entity(
                             tracer_id,
+                            &entity_tracer,
                             &storage,
                             world_entity.entity,
                             &mut commands,
@@ -762,13 +911,14 @@ fn save_timer(
 struct SerializationSetup;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, SystemSet)]
-struct SaveSystemSet;
+pub struct SaveSystemSet;
 
 fn setup(mut commands: Commands) {
     commands.insert_resource(EntitySerializationManager {
         entity_loaders: HashMap::new(),
         entity_receivers: HashMap::new(),
     });
+    commands.insert_resource(EntityTracer::default());
 
     commands.insert_resource(EntitySaveTimer { time: 0 });
 }
@@ -797,6 +947,9 @@ pub(super) fn register_storage(app: &mut App) {
             save_bootstrap_entity_list.run_if(resource_exists::<EntityStorage>()),
             bootstrap_entities
                 .run_if(resource_exists::<EntityStorage>())
+                .run_if(resource_exists::<WorldEntity>()),
+            receive_entities
+                .run_if(resource_exists::<ClientContext>())
                 .run_if(resource_exists::<WorldEntity>()),
         ),
     );

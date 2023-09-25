@@ -2,11 +2,13 @@ use bevy::{app::AppExit, asset::ChangeWatcher, log::LogPlugin, prelude::*, windo
 use bevy_console::{ConsoleConfiguration, ConsolePlugin};
 use bevy_prototype_debug_lines::DebugLinesPlugin;
 use bevy_ui_navigation::DefaultNavigationPlugins;
+use console_scripts::ConsoleScripts;
 use std::time::Duration;
 
 use crate::ui::ErrorContext;
 
 pub mod config;
+pub mod console_scripts;
 mod logging;
 pub mod multiplayer;
 pub mod ui;
@@ -31,6 +33,7 @@ fn main() {
                 })
                 .disable::<LogPlugin>(),
             ConsolePlugin,
+            ConsoleScripts,
             Engine5::new(),
         ))
         .insert_resource(ConsoleConfiguration::default())

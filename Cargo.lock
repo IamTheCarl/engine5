@@ -1812,6 +1812,7 @@ dependencies = [
  "renet_visualizer",
  "serde",
  "serde_yaml",
+ "shlex",
  "sled",
  "tracing-log",
  "tracing-subscriber",

@@ -1,0 +1,3 @@
+# Hosts a basic multiplayer server.
+world load test
+world host

@@ -1,0 +1,2 @@
+# Connects to a locally hosted multiplayer server as "billy"
+world connect localhost billy

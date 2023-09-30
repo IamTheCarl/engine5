@@ -40,7 +40,7 @@ pub struct HostContext {
 impl HostContext {
     pub fn setup(app: &mut App) {
         app.add_systems(
-            FixedUpdate,
+            PreUpdate,
             (
                 Self::update_host.run_if(resource_exists::<Self>()),
                 Self::control_client_terrain
@@ -63,10 +63,12 @@ impl HostContext {
                     .in_set(MultiplayerPlugin)
                     .after(Self::update_host)
                     .run_if(resource_exists::<Self>()),
-                Self::send_packets
-                    .after(MultiplayerPlugin)
-                    .run_if(resource_exists::<Self>()),
             ),
+        );
+
+        app.add_systems(
+            PostUpdate,
+            Self::send_packets.run_if(resource_exists::<Self>()),
         );
     }
 

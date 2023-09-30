@@ -29,15 +29,17 @@ pub struct ClientContext {
 impl ClientContext {
     pub fn setup(app: &mut App) {
         app.add_systems(
-            FixedUpdate,
-            (
-                Self::update_client
-                    .run_if(resource_exists::<Self>())
-                    .in_set(MultiplayerPlugin),
-                Self::send_packets
-                    .after(MultiplayerPlugin)
-                    .run_if(resource_exists::<Self>()),
-            ),
+            PreUpdate,
+            Self::update_client
+                .run_if(resource_exists::<Self>())
+                .in_set(MultiplayerPlugin),
+        );
+
+        app.add_systems(
+            PostUpdate,
+            Self::send_packets
+                .after(MultiplayerPlugin)
+                .run_if(resource_exists::<Self>()),
         );
     }
 

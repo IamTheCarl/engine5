@@ -36,7 +36,7 @@ impl DynamicTerrainEntity {
         velocity: Velocity,
     ) -> Result<()> {
         let (storable, tree) =
-            storage.new_storable_component_with_tree::<DynamicTerrainEntity, _, _>()?;
+            storage.new_storable_component_with_tree::<DynamicTerrainEntity, _, _, _>()?;
 
         Self::spawn_internal(
             parent,
@@ -114,5 +114,5 @@ impl EntityConstruction<DynamicTerrainParameters> for DynamicTerrainEntity {
 }
 
 pub fn setup(app: &mut App) {
-    EntitySerializationManager::register::<DynamicTerrainEntity, _, _>(app);
+    EntitySerializationManager::register::<DynamicTerrainEntity, _, _, _>(app);
 }

@@ -30,7 +30,7 @@ impl GlobalTerrainEntity {
         generator: impl Into<WorldGeneratorEnum>,
     ) -> Result<()> {
         let (storable, tree) =
-            storage.new_storable_component_with_tree::<GlobalTerrainEntity, _, _>()?;
+            storage.new_storable_component_with_tree::<GlobalTerrainEntity, _, _, _>()?;
 
         let mut commands = commands.spawn(storable);
         commands.set_parent(parent);
@@ -90,5 +90,5 @@ impl EntityConstruction<GlobalTerrainParameters> for GlobalTerrainEntity {
 }
 
 pub fn setup(app: &mut App) {
-    EntitySerializationManager::register::<GlobalTerrainEntity, _, _>(app);
+    EntitySerializationManager::register::<GlobalTerrainEntity, _, _, _>(app);
 }

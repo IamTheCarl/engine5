@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
     time::{Duration, SystemTime},
 };
@@ -13,7 +14,10 @@ use renet::{
     ConnectionConfig, RenetClient,
 };
 
-use crate::multiplayer::{ClientChannels, ServerChannels};
+use crate::{
+    multiplayer::{ClientChannels, ServerChannels},
+    world::spatial_entities::storage::TracerId,
+};
 
 use super::{ClientHeader, EntityUpdate, MultiplayerPlugin};
 
@@ -24,6 +28,8 @@ pub struct ClientContext {
     client: RenetClient,
     transport: NetcodeClientTransport,
     addresses: Box<dyn Iterator<Item = SocketAddr> + Sync + Send>,
+
+    entity_updates: HashMap<TracerId, EntityUpdate>,
 }
 
 impl ClientContext {
@@ -68,6 +74,8 @@ impl ClientContext {
             client,
             transport,
             addresses,
+
+            entity_updates: HashMap::new(),
         });
 
         Ok(())
@@ -139,11 +147,14 @@ impl ClientContext {
         commands.remove_resource::<Self>();
     }
 
-    fn update(
-        &mut self,
-        time_delta: Duration,
-        mut entity_update_event: EventWriter<EntityUpdate>,
-    ) -> Result<()> {
+    pub fn entity_updates(&self) -> impl Iterator<Item = (&TracerId, &EntityUpdate)> {
+        self.entity_updates.iter()
+    }
+
+    fn update(&mut self, time_delta: Duration) -> Result<()> {
+        // We must always clear the update buffer so that the client can start predicting the world between updates.
+        self.entity_updates.clear();
+
         self.client.update(time_delta);
         match self.transport.update(time_delta, &mut self.client) {
             Err(error) => {
@@ -160,7 +171,9 @@ impl ClientContext {
                 while let Some(message) = self.client.receive_message(ServerChannels::UpdateEntity)
                 {
                     match EntityUpdate::deserialize(&message) {
-                        Ok(entity_update) => entity_update_event.send(entity_update),
+                        Ok((tracer_id, entity_update)) => {
+                            self.entity_updates.insert(tracer_id, entity_update);
+                        }
                         Err(error) => log::error!("Failed to decode entity update: {:?}", error),
                     }
                 }
@@ -182,13 +195,8 @@ impl ClientContext {
         }
     }
 
-    fn update_client(
-        mut context: ResMut<Self>,
-        mut commands: Commands,
-        time: Res<Time>,
-        entity_update_event: EventWriter<EntityUpdate>,
-    ) {
-        if let Err(error) = context.update(time.delta(), entity_update_event) {
+    fn update_client(mut context: ResMut<Self>, mut commands: Commands, time: Res<Time>) {
+        if let Err(error) = context.update(time.delta()) {
             log::error!("Error in transport layer: {:?}", error);
             log::warn!("Client session will be terminated.");
 

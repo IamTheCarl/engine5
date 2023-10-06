@@ -40,7 +40,6 @@ impl Plugin for MultiplayerPlugin {
 
         app.add_event::<PlayerConnect>();
         app.add_event::<PlayerDisconnect>();
-        app.add_event::<EntityUpdate>();
 
         HostContext::setup(app);
         ClientContext::setup(app);
@@ -147,9 +146,8 @@ struct ClientHeader {
     name: String,
 }
 
-#[derive(Debug, Event)]
+#[derive(Debug)]
 pub struct EntityUpdate {
-    pub tracer_id: TracerId,
     pub type_id: EntityTypeId,
     pub payload: Bytes,
 }
@@ -161,7 +159,7 @@ impl EntityUpdate {
     const TRACER_ID_END: usize = Self::TRACER_ID_LENGTH;
     const TYPE_ID_END: usize = Self::TRACER_ID_END + Self::TYPE_ID_LENGTH;
 
-    fn deserialize(source: &Bytes) -> Result<Self> {
+    fn deserialize(source: &Bytes) -> Result<(TracerId, Self)> {
         let tracer_id_source = &source
             .get(..Self::TRACER_ID_END)
             .context("Unexpected end of data when reading tracer id.")?;
@@ -179,11 +177,7 @@ impl EntityUpdate {
         // The rest is the payload.
         let payload = source.slice(Self::TYPE_ID_END..);
 
-        Ok(Self {
-            tracer_id,
-            type_id,
-            payload,
-        })
+        Ok((tracer_id, Self { type_id, payload }))
     }
 
     pub fn serialize(

@@ -330,7 +330,7 @@ impl Plugin for PhysicsPlugin {
             Update,
             (
                 cylinder_to_cylinder::check_for_intersections.in_set(CollisionCheck),
-                cylinder_to_terrain::check_for_intersections.in_set(CollisionCheck),
+                // cylinder_to_terrain::check_for_intersections.in_set(CollisionCheck),
                 terrain_to_terrain::check_for_intersections.in_set(CollisionCheck),
             ),
         );

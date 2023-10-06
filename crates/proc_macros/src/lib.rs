@@ -96,7 +96,7 @@ pub fn entity_serialization(attribute_input: TokenStream, input: TokenStream) ->
         }
     };
 
-    let parameter_names = fields.iter().map(|field| &field.ident);
+    let parameter_names = fields.iter().map(|field| &field.ident).collect::<Vec<_>>();
     let parameter_access = fields.iter().map(|field| {
         let config = parse_field_attributes(&field.attrs);
 
@@ -108,20 +108,64 @@ pub fn entity_serialization(attribute_input: TokenStream, input: TokenStream) ->
             quote! { #parameter_name }
         }
     });
-    let query_types = fields.iter().map(|field| {
+    let save_query_types = fields
+        .iter()
+        .map(|field| {
+            let config = parse_field_attributes(&field.attrs);
+            if let Some(query_type) = config.query_type {
+                quote! { &#query_type }
+            } else {
+                let ty = &field.ty;
+                quote! { &#ty }
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let update_query = fields
+        .iter()
+        .map(|field| {
+            let config = parse_field_attributes(&field.attrs);
+            if let Some(query_type) = config.query_type {
+                quote! { &mut #query_type }
+            } else {
+                let ty = &field.ty;
+                quote! { &mut #ty }
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let update_query_types = fields
+        .iter()
+        .map(|field| {
+            let config = parse_field_attributes(&field.attrs);
+            if let Some(query_type) = config.query_type {
+                quote! { bevy::prelude::Mut<'_, #query_type> }
+            } else {
+                let ty = &field.ty;
+                quote! { bevy::prelude::Mut<'_, #ty> }
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let update_actions = fields.iter().map(|field| {
         let config = parse_field_attributes(&field.attrs);
-        if let Some(query_type) = config.query_type {
-            quote! { &#query_type }
+
+        let parameter_name = &field.ident;
+
+        if let Some(get) = config.get {
+            quote! { #parameter_name.#get = parameters.#parameter_name; }
         } else {
-            let ty = &field.ty;
-            quote! { &#ty }
+            quote! { *#parameter_name = parameters.#parameter_name; }
         }
     });
-    let query_types_2 = query_types.clone();
+    // dbg!(&save_query_types, &update_query, &update_query_types);
 
     #[rustfmt::skip]
     let spatial_entity_impl = quote! {
-        impl crate::world::spatial_entities::storage::SpatialEntity<(bevy::prelude::Entity, &crate::world::spatial_entities::storage::Storable, #(#query_types),*), #deserialize_struct_name> for #tag {
+        impl crate::world::spatial_entities::storage::SpatialEntity<
+	    (bevy::prelude::Entity, &crate::world::spatial_entities::storage::Storable, #(#save_query_types),*),
+	(#(#update_query),*),
+	#deserialize_struct_name> for #tag {
             const TYPE_ID: crate::world::spatial_entities::storage::EntityTypeId = #type_id;
 	    #bootstrap_info
 	    
@@ -144,8 +188,17 @@ pub fn entity_serialization(attribute_input: TokenStream, input: TokenStream) ->
 
 		Ok(())
             }
+	    
+            fn update(data_loader: impl crate::world::spatial_entities::storage::DataLoader, (#(mut #parameter_names),*): (#(#update_query_types),*)) -> Result<()> {
+		let parameters =
+		    data_loader.load::<#deserialize_struct_name>()?;
 
-            fn save((entity, storable, #(#parameter_names),*): (bevy::prelude::Entity, &crate::world::spatial_entities::storage::Storable, #(#query_types_2),*), data_saver: impl crate::world::spatial_entities::storage::DataSaver) {
+		#(#update_actions)*
+		
+		Ok(())
+	    }
+	    
+            fn save((entity, storable, #(#parameter_names),*): (bevy::prelude::Entity, &crate::world::spatial_entities::storage::Storable, #(#save_query_types),*), data_saver: impl crate::world::spatial_entities::storage::DataSaver) {
 		#serialize_struct
 
 		data_saver.save(

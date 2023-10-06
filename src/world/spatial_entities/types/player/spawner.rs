@@ -23,7 +23,7 @@ impl PlayerSpawner {
         storage: &EntityStorage,
         position: Position,
     ) -> Result<()> {
-        let storable = storage.new_storable_component::<PlayerSpawner, _, _>()?;
+        let storable = storage.new_storable_component::<PlayerSpawner, _, _, _>()?;
 
         let mut commands = commands.spawn(storable);
         commands.set_parent(parent);
@@ -46,5 +46,5 @@ impl EntityConstruction<PlayerSpawnerStorage> for PlayerSpawner {
 }
 
 pub fn setup(app: &mut App) {
-    EntitySerializationManager::register::<PlayerSpawner, _, _>(app);
+    EntitySerializationManager::register::<PlayerSpawner, _, _, _>(app);
 }

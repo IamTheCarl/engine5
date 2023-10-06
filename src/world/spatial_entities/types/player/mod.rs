@@ -63,7 +63,7 @@ impl PlayerEntity {
         name: String,
         pitch: f32,
     ) -> Result<EntityCommands<'w, 's, 'a>> {
-        let storable = storage.new_storable_component::<PlayerEntity, _, _>()?;
+        let storable = storage.new_storable_component::<PlayerEntity, _, _, _>()?;
 
         let mut commands = commands.spawn((
             storable,
@@ -434,7 +434,7 @@ impl Plugin for PlayerPlugin {
             ),
         );
 
-        EntitySerializationManager::register::<PlayerEntity, _, _>(app);
+        EntitySerializationManager::register::<PlayerEntity, _, _, _>(app);
         spawner::setup(app);
     }
 }

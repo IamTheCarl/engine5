@@ -190,10 +190,11 @@ impl EntityStorage {
         Ok(())
     }
 
-    pub fn new_storable_component<E, Q, P>(&self) -> Result<Storable>
+    pub fn new_storable_component<E, Q, U, P>(&self) -> Result<Storable>
     where
-        E: SpatialEntity<Q, P>,
+        E: SpatialEntity<Q, U, P>,
         Q: WorldQuery,
+        U: WorldQuery,
     {
         // Start by getting a valid entity ID.
         let tracer_id = self
@@ -242,12 +243,13 @@ impl EntityStorage {
         Ok(Storable { id: tracer_id })
     }
 
-    pub fn new_storable_component_with_tree<E, Q, P>(&self) -> Result<(Storable, sled::Tree)>
+    pub fn new_storable_component_with_tree<E, Q, U, P>(&self) -> Result<(Storable, sled::Tree)>
     where
-        E: SpatialEntity<Q, P>,
+        E: SpatialEntity<Q, U, P>,
         Q: WorldQuery,
+        U: WorldQuery,
     {
-        let storable = self.new_storable_component::<E, Q, P>()?;
+        let storable = self.new_storable_component::<E, Q, U, P>()?;
         let tree_name = tree_name_for_entity(storable.id);
 
         let tree = self
@@ -526,11 +528,12 @@ impl<'a> DataSaver for RemoteDataSaver<'a> {
 
 pub type EntityTypeId = u32;
 
-pub trait SpatialEntity<Q: WorldQuery, P>: EntityConstruction<P> {
+pub trait SpatialEntity<Q: WorldQuery, U: WorldQuery, P>: EntityConstruction<P> {
     const TYPE_ID: EntityTypeId;
     const BOOTSTRAP: BootstrapEntityInfo = BootstrapEntityInfo::NonBootstrap;
 
     fn load(data_loader: impl DataLoader, commands: &mut EntityCommands) -> Result<()>;
+    fn update(data_loader: impl DataLoader, query: <U as WorldQuery>::Item<'_>) -> Result<()>;
     fn save(
         query: <<Q as WorldQuery>::ReadOnly as WorldQuery>::Item<'_>,
         data_saver: impl DataSaver,
@@ -552,18 +555,20 @@ pub struct EntitySerializationManager {
 }
 
 impl EntitySerializationManager {
-    pub fn register<E, Q, P: 'static>(app: &mut App)
+    pub fn register<E, Q, U, P: 'static>(app: &mut App)
     where
-        E: SpatialEntity<Q, P> + Component + 'static,
+        E: SpatialEntity<Q, U, P> + Component + 'static,
         Q: WorldQuery + 'static,
+        U: WorldQuery + 'static,
     {
-        fn save_system<E, Q, P>(
+        fn save_system<E, Q, U, P>(
             mut commands: Commands,
             storage: Res<EntityStorage>,
             query: Query<Q, (With<E>, With<ToSaveSpatial>)>,
         ) where
-            E: SpatialEntity<Q, P> + Component,
+            E: SpatialEntity<Q, U, P> + Component,
             Q: WorldQuery,
+            U: WorldQuery,
         {
             for to_save in query.iter() {
                 let mut bytes: Vec<u8> = Vec::new();
@@ -606,14 +611,15 @@ impl EntitySerializationManager {
             }
         }
 
-        fn transmit_system<E, Q, P>(
+        fn transmit_system<E, Q, U, P>(
             mut commands: Commands,
             mut host: ResMut<HostContext>,
             to_transmit: Query<(Entity, &ToTransmitEntity), With<E>>,
             entities: Query<Q, With<ToTransmitEntity>>,
         ) where
-            E: SpatialEntity<Q, P> + Component,
+            E: SpatialEntity<Q, U, P> + Component,
             Q: WorldQuery,
+            U: WorldQuery,
         {
             // TODO this could be made more efficient if we generated a "transmit" function that automatically
             // includes the ToTransmitEntity component.
@@ -661,11 +667,12 @@ impl EntitySerializationManager {
             }
         }
 
-        fn setup_deserialization<E, Q, P>(
+        fn setup_deserialization<E, Q, U, P>(
             mut serialization_manager: ResMut<EntitySerializationManager>,
         ) where
-            E: SpatialEntity<Q, P>,
+            E: SpatialEntity<Q, U, P>,
             Q: WorldQuery,
+            U: WorldQuery,
         {
             let is_not_duplicate = serialization_manager
                 .entity_loaders
@@ -709,17 +716,17 @@ impl EntitySerializationManager {
         app.add_systems(
             Update,
             (
-                save_system::<E, Q, P>
+                save_system::<E, Q, U, P>
                     .run_if(resource_exists::<EntityStorage>())
                     .in_set(SaveSystemSet),
-                transmit_system::<E, Q, P>
+                transmit_system::<E, Q, U, P>
                     .run_if(resource_exists::<HostContext>())
                     .in_set(SaveSystemSet),
             ),
         );
         app.add_systems(
             Startup,
-            setup_deserialization::<E, Q, P>.in_set(SerializationSetup),
+            setup_deserialization::<E, Q, U, P>.in_set(SerializationSetup),
         );
     }
 
@@ -765,6 +772,7 @@ impl EntitySerializationManager {
 
     fn update_entity(
         &self,
+        tracer_id: TracerId,
         update: &EntityUpdate,
         entity_tracer: &mut ResMut<EntityTracer>,
         parent: Entity,
@@ -776,47 +784,42 @@ impl EntitySerializationManager {
             .with_context(|| format!("Unknown entity type ID: {}", update.type_id))?;
 
         let entity_commands =
-            if let Some(entity) = entity_tracer.tracers_to_entities.get(&update.tracer_id) {
+            if let Some(entity) = entity_tracer.tracers_to_entities.get(&tracer_id) {
                 commands.entity(*entity)
             } else {
-                let mut entity_commands = commands.spawn(Storable {
-                    id: update.tracer_id,
-                });
+                let mut entity_commands = commands.spawn(Storable { id: tracer_id });
                 entity_commands.set_parent(parent);
 
                 // We insert this into the entity tracer ourselves.
                 // We can't afford to wait until the system to add those does
                 // its job, because we can recive multiple updates in a single frame.
                 let entity_id = entity_commands.id();
-                entity_tracer.insert_entity(update.tracer_id, entity_id);
+                entity_tracer.insert_entity(tracer_id, entity_id);
 
                 entity_commands
             };
 
         // Note that the payload clone is not a deep copy.
-        reciver(update.tracer_id, update.payload.clone(), entity_commands)
+        reciver(tracer_id, update.payload.clone(), entity_commands)
     }
 }
 
 fn receive_entities(
     mut commands: Commands,
-    mut entity_update_events: EventReader<EntityUpdate>,
     world_entity: Res<WorldEntity>,
     mut entity_tracer: ResMut<EntityTracer>,
     serialization_manager: Res<EntitySerializationManager>,
+    client_context: Res<ClientContext>,
 ) {
-    for entity_update in entity_update_events.iter() {
+    for (tracer_id, entity_update) in client_context.entity_updates() {
         if let Err(error) = serialization_manager.update_entity(
+            *tracer_id,
             entity_update,
             &mut entity_tracer,
             world_entity.entity,
             &mut commands,
         ) {
-            log::error!(
-                "Failed to update entity {}: {:?}",
-                entity_update.tracer_id,
-                error
-            );
+            log::error!("Failed to update entity {}: {:?}", tracer_id, error);
         }
     }
 }

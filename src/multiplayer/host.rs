@@ -15,7 +15,6 @@ use renet::{
 use crate::{
     multiplayer::connection_config,
     world::{
-        physics::Position,
         spatial_entities::{
             storage::{EntityStorage, Storable, TracerId},
             types::player::{spawner::PlayerSpawner, ActivePlayer, LocalPlayer, PlayerEntity},
@@ -42,33 +41,33 @@ impl HostContext {
         app.add_systems(
             PreUpdate,
             (
-                Self::update_host.run_if(resource_exists::<Self>()),
+                Self::update_host.run_if(resource_exists::<Self>),
                 Self::control_client_terrain
                     .in_set(MultiplayerPlugin)
-                    .run_if(resource_exists::<Self>())
+                    .run_if(resource_exists::<Self>)
                     .after(Self::update_host),
                 Self::transmit_terrain
                     .in_set(MultiplayerPlugin)
-                    .run_if(resource_exists::<Self>())
+                    .run_if(resource_exists::<Self>)
                     .after(Self::control_client_terrain),
                 Self::spawn_remote_player
                     .in_set(MultiplayerPlugin)
                     .after(Self::update_host)
-                    .run_if(resource_exists::<Self>()),
+                    .run_if(resource_exists::<Self>),
                 Self::despawn_remote_player
                     .in_set(MultiplayerPlugin)
                     .after(Self::update_host)
-                    .run_if(resource_exists::<Self>()),
+                    .run_if(resource_exists::<Self>),
                 Self::select_entities_for_transmission
                     .in_set(MultiplayerPlugin)
                     .after(Self::update_host)
-                    .run_if(resource_exists::<Self>()),
+                    .run_if(resource_exists::<Self>),
             ),
         );
 
         app.add_systems(
             PostUpdate,
-            Self::send_packets.run_if(resource_exists::<Self>()),
+            Self::send_packets.run_if(resource_exists::<Self>),
         );
     }
 
@@ -195,7 +194,7 @@ impl HostContext {
         online_players: Query<(Entity, &RemoteClientPlayer)>,
         mut player_disconnect_events: EventReader<PlayerDisconnect>,
     ) {
-        'event_loop: for event in player_disconnect_events.iter() {
+        'event_loop: for event in player_disconnect_events.read() {
             // Check if the player already exists in the world.
             for (player_entity, remote_player) in online_players.iter() {
                 if remote_player.client_id == event.client_id {
@@ -222,12 +221,12 @@ impl HostContext {
             (Entity, &PlayerEntity),
             Without<LocalPlayer>, // We can kick-out already present local players.
         >,
-        player_spawn: Query<&Position, With<PlayerSpawner>>,
+        player_spawn: Query<&Transform, With<PlayerSpawner>>,
         mut player_connect_events: EventReader<PlayerConnect>,
     ) {
         // FIXME This needs to kick out an old session if a player logs in twice.
 
-        'event_loop: for event in player_connect_events.iter() {
+        'event_loop: for event in player_connect_events.read() {
             let remote_player = RemoteClientPlayer {
                 client_id: event.client_id,
             };
@@ -273,15 +272,15 @@ impl HostContext {
     fn control_client_terrain(
         mut context: ResMut<Self>,
         mut commands: Commands,
-        terrain_loaders: Query<(&Position, &ViewRadius, &SendTerrain, &RemoteClientPlayer)>,
-        terrain_spaces: Query<(&Storable, &Position, &TerrainSpace)>,
+        terrain_loaders: Query<(&Transform, &ViewRadius, &SendTerrain, &RemoteClientPlayer)>,
+        terrain_spaces: Query<(&Storable, &Transform, &TerrainSpace)>,
         mut terrain_chunks: Query<Option<&mut ToTransmitTerrain>, With<Chunk>>,
     ) {
         for (space_storage, space_position, space) in terrain_spaces.iter() {
             for (loader_position, view_radius, send_terrain, remote_player) in
                 terrain_loaders.iter()
             {
-                let loader_position_in_chunk_space = space_position.quat()
+                let loader_position_in_chunk_space = space_position.rotation
                     * (loader_position.translation - space_position.translation);
                 let base_chunk_index =
                     (loader_position_in_chunk_space / Chunk::CHUNK_DIAMETER as f32).as_ivec3();
@@ -390,8 +389,8 @@ impl HostContext {
 
     fn select_entities_for_transmission(
         mut commands: Commands,
-        terrain_loaders: Query<(&Position, &ViewRadius, &RemoteClientPlayer), With<SendEntities>>,
-        mut spatial_entities: Query<Option<&mut ToTransmitEntity>, With<Position>>,
+        terrain_loaders: Query<(&Transform, &ViewRadius, &RemoteClientPlayer), With<SendEntities>>,
+        mut spatial_entities: Query<Option<&mut ToTransmitEntity>, With<Transform>>,
         entity_tracker: Res<SpatialEntityTracker>,
     ) {
         for (loader_position, view_radius, remote_player) in terrain_loaders.iter() {

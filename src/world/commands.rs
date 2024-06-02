@@ -352,6 +352,23 @@ fn world_command_in_game(
     }
 }
 
+/// Control debug rendering.
+#[derive(Parser, ConsoleCommand)]
+#[command(name = "debug")]
+struct DebugRenderCommand {
+    #[command(subcommand)]
+    command: DebugRenderSubcommand,
+}
+
+#[derive(Subcommand)]
+enum DebugRenderSubcommand {
+    /// Enable debug rendering.
+    On,
+
+    /// Disable debug rendering.
+    Off,
+}
+
 pub fn setup(app: &mut App) {
     app.add_console_command::<WorldCommand, _>(world_command);
 }

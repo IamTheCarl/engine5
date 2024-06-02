@@ -1,6 +1,9 @@
 use anyhow::{Context, Result};
 use bevy::{
-    ecs::{query::WorldQuery, system::EntityCommands},
+    ecs::{
+        query::{QueryData, WorldQuery},
+        system::EntityCommands,
+    },
     prelude::*,
 };
 use bytes::Bytes;
@@ -193,7 +196,7 @@ impl EntityStorage {
     pub fn new_storable_component<E, Q, U, P>(&self) -> Result<Storable>
     where
         E: SpatialEntity<Q, U, P>,
-        Q: WorldQuery,
+        Q: WorldQuery + QueryData,
         U: WorldQuery,
     {
         // Start by getting a valid entity ID.
@@ -246,7 +249,7 @@ impl EntityStorage {
     pub fn new_storable_component_with_tree<E, Q, U, P>(&self) -> Result<(Storable, sled::Tree)>
     where
         E: SpatialEntity<Q, U, P>,
-        Q: WorldQuery,
+        Q: WorldQuery + QueryData,
         U: WorldQuery,
     {
         let storable = self.new_storable_component::<E, Q, U, P>()?;
@@ -316,7 +319,7 @@ fn new_tracings(
 }
 
 fn clean_up_tracings(mut removed: RemovedComponents<Storable>, mut tracer: ResMut<EntityTracer>) {
-    for entity_id in removed.iter() {
+    for entity_id in removed.read() {
         if let Some(tracker_id) = tracer.entities_to_tracers.remove(&entity_id) {
             tracer.tracers_to_entities.remove(&tracker_id);
         } else {
@@ -372,8 +375,7 @@ fn save_spatial_hashes(
         storage: &EntityStorage,
     ) -> Result<()> {
         let tracer_set = {
-            let mut tracer_set = Vec::new();
-            tracer_set.reserve(entity_set.len());
+            let mut tracer_set = Vec::with_capacity(entity_set.len());
 
             for entity in entity_set {
                 // We can only store storable entities.
@@ -528,16 +530,15 @@ impl<'a> DataSaver for RemoteDataSaver<'a> {
 
 pub type EntityTypeId = u32;
 
-pub trait SpatialEntity<Q: WorldQuery, U: WorldQuery, P>: EntityConstruction<P> {
+pub trait SpatialEntity<Q: WorldQuery + QueryData, U: WorldQuery, P>:
+    EntityConstruction<P>
+{
     const TYPE_ID: EntityTypeId;
     const BOOTSTRAP: BootstrapEntityInfo = BootstrapEntityInfo::NonBootstrap;
 
     fn load(data_loader: impl DataLoader, commands: &mut EntityCommands) -> Result<()>;
-    fn update(data_loader: impl DataLoader, query: <U as WorldQuery>::Item<'_>) -> Result<()>;
-    fn save(
-        query: <<Q as WorldQuery>::ReadOnly as WorldQuery>::Item<'_>,
-        data_saver: impl DataSaver,
-    );
+    fn update(data_loader: impl DataLoader, query: U::Item<'_>) -> Result<()>;
+    fn save(query: Q::Item<'_>, data_saver: impl DataSaver);
 }
 
 #[derive(Resource)]
@@ -558,7 +559,7 @@ impl EntitySerializationManager {
     pub fn register<E, Q, U, P: 'static>(app: &mut App)
     where
         E: SpatialEntity<Q, U, P> + Component + 'static,
-        Q: WorldQuery + 'static,
+        Q: WorldQuery + QueryData<ReadOnly = Q> + 'static,
         U: WorldQuery + 'static,
     {
         fn save_system<E, Q, U, P>(
@@ -567,7 +568,7 @@ impl EntitySerializationManager {
             query: Query<Q, (With<E>, With<ToSaveSpatial>)>,
         ) where
             E: SpatialEntity<Q, U, P> + Component,
-            Q: WorldQuery,
+            Q: WorldQuery + QueryData<ReadOnly = Q>,
             U: WorldQuery,
         {
             for to_save in query.iter() {
@@ -618,7 +619,7 @@ impl EntitySerializationManager {
             entities: Query<Q, With<ToTransmitEntity>>,
         ) where
             E: SpatialEntity<Q, U, P> + Component,
-            Q: WorldQuery,
+            Q: WorldQuery + QueryData<ReadOnly = Q>,
             U: WorldQuery,
         {
             // TODO this could be made more efficient if we generated a "transmit" function that automatically
@@ -671,7 +672,7 @@ impl EntitySerializationManager {
             mut serialization_manager: ResMut<EntitySerializationManager>,
         ) where
             E: SpatialEntity<Q, U, P>,
-            Q: WorldQuery,
+            Q: WorldQuery + QueryData,
             U: WorldQuery,
         {
             let is_not_duplicate = serialization_manager
@@ -717,10 +718,10 @@ impl EntitySerializationManager {
             Update,
             (
                 save_system::<E, Q, U, P>
-                    .run_if(resource_exists::<EntityStorage>())
+                    .run_if(resource_exists::<EntityStorage>)
                     .in_set(SaveSystemSet),
                 transmit_system::<E, Q, U, P>
-                    .run_if(resource_exists::<HostContext>())
+                    .run_if(resource_exists::<HostContext>)
                     .in_set(SaveSystemSet),
             ),
         );
@@ -927,8 +928,8 @@ fn setup(mut commands: Commands) {
 }
 
 pub(super) fn register_storage(app: &mut App) {
-    app.configure_set(PostUpdate, SaveSystemSet);
-    app.configure_set(Startup, SerializationSetup);
+    app.configure_sets(PostUpdate, SaveSystemSet);
+    app.configure_sets(Startup, SerializationSetup);
 
     app.add_systems(
         Startup,
@@ -941,19 +942,19 @@ pub(super) fn register_storage(app: &mut App) {
     app.add_systems(
         Update,
         (
-            new_tracings.run_if(resource_exists::<EntityStorage>()),
-            clean_up_tracings.run_if(resource_exists::<EntityStorage>()),
+            new_tracings.run_if(resource_exists::<EntityStorage>),
+            clean_up_tracings.run_if(resource_exists::<EntityStorage>),
             load_entities
-                .run_if(resource_exists::<EntityStorage>())
-                .run_if(resource_exists::<WorldEntity>()),
-            save_spatial_hashes.run_if(resource_exists::<EntityStorage>()),
-            save_bootstrap_entity_list.run_if(resource_exists::<EntityStorage>()),
+                .run_if(resource_exists::<EntityStorage>)
+                .run_if(resource_exists::<WorldEntity>),
+            save_spatial_hashes.run_if(resource_exists::<EntityStorage>),
+            save_bootstrap_entity_list.run_if(resource_exists::<EntityStorage>),
             bootstrap_entities
-                .run_if(resource_exists::<EntityStorage>())
-                .run_if(resource_exists::<WorldEntity>()),
+                .run_if(resource_exists::<EntityStorage>)
+                .run_if(resource_exists::<WorldEntity>),
             receive_entities
-                .run_if(resource_exists::<ClientContext>())
-                .run_if(resource_exists::<WorldEntity>()),
+                .run_if(resource_exists::<ClientContext>)
+                .run_if(resource_exists::<WorldEntity>),
         ),
     );
 

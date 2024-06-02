@@ -4,14 +4,10 @@
 use std::collections::{HashMap, HashSet};
 
 use bevy::prelude::*;
-use bevy_prototype_debug_lines::DebugLines;
 
 use crate::config::graphics::DebugRenderSettings;
 
-use super::{
-    physics::Position,
-    terrain::{Chunk, ChunkIndex, ChunkPosition},
-};
+use super::terrain::{Chunk, ChunkIndex, ChunkPosition};
 
 pub mod storage;
 pub mod types;
@@ -30,7 +26,7 @@ impl SpatialEntityTracker {
     fn add_entity(&mut self, spatial_hash: SpatialHash, entity: Entity) {
         self.cell_entity_sets
             .entry(spatial_hash)
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(entity);
     }
 
@@ -143,9 +139,9 @@ pub struct SpatialHashOffset {
 
 fn insert_spatial_hash(
     mut commands: Commands,
-    entities: Query<(Entity, With<Position>, Without<SpatialHash>)>,
+    entities: Query<Entity, (With<Transform>, Without<SpatialHash>)>,
 ) {
-    for (entity, _, _) in entities.iter() {
+    for entity in entities.iter() {
         commands.entity(entity).insert(SpatialHash::default());
     }
 }
@@ -155,7 +151,7 @@ fn handle_removed_spatial_hash_entities(
     spatial_objects: Query<&SpatialHash>,
     mut spatial_object_tracker: ResMut<SpatialEntityTracker>,
 ) {
-    for entity in removals.iter() {
+    for entity in removals.read() {
         if let Ok(spatial_hash) = spatial_objects.get(entity) {
             spatial_object_tracker.remove_entity(*spatial_hash, entity);
         }
@@ -163,10 +159,8 @@ fn handle_removed_spatial_hash_entities(
 }
 
 fn update_spatial_hash_entities(
-    mut spatial_objects: Query<(Entity, &Position, &mut SpatialHash), Without<SpatialHashOffset>>,
+    mut spatial_objects: Query<(Entity, &Transform, &mut SpatialHash), Without<SpatialHashOffset>>,
     mut spatial_object_tracker: ResMut<SpatialEntityTracker>,
-    debug_render_settings: Res<DebugRenderSettings>,
-    mut lines: ResMut<DebugLines>,
 ) {
     // TODO only update the hash for entities that have a velocity?
 
@@ -178,22 +172,6 @@ fn update_spatial_hash_entities(
         spatial_hash.x = translation.x as i16;
         spatial_hash.y = translation.y as i16;
         spatial_hash.z = translation.z as i16;
-
-        if debug_render_settings.hashing_center_point {
-            lines.line_colored(
-                position.translation,
-                position.translation + Vec3::Y,
-                0.0,
-                Color::GREEN,
-            );
-
-            lines.line_colored(
-                position.translation,
-                translation * Chunk::CHUNK_DIAMETER as f32,
-                0.0,
-                Color::BLUE,
-            );
-        }
 
         // An update is actually needed.
         if old_hash != *spatial_hash
@@ -208,10 +186,9 @@ fn update_spatial_hash_entities(
 }
 
 fn update_spatial_hash_entities_with_offset(
-    mut spatial_objects: Query<(Entity, &Position, &SpatialHashOffset, &mut SpatialHash)>,
+    mut spatial_objects: Query<(Entity, &Transform, &SpatialHashOffset, &mut SpatialHash)>,
     mut spatial_object_tracker: ResMut<SpatialEntityTracker>,
     debug_render_settings: Res<DebugRenderSettings>,
-    mut lines: ResMut<DebugLines>,
 ) {
     // TODO only update the hash for entities that have a velocity?
 
@@ -219,29 +196,13 @@ fn update_spatial_hash_entities_with_offset(
         let old_hash = *spatial_hash;
 
         let offset_translation =
-            position.translation + position.inverse_quat() * spatial_offset.translation;
+            position.translation + position.rotation.inverse() * spatial_offset.translation;
 
         let translation = (offset_translation / Chunk::CHUNK_DIAMETER as f32).floor();
 
         spatial_hash.x = translation.x as i16;
         spatial_hash.y = translation.y as i16;
         spatial_hash.z = translation.z as i16;
-
-        if debug_render_settings.hashing_center_point {
-            lines.line_colored(
-                offset_translation,
-                offset_translation + Vec3::Y,
-                0.0,
-                Color::GREEN,
-            );
-
-            lines.line_colored(
-                offset_translation,
-                translation * Chunk::CHUNK_DIAMETER as f32,
-                0.0,
-                Color::BLUE,
-            );
-        }
 
         // An update is actually needed.
         if old_hash != *spatial_hash

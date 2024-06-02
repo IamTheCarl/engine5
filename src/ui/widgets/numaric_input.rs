@@ -612,7 +612,7 @@ pub fn spawn_numaric_input<'w, 's, 'a>(
     unit: &str,
     permit_negative: bool,
     initial_value: NumaricInput,
-) -> EntityCommands<'w, 's, 'a> {
+) -> EntityCommands<'a> {
     let button_entity = commands
         .spawn((
             ButtonBundle {
@@ -1037,7 +1037,7 @@ fn process_digit_general_input(
 
     mut numaric_entities: Query<&mut NumaricInput>,
 ) {
-    for event in nav_events.iter() {
+    for event in nav_events.read() {
         if let NavEvent::NoChanges { from: _, request } = event {
             match request {
                 NavRequest::Action => {
@@ -1089,7 +1089,7 @@ fn process_digit_mouse_input(
 
     mut numaric_entities: Query<&mut NumaricInput>,
 ) {
-    for event in mouse_wheel_events.iter() {
+    for event in mouse_wheel_events.read() {
         let value = event.y;
 
         if value.abs() > 0.1 {
@@ -1129,7 +1129,7 @@ fn process_digit_keyboard_input(
 
     mut numaric_entities: Query<&mut NumaricInput>,
 ) {
-    for event in events.iter() {
+    for event in events.read() {
         if let Some(number) = event.char.to_digit(10) {
             get_digit_mut(
                 integer_digits.iter(),
@@ -1207,7 +1207,7 @@ fn number_parsing() {
 
 #[allow(clippy::complexity)]
 fn copy(
-    keyboard_status: Res<Input<KeyCode>>,
+    keyboard_status: Res<ButtonInput<KeyCode>>,
 
     numaric_entities: Query<&NumaricInput>,
     integer_digits: Query<
@@ -1245,7 +1245,7 @@ fn copy(
 
 #[allow(clippy::complexity)]
 fn paste(
-    keyboard_status: Res<Input<KeyCode>>,
+    keyboard_status: Res<ButtonInput<KeyCode>>,
 
     mut numaric_entities: Query<&mut NumaricInput>,
     integer_digits: Query<
@@ -1339,7 +1339,7 @@ fn enforce_range_bounds(mut numaric_inputs: Query<(&mut NumaricInput, &RangeLimi
 struct NumaricalInputSet;
 
 pub fn setup(app: &mut App) {
-    app.configure_set(Update, NumaricalInputSet.after(NavRequestSystem));
+    app.configure_sets(Update, NumaricalInputSet.after(NavRequestSystem));
     app.add_systems(
         Update,
         (

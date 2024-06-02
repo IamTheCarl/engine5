@@ -30,7 +30,7 @@ impl Plugin for MultiplayerPlugin {
     fn build(&self, app: &mut App) {
         // We run this before the save system set so that the save system will
         // know which entities need to be serialized.
-        app.configure_set(Update, MultiplayerPlugin.before(SaveSystemSet));
+        app.configure_sets(Update, MultiplayerPlugin.before(SaveSystemSet));
 
         // If we unload the world, we disconnect from the host or end our hosting session.
         app.add_systems(OnExit(GameState::InGame), |mut commands: Commands| {

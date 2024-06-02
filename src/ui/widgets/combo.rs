@@ -27,7 +27,7 @@ pub fn spawn_combo<'w, 's, 'a, Tag>(
     text: &str,
     initial_selection: usize,
     options: impl IntoIterator<Item = impl Into<String>>,
-) -> EntityCommands<'w, 's, 'a>
+) -> EntityCommands<'a>
 where
     Tag: Bundle,
 {
@@ -165,7 +165,7 @@ struct OptionIndex(usize);
 fn spawn_combo_selection_menu<'w, 's, 'a>(
     commands: &'a mut Commands<'w, 's>,
     combo: &Combo,
-) -> EntityCommands<'w, 's, 'a> {
+) -> EntityCommands<'a> {
     let mut buttons = Vec::new();
 
     for (index, option) in combo.options.iter().enumerate() {
@@ -212,7 +212,7 @@ fn hide_combo_when_unfocused(
     mut removed: RemovedComponents<Focused>,
 ) {
     if overlay_menus.is_empty() {
-        for removal in removed.iter() {
+        for removal in removed.read() {
             if let Ok(menu_item) = menu_items.get(removal) {
                 if let Ok(mut menu_style) = menu_styles.get_mut(menu_item.menu_root) {
                     menu_style.display = Display::None;
@@ -240,7 +240,7 @@ fn handle_combo_selection(
     combo_references: Query<&ComboEntity>,
     mut combos: Query<&mut Combo>,
 ) {
-    for event in events.iter() {
+    for event in events.read() {
         if let NavEvent::NoChanges { from, request } = event {
             if matches!(request, NavRequest::Action) {
                 if let Ok((parent, option_index)) = combo_menu_buttons.get(*from.first()) {

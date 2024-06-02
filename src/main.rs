@@ -1,28 +1,19 @@
-use bevy::{app::AppExit, asset::ChangeWatcher, log::LogPlugin, prelude::*, window::ExitCondition};
+use bevy::{app::AppExit, log::LogPlugin, prelude::*, window::ExitCondition};
 use bevy_console::{ConsoleConfiguration, ConsolePlugin};
-use bevy_prototype_debug_lines::DebugLinesPlugin;
-use bevy_ui_navigation::DefaultNavigationPlugins;
 use console_scripts::ConsoleScripts;
-use std::time::Duration;
-
-use crate::ui::ErrorContext;
 
 pub mod config;
 pub mod console_scripts;
 mod logging;
 pub mod multiplayer;
-pub mod ui;
+// pub mod ui;
 pub mod world;
 
 fn main() {
     App::new()
         .add_plugins((
             DefaultPlugins
-                .set(AssetPlugin {
-                    // Tell the asset server to watch for asset changes on disk:
-                    watch_for_changes: ChangeWatcher::with_delay(Duration::from_millis(200)),
-                    ..default()
-                })
+                .set(AssetPlugin::default())
                 .set(WindowPlugin {
                     primary_window: Some(Window {
                         title: "Engine 5".to_string(),
@@ -65,20 +56,18 @@ impl Plugin for Engine5 {
         // I wait until here to do this so that at least the log should be working.
         config::file_paths::create_folders();
 
-        app.add_state::<GameState>();
+        app.init_state::<GameState>();
 
         app.add_plugins((
             world::WorldPlugin,
-            DebugLinesPlugin::default(),
-            DefaultNavigationPlugins,
-            ui::UserInterface,
+            // ui::UserInterface,
             config::ConfigPlugin,
             multiplayer::MultiplayerPlugin,
         ));
 
         app.add_systems(PostUpdate, exit_on_all_windows_closed);
 
-        app.configure_set(Update, Engine5);
+        app.configure_sets(Update, Engine5);
 
         app.add_systems(
             Startup,
@@ -90,7 +79,9 @@ impl Plugin for Engine5 {
         // TODO this is a temporary way to shutdown. I want this to verify all worlds have been saved and closed before application exits.
         app.add_systems(
             OnEnter(GameState::ShuttingDown),
-            |mut exit_event: EventWriter<AppExit>| exit_event.send(AppExit),
+            |mut exit_event: EventWriter<AppExit>| {
+                exit_event.send(AppExit::Success);
+            },
         );
     }
 }
@@ -108,12 +99,12 @@ pub fn exit_on_all_windows_closed(
 
 pub fn error_handler(
     In(result): In<anyhow::Result<()>>,
-    mut commands: Commands,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
     // Only switch to error state if there was actually an error.
     if let Err(error) = result {
-        commands.insert_resource(ErrorContext { error });
+        log::error!("Switching to error state. Caused by: {error}");
+        // commands.insert_resource(ErrorContext { error });
         next_state.set(GameState::FatalError);
     }
 }

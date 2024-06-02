@@ -103,7 +103,7 @@ fn handle_selections(
     quit_to_main_menu_buttons: Query<(), With<QuitToMainMenuButton>>,
     quit_to_desktop_buttons: Query<(), With<QuitToDesktopButton>>,
 ) -> Result<()> {
-    for event in events.iter() {
+    for event in events.read() {
         if let NavEvent::NoChanges { from, request } = event {
             if matches!(request, NavRequest::Action) {
                 if quit_to_desktop_buttons.contains(*from.first()) {
@@ -127,7 +127,7 @@ fn handle_selections(
 }
 
 fn enter_pause_state(
-    keys: Res<Input<KeyCode>>,
+    keys: Res<ButtonInput<KeyCode>>,
     mut next_world_state: ResMut<NextState<WorldState>>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
@@ -140,7 +140,7 @@ fn exit_pause_state(
     mut next_world_state: ResMut<NextState<WorldState>>,
     menu_items: Query<(), With<PauseMenuMarker>>,
 ) {
-    for event in events.iter() {
+    for event in events.read() {
         if let NavEvent::NoChanges { from, request } = event {
             if matches!(request, NavRequest::Cancel) && menu_items.contains(*from.first()) {
                 next_world_state.set(WorldState::Running);

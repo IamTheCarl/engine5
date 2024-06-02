@@ -93,17 +93,8 @@ impl TerrainStorage {
     }
 }
 
-type ToLoadQuery<'a, 'b, 'c, 'd> = Query<
-    'a,
-    'b,
-    (
-        Entity,
-        &'c Parent,
-        &'d ChunkPosition,
-        With<ToLoadTerrain>,
-        Without<Chunk>,
-    ),
->;
+type ToLoadQuery<'a, 'b, 'c, 'd> =
+    Query<'a, 'b, (Entity, &'c Parent, &'d ChunkPosition), (With<ToLoadTerrain>, Without<Chunk>)>;
 
 /// Load terrain from a file.
 fn load_terrain(
@@ -111,7 +102,7 @@ fn load_terrain(
     mut space: Query<(&TerrainStorage, &mut TerrainSpace)>,
     mut to_load: ToLoadQuery,
 ) -> Result<()> {
-    for (entity, parent, position, _to_load, _without_chunk) in to_load.iter_mut() {
+    for (entity, parent, position) in to_load.iter_mut() {
         // This chunk will no longer need to be loaded when we're done, so remove the marker.
         let mut entity = commands.entity(entity);
         entity.remove::<ToLoadTerrain>();
@@ -181,14 +172,14 @@ struct SaveTimer {
 type SaveTimerStartTerrainQuery<'a, 'b> = Query<
     'a,
     'b,
+    (Entity,),
     (
-        Entity,
         With<Chunk>,
         Without<ToLoadTerrain>,
         Without<ToGenerateTerrain>,
         Without<ToSaveTerrain>,
+        Changed<Chunk>,
     ),
-    Changed<Chunk>,
 >;
 
 /// We don't want to stress the hard drive too hard so we start a timer with each modification, waiting for that to expire before we
@@ -200,9 +191,7 @@ fn save_timer_start(
 ) {
     let save_deadline = terrain_time.time + CHUNK_TIME_TO_SAVE;
 
-    for (entity, _with_chunk, _without_to_load, _without_to_generate, _without_to_save) in
-        terrain.iter()
-    {
+    for (entity,) in terrain.iter() {
         // This will replace a save deadline timer, thus extending its time to save.
         commands.entity(entity).insert(SaveTimer {
             deadline: save_deadline,
@@ -232,7 +221,7 @@ fn save_on_shutdown(
     mut events: EventReader<AppExit>,
     chunks: Query<Entity, With<Chunk>>,
 ) {
-    if events.iter().next().is_some() {
+    if events.read().next().is_some() {
         // Save! Save everything!
         for chunk in chunks.iter() {
             commands.entity(chunk).insert(ToSaveTerrain);

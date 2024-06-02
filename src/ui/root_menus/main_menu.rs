@@ -101,6 +101,7 @@ fn despawn(mut commands: Commands, main_menu: Query<Entity, With<MenuSetting>>) 
     }
 }
 
+#[allow(clippy::complexity)]
 fn handle_selections(
     mut commands: Commands,
     mut events: EventReader<NavEvent>,
@@ -112,7 +113,7 @@ fn handle_selections(
     single_player_buttons: Query<(), With<SinglePlayerButton>>,
     quit_buttons: Query<(), With<QuitButton>>,
 ) -> Result<()> {
-    for event in events.iter() {
+    for event in events.read() {
         if let NavEvent::NoChanges { from, request } = event {
             if matches!(request, NavRequest::Action) {
                 if quit_buttons.contains(*from.first()) {

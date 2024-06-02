@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
+use avian3d::prelude::*;
 use bevy::{math::Vec3Swizzles, prelude::*};
 use serde::{Deserialize, Serialize};
 
 use crate::world::{
-    physics::{Cylinder, Position, Velocity},
     spatial_entities::{
         storage::{EntityStorage, ToSaveSpatial},
         types::{dynamic_terrain::DynamicTerrainEntity, player::spawner::PlayerSpawner},
@@ -47,10 +47,7 @@ impl WorldGenerator for EmptyWorld {
                 parent,
                 commands,
                 storage,
-                Position {
-                    translation: Vec3::new(middle as f32, middle as f32, middle as f32),
-                    rotation: 0.0,
-                },
+                Transform::from_xyz(middle as f32, middle as f32, middle as f32),
             )?;
         }
 
@@ -94,10 +91,7 @@ impl WorldGenerator for FlatWorld {
                 parent,
                 commands,
                 storage,
-                Position {
-                    translation: Vec3::new(middle as f32, 1.0, middle as f32),
-                    rotation: 0.0,
-                },
+                Transform::from_xyz(middle as f32, 1.0, middle as f32),
             )?;
         }
 
@@ -161,14 +155,9 @@ impl WorldGenerator for OscillatingHills {
                 commands,
                 storage,
                 SingleFilledChunk { block: self.block },
-                Position {
-                    translation: Vec3::new(-24.0, 32.0, 0.0),
-                    rotation: 0.0,
-                },
-                Velocity {
-                    translation: Vec3::new(0.0, 0.0, 0.0),
-                    rotational: 0.2,
-                },
+                Transform::from_xyz(-24.0, 32.0, 0.0),
+                LinearVelocity::default(),
+                AngularVelocity::default(),
             )
             .context("Failed to spawn dynamic chunk.")?;
         }
@@ -181,10 +170,7 @@ impl WorldGenerator for OscillatingHills {
                 parent,
                 commands,
                 storage,
-                Position {
-                    translation: Vec3::new(middle as f32, height, middle as f32),
-                    rotation: 0.0,
-                },
+                Transform::from_xyz(middle as f32, height, middle as f32),
             )?;
         }
 
@@ -192,20 +178,24 @@ impl WorldGenerator for OscillatingHills {
             let middle = Chunk::CHUNK_DIAMETER / 2;
             let height = self.calculate_height_for_index(base_offset, IVec2::splat(middle));
 
-            commands.spawn((
-                Cylinder {
-                    height: 1.0,
-                    radius: 2.0,
-                },
-                Velocity::default(),
-                Transform::default(),
-                Position {
-                    translation: Vec3::new(0.0, height, 24.0),
-                    rotation: 0.0,
-                },
-                // storage.new_storable_component()?,
-                ToSaveSpatial,
-            ));
+            commands
+                .spawn((
+                    LinearVelocity::default(),
+                    AngularVelocity::default(),
+                    TransformBundle::from(Transform::from_xyz(0.0, height, 24.0)),
+                    RigidBody::Dynamic,
+                    // storage.new_storable_component()?,
+                    ToSaveSpatial,
+                ))
+                .with_children(|commands| {
+                    commands.spawn((
+                        Collider::cylinder(0.5, 2.0),
+                        TransformBundle::from(Transform::from_xyz(0.0, 0.0, 0.0)),
+                        Friction::new(0.7),
+                        Restitution::new(0.3),
+                        ColliderDensity(1.0),
+                    ));
+                });
         }
 
         Ok(())
@@ -265,25 +255,16 @@ impl WorldGenerator for CheckerBoard {
                 parent,
                 commands,
                 storage,
-                Position {
-                    translation: Vec3::new(middle as f32, height as f32, middle as f32),
-                    rotation: 0.0,
-                },
+                Transform::from_xyz(middle as f32, height as f32, middle as f32),
             )?;
         }
 
         if chunk_position.index == ChunkIndex::new(0, 0, 1) {
             commands.spawn((
-                Cylinder {
-                    height: 1.0,
-                    radius: 2.0,
-                },
-                Velocity::default(),
-                Transform::default(),
-                Position {
-                    translation: Vec3::new(0.0, height as f32, 24.0),
-                    rotation: 0.0,
-                },
+                Collider::capsule(2.0, 1.0),
+                LinearVelocity::default(),
+                AngularVelocity::default(),
+                Transform::from_xyz(0.0, height as f32, 24.0),
                 // storage.new_storable_component()?,
                 ToSaveSpatial,
             ));
@@ -382,13 +363,8 @@ register_terrain_generators!(FlatWorld, OscillatingHills, CheckerBoard, SingleFi
 type GenerateTerrainQuery<'a, 'b, 'c> = Query<
     'a,
     'b,
-    (
-        Entity,
-        &'c ChunkPosition,
-        &'c Parent,
-        With<ToGenerateTerrain>,
-        Without<Chunk>,
-    ),
+    (Entity, &'c ChunkPosition, &'c Parent),
+    (With<ToGenerateTerrain>, Without<Chunk>),
 >;
 type GenerateEntitiesQuery<'a, 'b, 'c> =
     Query<'a, 'b, (Entity, &'c ChunkPosition, &'c Parent), With<ToGenerateSpatial>>;
@@ -425,7 +401,7 @@ fn generate_terrain(
     to_generate: GenerateTerrainQuery,
 ) -> Result<()> {
     // TODO the generation calls should be done outside of the ECS so that this system becomes non-blocking.
-    for (entity_id, position, parent, _to_generate, _without_chunk) in to_generate.iter() {
+    for (entity_id, position, parent) in to_generate.iter() {
         if let Ok(mut terrain_space) = terrain_spaces.get_mut(parent.get()) {
             let chunk = terrain_space.generator.generate_terrain(position)?;
 
@@ -456,8 +432,8 @@ pub fn setup_terrain_generation(app: &mut App) {
             generate_terrain.pipe(crate::error_handler),
             generate_spatial_entities
                 .pipe(crate::error_handler)
-                .run_if(resource_exists::<EntityStorage>())
-                .run_if(resource_exists::<WorldEntity>()),
+                .run_if(resource_exists::<EntityStorage>)
+                .run_if(resource_exists::<WorldEntity>),
         ),
     );
 }

@@ -127,7 +127,7 @@ fn handle_selections(
     error_context: Option<Res<ErrorContext>>,
     mut clipboard: Option<ResMut<Clipboard>>,
 ) {
-    for event in events.iter() {
+    for event in events.read() {
         if let NavEvent::NoChanges { from, request } = event {
             if matches!(request, NavRequest::Action) {
                 if quit_buttons.contains(*from.first()) {

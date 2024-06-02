@@ -1,5 +1,8 @@
 use crate::{config::graphics::DebugRenderSettings, world::terrain::LoadTerrain, GameState};
-use bevy::{prelude::*, render::render_resource::PrimitiveTopology};
+use bevy::{
+    prelude::*,
+    render::{render_asset::RenderAssetUsages, render_resource::PrimitiveTopology},
+};
 use ordered_float::NotNan;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, num::NonZeroUsize};
@@ -116,7 +119,7 @@ impl MeshCollection {
                 NotNan::new(cylinder.radius).expect("Cylinder radius was NaN"),
             ))
             .or_insert_with(|| {
-                let mut mesh = Mesh::new(PrimitiveTopology::LineList);
+                let mut mesh = Mesh::new(PrimitiveTopology::LineList, RenderAssetUsages::all());
                 let mut vertices = Vec::new();
 
                 const INDEXES: i32 = 16;
@@ -213,7 +216,8 @@ fn add_debug_mesh_cylinders(
                 material.clone(),
                 GlobalTransform::default(),
                 Visibility::default(),
-                ComputedVisibility::default(),
+                InheritedVisibility::default(),
+                ViewVisibility::default(),
             ));
         }
     }
@@ -233,7 +237,7 @@ fn disable_debug_mesh_cylinders(
 }
 
 fn remove_debug_mesh_cylinders(mut commands: Commands, mut cylinders: RemovedComponents<Cylinder>) {
-    for cylinder in &mut cylinders {
+    for cylinder in cylinders.read() {
         if let Some(mut cylinder) = commands.get_entity(cylinder) {
             cylinder.remove::<Handle<Mesh>>();
         }
@@ -299,14 +303,14 @@ impl Plugin for PhysicsPlugin {
         app.add_systems(
             Startup,
             |mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>| {
-                let debug_shader_material = materials.add(Color::RED.into());
+                let debug_shader_material = materials.add(StandardMaterial::from(Color::RED));
                 commands.insert_resource(DebugShaderMaterial(debug_shader_material));
 
                 commands.insert_resource(MeshCollection::new());
             },
         );
 
-        app.configure_set(
+        app.configure_sets(
             Update,
             PhysicsPlugin
                 .after(LoadTerrain)
@@ -322,7 +326,7 @@ impl Plugin for PhysicsPlugin {
         app.add_systems(Update, update_movement.in_set(PhysicsPlugin));
 
         // TODO we should take advantage of the "Modified" tag so we only do collision checks on things that actually move.
-        app.configure_set(
+        app.configure_sets(
             Update,
             CollisionCheck.after(update_movement).in_set(PhysicsPlugin),
         );
@@ -335,7 +339,7 @@ impl Plugin for PhysicsPlugin {
             ),
         );
 
-        app.configure_set(
+        app.configure_sets(
             Update,
             PostCollisionCheck
                 .after(CollisionCheck)

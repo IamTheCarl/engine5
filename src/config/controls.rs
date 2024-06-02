@@ -4,8 +4,6 @@ use bevy::{
     utils::HashSet,
     window::{CursorGrabMode, PrimaryWindow},
 };
-use bevy_console::ConsoleOpen;
-use bevy_ui_navigation::{systems::InputMapping, NavRequestSystem};
 use ordered_float::NotNan;
 use serde::{Deserialize, Serialize};
 
@@ -93,13 +91,13 @@ impl Default for InputMap {
                 x: HashSet::from([
                     AnalogInput::Button {
                         button: RealButton::Key {
-                            key_code: KeyCode::D,
+                            key_code: KeyCode::KeyD,
                         },
                         scale: NotNan::new(1.0).unwrap(),
                     },
                     AnalogInput::Button {
                         button: RealButton::Key {
-                            key_code: KeyCode::A,
+                            key_code: KeyCode::KeyA,
                         },
                         scale: NotNan::new(-1.0).unwrap(),
                     },
@@ -113,13 +111,13 @@ impl Default for InputMap {
                 y: HashSet::from([
                     AnalogInput::Button {
                         button: RealButton::Key {
-                            key_code: KeyCode::W,
+                            key_code: KeyCode::KeyW,
                         },
                         scale: NotNan::new(-1.0).unwrap(),
                     },
                     AnalogInput::Button {
                         button: RealButton::Key {
-                            key_code: KeyCode::S,
+                            key_code: KeyCode::KeyS,
                         },
                         scale: NotNan::new(1.0).unwrap(),
                     },
@@ -389,9 +387,9 @@ struct InputFrame<'a> {
     gamepads: &'a Gamepads,
     mouse_movement: Vec2,
     gamepad_axes: &'a Axis<GamepadAxis>,
-    keyboard_status: &'a Input<KeyCode>,
-    mouse_status: &'a Input<MouseButton>,
-    gamepad_status: &'a Input<GamepadButton>,
+    keyboard_status: &'a ButtonInput<KeyCode>,
+    mouse_status: &'a ButtonInput<MouseButton>,
+    gamepad_status: &'a ButtonInput<GamepadButton>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -399,9 +397,9 @@ fn update_inputs(
     time: Res<Time>,
     mut mouse_movement_input_events: EventReader<mouse::MouseMotion>,
     gamepad_axes: Res<Axis<GamepadAxis>>,
-    keyboard_status: Res<Input<KeyCode>>,
-    mouse_status: Res<Input<MouseButton>>,
-    gamepad_status: Res<Input<GamepadButton>>,
+    keyboard_status: Res<ButtonInput<KeyCode>>,
+    mouse_status: Res<ButtonInput<MouseButton>>,
+    gamepad_status: Res<ButtonInput<GamepadButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     gamepads: Res<Gamepads>,
     input_map: Res<InputMap>,
@@ -411,14 +409,13 @@ fn update_inputs(
         let mut mouse_movement = Vec2::ZERO;
         match window.cursor.grab_mode {
             CursorGrabMode::Locked | CursorGrabMode::Confined => {
-                for event in mouse_movement_input_events.iter() {
+                for event in mouse_movement_input_events.read() {
                     let window_scale = window.height().min(window.width());
 
                     mouse_movement += Vec2::new(
                         (-event.delta.x * window_scale).to_radians(),
                         (-event.delta.y * window_scale).to_radians(),
-                    ) * time.delta().as_secs_f32()
-                        * 100.0;
+                    );
                 }
             }
             CursorGrabMode::None => {}
@@ -487,92 +484,17 @@ fn update_inputs(
     );
 }
 
-fn detect_gamepads(mut ui_input_mapping: ResMut<InputMapping>, gamepads: Res<Gamepads>) {
-    // I want to accept input from all controllers because my computer is weird and makes
-    // controller 0 the LED driver built into my motherboard. I assume other computers will have issues like this.
-    ui_input_mapping.gamepads = gamepads.iter().collect();
-}
-
-fn update_ui_input_map(input_map: Res<InputMap>, mut ui_input_mapping: ResMut<InputMapping>) {
-    fn get_first_keyboard_key(
-        analog_inputs: &HashSet<AnalogInput>,
-        scale_check: impl Fn(f32) -> bool,
-    ) -> Option<KeyCode> {
-        for input in analog_inputs.iter() {
-            if let AnalogInput::Button {
-                button: RealButton::Key { key_code },
-                scale,
-            } = input
-            {
-                if scale_check(scale.into_inner()) {
-                    return Some(*key_code);
-                }
-            }
-        }
-
-        None
-    }
-
-    if let Some(key_code) =
-        get_first_keyboard_key(&input_map.horizontal_movement.x, |scale| scale < 0.0)
-    {
-        ui_input_mapping.key_left = key_code;
-    }
-
-    if let Some(key_code) =
-        get_first_keyboard_key(&input_map.horizontal_movement.x, |scale| scale > 0.0)
-    {
-        ui_input_mapping.key_right = key_code;
-    }
-
-    if let Some(key_code) =
-        get_first_keyboard_key(&input_map.horizontal_movement.y, |scale| scale < 0.0)
-    {
-        ui_input_mapping.key_up = key_code;
-    }
-
-    if let Some(key_code) =
-        get_first_keyboard_key(&input_map.horizontal_movement.y, |scale| scale > 0.0)
-    {
-        ui_input_mapping.key_down = key_code;
-    }
-}
-
 #[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 pub struct PlayerControlsPlugin;
 
 impl Plugin for PlayerControlsPlugin {
     fn build(&self, app: &mut App) {
-        fn setup(mut commands: Commands, mut ui_input_mapping: ResMut<InputMapping>) {
+        fn setup(mut commands: Commands) {
             commands.insert_resource(InputState::default());
-
-            // Enable keyboard and mouse navigation.
-            ui_input_mapping.keyboard_navigation = true;
-            ui_input_mapping.focus_follows_mouse = true;
-            ui_input_mapping.key_action = KeyCode::Return;
-            ui_input_mapping.key_cancel = KeyCode::Escape;
-            ui_input_mapping.key_free = KeyCode::Unlabeled;
         }
 
         app.add_systems(Startup, setup.after(LoadConfigSet));
-
-        app.add_systems(
-            Update,
-            |mut ui_input_mapping: ResMut<InputMapping>, console_open_state: Res<ConsoleOpen>| {
-                // Disables the keyboard if the console is open.
-                ui_input_mapping.keyboard_navigation = !console_open_state.open;
-
-                if console_open_state.open {
-                    ui_input_mapping.key_action = KeyCode::Unlabeled;
-                    ui_input_mapping.key_cancel = KeyCode::Unlabeled;
-                } else {
-                    ui_input_mapping.key_action = KeyCode::Return;
-                    ui_input_mapping.key_cancel = KeyCode::Escape;
-                }
-            },
-        );
-
-        app.configure_set(Update, PlayerControlsPlugin);
+        app.configure_sets(Update, PlayerControlsPlugin);
 
         InputMap::app_setup(app);
         app.add_systems(
@@ -583,21 +505,12 @@ impl Plugin for PlayerControlsPlugin {
             OnExit(WorldState::Running),
             release_cursor.in_set(PlayerControlsPlugin),
         );
-        app.add_systems(
-            Update,
-            update_ui_input_map
-                .before(NavRequestSystem)
-                .in_set(PlayerControlsPlugin),
-        );
 
         app.add_systems(
             Update,
-            (
-                detect_gamepads.in_set(PlayerControlsPlugin),
-                update_inputs
-                    .run_if(in_state(GameState::InGame))
-                    .in_set(PlayerControlsPlugin),
-            ),
+            (update_inputs
+                .run_if(in_state(GameState::InGame))
+                .in_set(PlayerControlsPlugin),),
         );
     }
 }

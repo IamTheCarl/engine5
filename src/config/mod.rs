@@ -91,8 +91,8 @@ pub struct ConfigPlugin;
 
 impl Plugin for ConfigPlugin {
     fn build(&self, app: &mut App) {
-        app.configure_set(Startup, LoadConfigPreSet);
-        app.configure_set(Startup, LoadConfigSet.after(LoadConfigPreSet));
+        app.configure_sets(Startup, LoadConfigPreSet);
+        app.configure_sets(Startup, LoadConfigSet.after(LoadConfigPreSet));
         player_info::setup(app);
 
         app.add_systems(

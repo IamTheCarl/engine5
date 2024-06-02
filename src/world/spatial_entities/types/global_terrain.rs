@@ -1,10 +1,10 @@
 use anyhow::Result;
+use avian3d::prelude::*;
 use bevy::{ecs::system::EntityCommands, prelude::*};
 use proc_macros::entity_serialization;
 
 use crate::world::{
     generation::WorldGeneratorEnum,
-    physics::{Position, Velocity},
     spatial_entities::storage::{EntityConstruction, EntitySerializationManager, EntityStorage},
     terrain::{
         terrain_space::SpaceModificationRequestList, TerrainSpace, TerrainSpaceBundle,
@@ -54,20 +54,14 @@ impl GlobalTerrainEntity {
             Self,
             TerrainSpaceBundle {
                 terrain_space: TerrainSpace::global(parameters.generator),
-                position: Position {
-                    translation: Vec3::ZERO,
-                    rotation: 0.0,
-                },
                 storage,
                 modification_request_list: SpaceModificationRequestList::default(),
-                transform: Transform::default(),
-                global_transform: GlobalTransform::default(),
                 visibility: Visibility::Inherited,
-                computed_visibility: ComputedVisibility::default(),
-            },
-            Velocity {
-                translation: Vec3::ZERO,
-                rotational: 0.0,
+                inherited_visibility: InheritedVisibility::default(),
+                view_visibility: ViewVisibility::default(),
+                transform: TransformBundle::default(),
+                rigid_body: RigidBody::Static,
+                gravity_scale: GravityScale(0.0),
             },
         ));
     }

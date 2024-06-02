@@ -100,7 +100,7 @@ pub fn spawn(commands: &mut Commands, parent: Entity, graphics_config: &Graphics
 struct FullscreenModeSetting;
 
 fn fullscreen_toggle(
-    keys: Res<Input<KeyCode>>,
+    keys: Res<ButtonInput<KeyCode>>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut fullscreen_combos: Query<&mut Combo, With<FullscreenModeSetting>>,
 ) {

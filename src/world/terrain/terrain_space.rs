@@ -4,11 +4,11 @@ use super::{
     PreChunkBundle, TerrainTime,
 };
 use crate::world::{
-    generation::WorldGeneratorEnum, physics::Position, spatial_entities::storage::ToLoadSpatial,
-    ViewRadius,
+    generation::WorldGeneratorEnum, spatial_entities::storage::ToLoadSpatial, ViewRadius,
 };
+use avian3d::prelude::*;
 use bevy::{
-    ecs::query::{ReadOnlyWorldQuery, WorldQuery},
+    ecs::query::{QueryData, QueryFilter, WorldQuery},
     prelude::*,
 };
 use serde::{Deserialize, Serialize};
@@ -137,7 +137,7 @@ impl TerrainSpace {
         (chunk_index, local_block_coordinate.as_ivec3())
     }
 
-    pub fn get_block<'a, Q: WorldQuery, F: ReadOnlyWorldQuery>(
+    pub fn get_block<'a, Q: WorldQuery + QueryData, F: QueryFilter>(
         &self,
         query: &'a Query<Q, F>,
         query_wrapper: impl FnOnce(&'a Query<Q, F>, Entity) -> Option<&'a Chunk>,
@@ -356,26 +356,22 @@ fn block_index_calculation() {
 #[derive(Bundle, Default)]
 pub struct TerrainSpaceBundle {
     pub terrain_space: TerrainSpace,
-    pub position: Position,
     pub storage: TerrainStorage,
     pub modification_request_list: SpaceModificationRequestList,
-    pub transform: Transform,
-    pub global_transform: GlobalTransform,
     pub visibility: Visibility,
-    pub computed_visibility: ComputedVisibility,
+    pub inherited_visibility: InheritedVisibility,
+    pub view_visibility: ViewVisibility,
+    pub transform: TransformBundle,
+    pub rigid_body: RigidBody,
+    pub gravity_scale: GravityScale,
 }
 
 fn load_all_terrain(
     mut commands: Commands,
-    mut spaces: Query<(
-        Entity,
-        &mut TerrainSpace,
-        &TerrainStorage,
-        With<LoadAllTerrain>,
-    )>,
+    mut spaces: Query<(Entity, &mut TerrainSpace, &TerrainStorage), With<LoadAllTerrain>>,
     terrain_time: Res<TerrainTime>,
 ) {
-    for (space_entity, mut space, terrain_file, _keep_all_terrain_loaded) in spaces.iter_mut() {
+    for (space_entity, mut space, terrain_file) in spaces.iter_mut() {
         for position in terrain_file.iter_chunk_indexes() {
             // Returns false if the chunk was already loaded.
             // We'll just assume that if anything is loaded, everything is loaded.
@@ -393,14 +389,14 @@ fn load_all_terrain(
 
 fn mark_terrain_for_load(
     mut commands: Commands,
-    terrain_loaders: Query<(&Position, &ViewRadius), With<LoadsTerrain>>,
-    mut terrain_spaces: Query<(Entity, &Position, &mut TerrainSpace, With<TerrainStorage>)>,
+    terrain_loaders: Query<(&Transform, &ViewRadius), With<LoadsTerrain>>,
+    mut terrain_spaces: Query<(Entity, &Transform, &mut TerrainSpace), With<TerrainStorage>>,
     terrain_time: Res<TerrainTime>,
 ) {
-    for (space_entity, space_position, mut space, _terrain_file) in terrain_spaces.iter_mut() {
+    for (space_entity, space_position, mut space) in terrain_spaces.iter_mut() {
         for (loader_position, view_radius) in terrain_loaders.iter() {
-            let loader_position_in_chunk_space =
-                space_position.quat() * (loader_position.translation - space_position.translation);
+            let loader_position_in_chunk_space = space_position.rotation
+                * (loader_position.translation - space_position.translation);
             let base_chunk_index =
                 (loader_position_in_chunk_space / Chunk::CHUNK_DIAMETER as f32).as_ivec3();
 
@@ -434,10 +430,10 @@ pub struct ToUnloadTerrain;
 
 fn mark_chunk_for_save_and_unload(
     mut commands: Commands,
-    chunks: Query<(Entity, With<Chunk>, &ActiveTerrainTimer)>,
+    chunks: Query<(Entity, &ActiveTerrainTimer), With<Chunk>>,
     terrain_time: Res<TerrainTime>,
 ) {
-    for (chunk_entity, _chunk, timer) in chunks.iter() {
+    for (chunk_entity, timer) in chunks.iter() {
         if timer.deadline <= terrain_time.time {
             commands
                 .entity(chunk_entity)
@@ -450,13 +446,8 @@ fn mark_chunk_for_save_and_unload(
 type DeleteChunksQuery<'a, 'b, 'c, 'd> = Query<
     'a,
     'b,
-    (
-        Entity,
-        With<ToUnloadTerrain>,
-        Without<ToSaveTerrain>,
-        &'c ChunkPosition,
-        &'d Parent,
-    ),
+    (Entity, &'c ChunkPosition, &'d Parent),
+    (With<ToUnloadTerrain>, Without<ToSaveTerrain>),
 >;
 
 fn delete_chunks(
@@ -464,8 +455,7 @@ fn delete_chunks(
     chunks: DeleteChunksQuery,
     mut terrain_spaces: Query<&mut TerrainSpace>,
 ) {
-    for (chunk_entity, _with_to_delete, _without_to_save, position, terrain_space) in chunks.iter()
-    {
+    for (chunk_entity, position, terrain_space) in chunks.iter() {
         // Your time has come. It is time to die.
         let mut space = terrain_spaces
             .get_mut(terrain_space.get())
@@ -483,19 +473,13 @@ pub struct Initialized;
 
 /// Just loads the first chunk to get the whole chunk loading.
 /// This will probably be replaced with something more robust later.
+#[allow(clippy::complexity)]
 fn bootstrap_terrain_space(
     mut commands: Commands,
-    mut spaces: Query<(
-        Entity,
-        &mut TerrainSpace,
-        Without<Initialized>,
-        Without<LoadAllTerrain>,
-    )>,
+    mut spaces: Query<(Entity, &mut TerrainSpace), (Without<Initialized>, Without<LoadAllTerrain>)>,
     terrain_time: Res<TerrainTime>,
 ) {
-    for (space_entity, mut space, _without_initialized, _without_load_all_terrain) in
-        spaces.iter_mut()
-    {
+    for (space_entity, mut space) in spaces.iter_mut() {
         space.mark_chunk_for_load(
             &mut commands,
             space_entity,
@@ -539,9 +523,9 @@ pub fn register_terrain_space(app: &mut App) {
 
     // We check to clean up chunks once a second.
     // We don't run this after `load_all_terrain` because that terrain doesn't dynamically unload.
-    app.configure_set(Update, UnloadTerrain.after(LoadTerrain));
-    app.configure_set(Update, PreModifyTerrain.before(ModifyTerrain));
-    app.configure_set(Update, ModifyTerrain.after(LoadTerrain));
+    app.configure_sets(Update, UnloadTerrain.after(LoadTerrain));
+    app.configure_sets(Update, PreModifyTerrain.before(ModifyTerrain));
+    app.configure_sets(Update, ModifyTerrain.after(LoadTerrain));
 
     app.add_systems(
         Update,

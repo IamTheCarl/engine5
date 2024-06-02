@@ -1,7 +1,7 @@
+use avian3d::prelude::*;
 use bevy::{ecs::system::EntityCommands, prelude::*};
 
 mod commands;
-pub mod physics;
 pub mod spatial_entities;
 pub mod terrain;
 
@@ -15,7 +15,6 @@ use crate::{config::player_info::PlayerInfo, error_handler, GameState};
 
 use self::{
     generation::OscillatingHills,
-    physics::Position,
     spatial_entities::{
         storage::EntityStorage,
         types::{
@@ -113,7 +112,7 @@ pub fn raw_open_file_backed_world(
     Ok(())
 }
 
-pub fn client_world<'w, 's, 'a>(commands: &'a mut Commands<'w, 's>) -> EntityCommands<'w, 's, 'a> {
+pub fn client_world<'a>(commands: &'a mut Commands) -> EntityCommands<'a> {
     let world_commands = commands.spawn((
         World,
         TransformBundle::default(),
@@ -139,7 +138,7 @@ fn spawn_local_player(
     world_entity: Res<WorldEntity>,
     storage: Option<ResMut<EntityStorage>>,
     offline_players: Query<(Entity, &PlayerEntity), Without<ActivePlayer>>,
-    player_spawn: Query<&Position, With<PlayerSpawner>>,
+    player_spawn: Query<&Transform, With<PlayerSpawner>>,
 ) -> Result<()> {
     // Check if the player already exists in the world.
     for (player_entity, offline_player) in offline_players.iter() {
@@ -159,7 +158,6 @@ fn spawn_local_player(
     if let Some(storage) = storage {
         // Spawn them in, if it's a single player world.
         if let Ok(spawn_position) = player_spawn.get_single() {
-            dbg!();
             PlayerEntity::spawn_deactivated(
                 world_entity.entity,
                 &mut commands,
@@ -210,18 +208,32 @@ impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
             terrain::TerrainPlugin,
-            physics::PhysicsPlugin,
+            PhysicsPlugins::default(),
+            PhysicsDebugPlugin::default(),
             spatial_entities::SpatialEntityPlugin,
         ));
 
-        app.add_state::<WorldState>();
+        //         app.insert_resource(RapierConfiguration {
+        //             gravity: Vec3::new(0.0, -9.8, 0.0),
+        //             physics_pipeline_active: true,
+        //             query_pipeline_active: true,
+        //             timestep_mode: TimestepMode::Interpolated {
+        //                 dt: 0.016,
+        //                 time_scale: 1.0,
+        //                 substeps: 1,
+        //             },
+        //             scaled_shape_subdivision: 10,
+        //             force_update_from_transform_changes: true,
+        //         });
+
+        app.init_state::<WorldState>();
         app.add_systems(OnExit(GameState::InGame), unload_world);
         app.add_systems(
             Update,
             spawn_local_player
                 .pipe(error_handler)
-                .run_if(resource_exists::<WorldEntity>())
-                .run_if(resource_exists::<SpawnLocalPlayerRequest>())
+                .run_if(resource_exists::<WorldEntity>)
+                .run_if(resource_exists::<SpawnLocalPlayerRequest>)
                 .run_if(in_state(WorldState::Running)),
         );
 

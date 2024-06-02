@@ -22,7 +22,7 @@ pub fn spawn_button<'w, 's, 'a, L: Bundle>(
     commands: &'a mut Commands<'w, 's>,
     text: impl Into<String>,
     label: L,
-) -> EntityCommands<'w, 's, 'a> {
+) -> EntityCommands<'a> {
     spawn_button_raw::<L>(commands, Focusable::new(), text, label)
 }
 
@@ -30,7 +30,7 @@ pub fn spawn_prioritized_button<'w, 's, 'a, L: Bundle>(
     commands: &'a mut Commands<'w, 's>,
     text: impl Into<String>,
     label: L,
-) -> EntityCommands<'w, 's, 'a> {
+) -> EntityCommands<'a> {
     spawn_button_raw::<L>(commands, Focusable::new().prioritized(), text, label)
 }
 
@@ -39,7 +39,7 @@ fn spawn_button_raw<'w, 's, 'a, L: Bundle>(
     focus: Focusable,
     text: impl Into<String>,
     label: L,
-) -> EntityCommands<'w, 's, 'a> {
+) -> EntityCommands<'a> {
     let mut entity_commands = commands.spawn((
         ButtonBundle {
             style: Style {
@@ -77,7 +77,7 @@ fn process_back_buttons(
 
     back_buttons: Query<(), With<BackButton>>,
 ) {
-    for event in events.iter() {
+    for event in events.read() {
         if let NavEvent::NoChanges { from, request } = event {
             if matches!(request, NavRequest::Action) && back_buttons.contains(*from.first()) {
                 nav_requests.send(NavRequest::Cancel);

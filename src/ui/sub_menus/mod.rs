@@ -14,7 +14,7 @@ pub fn setup_submenu<Menu: Component, Marker: Component + Clone>(app: &mut App) 
         mut removed: RemovedComponents<Focused>,
     ) {
         if overlay_menus.is_empty() {
-            for removal in removed.iter() {
+            for removal in removed.read() {
                 if menu_items.contains(removal) {
                     for mut menu_style in menu_styles.iter_mut() {
                         menu_style.display = Display::None;

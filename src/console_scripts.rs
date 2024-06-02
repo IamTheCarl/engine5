@@ -46,7 +46,7 @@ fn run_scripts(
     console_config: Res<ConsoleConfiguration>,
     mut command_entered: EventWriter<ConsoleCommandEntered>,
 ) {
-    for request in script_requests.iter() {
+    for request in script_requests.read() {
         if let Err(error) = run_script(request, &console_config, &mut command_entered) {
             log::error!("Failed to run script {:?}: {:?}", request.path, error);
         }

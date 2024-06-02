@@ -1,17 +1,14 @@
 use anyhow::Result;
+use avian3d::prelude::*;
 use bevy::{ecs::system::EntityCommands, prelude::*};
 use proc_macros::entity_serialization;
 
 use crate::world::{
     generation::WorldGeneratorEnum,
-    physics::{Position, Velocity},
     spatial_entities::storage::{
         EntityConstruction, EntitySerializationManager, EntityStorage, Storable, ToSaveSpatial,
     },
-    terrain::{
-        terrain_space::SpaceModificationRequestList, TerrainSpace, TerrainSpaceBundle,
-        TerrainStorage,
-    },
+    terrain::{TerrainSpace, TerrainSpaceBundle, TerrainStorage},
 };
 
 #[entity_serialization(type_id = 2, marker = DynamicTerrainEntity)]
@@ -19,8 +16,9 @@ pub struct DynamicTerrainParameters {
     #[query = TerrainSpace]
     #[get = generator]
     generator: WorldGeneratorEnum,
-    position: Position,
-    velocity: Velocity,
+    transform: Transform,
+    linear_velocity: LinearVelocity,
+    angular_velocity: AngularVelocity,
 }
 
 #[derive(Component)]
@@ -32,8 +30,9 @@ impl DynamicTerrainEntity {
         commands: &mut Commands,
         storage: &EntityStorage,
         generator: impl Into<WorldGeneratorEnum>,
-        position: Position,
-        velocity: Velocity,
+        transform: Transform,
+        linear_velocity: LinearVelocity,
+        angular_velocity: AngularVelocity,
     ) -> Result<()> {
         let (storable, tree) =
             storage.new_storable_component_with_tree::<DynamicTerrainEntity, _, _, _>()?;
@@ -45,8 +44,9 @@ impl DynamicTerrainEntity {
             TerrainStorage::Local { tree },
             DynamicTerrainParameters {
                 generator: generator.into(),
-                position,
-                velocity,
+                transform,
+                linear_velocity,
+                angular_velocity,
             },
         );
         Ok(())
@@ -66,15 +66,14 @@ impl DynamicTerrainEntity {
                 storable,
                 TerrainSpaceBundle {
                     terrain_space: TerrainSpace::local(parameters.generator),
-                    position: parameters.position,
                     storage,
-                    modification_request_list: SpaceModificationRequestList::default(),
-                    transform: Transform::default(),
-                    global_transform: GlobalTransform::default(),
-                    visibility: Visibility::Inherited,
-                    computed_visibility: ComputedVisibility::default(),
+                    transform: TransformBundle::from_transform(parameters.transform),
+                    rigid_body: RigidBody::Dynamic,
+                    gravity_scale: GravityScale(0.0),
+                    ..Default::default()
                 },
-                parameters.velocity,
+                parameters.linear_velocity,
+                parameters.angular_velocity,
             ))
             .set_parent(parent);
     }
@@ -88,11 +87,12 @@ impl DynamicTerrainEntity {
             Self,
             TerrainSpaceBundle {
                 terrain_space: TerrainSpace::local(parameters.generator),
-                position: parameters.position,
+                transform: TransformBundle::from_transform(parameters.transform),
                 storage,
                 ..Default::default()
             },
-            parameters.velocity,
+            parameters.linear_velocity,
+            parameters.angular_velocity,
         ));
     }
 }

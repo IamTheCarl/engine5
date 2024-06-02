@@ -9,12 +9,7 @@ use crate::world::{
 use super::{Cylinder, DebugRenderSettings, Position};
 
 pub(super) fn check_for_intersections(
-    mut cylinders: Query<(
-        &mut Position,
-        &Cylinder,
-        With<SpatialHash>,
-        Without<TerrainSpace>,
-    )>,
+    mut cylinders: Query<(&mut Position, &Cylinder), (With<SpatialHash>, Without<TerrainSpace>)>,
     terrain_space: Query<(&TerrainSpace, &Position)>,
     terrain: Query<(&ChunkPosition, &Chunk)>,
     debug_render_settings: Res<DebugRenderSettings>,
@@ -23,9 +18,7 @@ pub(super) fn check_for_intersections(
     for (space, space_position) in terrain_space.iter() {
         let terrain_quat = space_position.quat();
 
-        for (mut cylinder_position, cylinder, _with_spatial_hash, _without_terrain_space) in
-            cylinders.iter_mut()
-        {
+        for (mut cylinder_position, cylinder) in cylinders.iter_mut() {
             let scan_x_radius = cylinder.radius.ceil() as i8 + 1;
             let z_range_squared = ((scan_x_radius) as f32).powi(2);
 

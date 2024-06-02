@@ -88,7 +88,7 @@ fn process_open_button(
     mut events: EventReader<NavEvent>,
     open_buttons: Query<(), With<OpenButton>>,
 ) {
-    for event in events.iter() {
+    for event in events.read() {
         if let NavEvent::NoChanges { from, request } = event {
             if matches!(request, NavRequest::Action) && open_buttons.contains(*from.first()) {
                 let config_file_path = Path::new(crate::config::file_paths::CONFIG_DIRECTORY)
@@ -114,7 +114,7 @@ fn process_reload_button(
     mut events: EventReader<NavEvent>,
     reload_buttons: Query<(), With<ReloadButton>>,
 ) {
-    for event in events.iter() {
+    for event in events.read() {
         if let NavEvent::NoChanges { from, request } = event {
             if matches!(request, NavRequest::Action) && reload_buttons.contains(*from.first()) {
                 commands.insert_resource(crate::config::controls::InputMap::load_or_default());

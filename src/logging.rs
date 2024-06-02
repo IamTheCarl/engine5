@@ -118,7 +118,6 @@ pub fn setup(app: &mut App) {
     bevy::utils::tracing::subscriber::set_global_default(subscriber)
         .expect("Subscriber was already set.");
 
-    dbg!();
     app.add_systems(
         Update,
         ConsoleSubscriber::write_to_console.after(ConsoleSet::ConsoleUI),

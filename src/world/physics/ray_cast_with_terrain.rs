@@ -39,7 +39,8 @@ pub fn check_for_intersections(
     debug_render_settings: Res<DebugRenderSettings>,
     mut lines: ResMut<DebugLines>,
 ) {
-    rays.for_each_mut(|(_entity, _ray, mut list)| list.contacts.clear());
+    rays.iter_mut()
+        .for_each(|(_entity, _ray, mut list)| list.contacts.clear());
 
     // Since a terrain space is a *much* bigger piece of memory, lets iterate through those less often than we iterate through rays.
     for (terrain_space_entity, terrain_space, terrain_position) in terrain_spaces.iter() {

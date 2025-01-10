@@ -1,3 +1,0 @@
-Dear player, apology letters in video games seem to be the in thing right now. Because of this, I too have decided to wrong you in some way so that I could join in on the bandwagon of apology letters.
-You likely opened this sub-menu expecting at least some degree of a user interface to customize your control setup for this game, but alas, there is nothing.
-But not all hope is lost. You can still customize the controls. You'll just need to open the config file and manually edit it yourself. Save the config file, and press the "reload" button below. Assuming there are no errors in it, your modifications will soon be applied. If you damage the config file beyond recoverability, delete it, and try to load it again. A default config file will be put in its place.

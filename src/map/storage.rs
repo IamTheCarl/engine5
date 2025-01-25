@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use bincode::DefaultOptions;
 use serde::{de::DeserializeSeed, Serialize};
-use std::{num::NonZeroU32, path::Path};
+use std::{collections::HashMap, num::NonZeroU32, path::Path};
 
 use bevy::{
     prelude::*,
@@ -20,11 +20,19 @@ impl Plugin for StoragePlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
+            (
+                WandererTracker::insert.after(load_wanderers),
+                WandererTracker::remove,
+            ),
+        );
+        app.add_systems(
+            Update,
             (save_wanderers, load_wanderers).run_if(resource_exists::<MapStorage>),
         );
         app.add_event::<RequestLoadWanderer>();
         app.add_event::<LoadResult>();
         app.register_type::<Transform>();
+        app.insert_resource(WandererTracker::default());
     }
 }
 
@@ -38,6 +46,44 @@ pub type WandererId = NonZeroU32;
 /// Requests that a wanderer be loaded.
 #[derive(Event, Debug)]
 pub struct RequestLoadWanderer(pub WandererId);
+
+#[derive(Resource, Default)]
+pub struct WandererTracker {
+    wanderers_to_entities: HashMap<WandererId, Entity>,
+    entities_to_wanderers: HashMap<Entity, WandererId>,
+}
+
+impl WandererTracker {
+    fn insert(
+        new_wanderers: Query<(Entity, &Wanderer), Added<Wanderer>>,
+        mut tracker: ResMut<Self>,
+    ) {
+        for (entity, wanderer) in new_wanderers.iter() {
+            tracker.wanderers_to_entities.insert(wanderer.0, entity);
+            tracker.entities_to_wanderers.insert(entity, wanderer.0);
+        }
+    }
+
+    fn remove(mut removals: RemovedComponents<Wanderer>, mut tracker: ResMut<Self>) {
+        for removed_entity in removals.read() {
+            let wanderer_id = tracker
+                .entities_to_wanderers
+                .remove(&removed_entity)
+                .expect("Wanderer was not being tracked.");
+
+            let entity = tracker
+                .wanderers_to_entities
+                .remove(&wanderer_id)
+                .expect("Wanderer was not being tracked.");
+
+            assert_eq!(entity, removed_entity, "Entity did not match its wanderer.");
+        }
+    }
+
+    pub fn get_entity(&self, wanderer_id: WandererId) -> Option<Entity> {
+        self.wanderers_to_entities.get(&wanderer_id).copied()
+    }
+}
 
 /// Indicates the result of loading a wanderer
 #[derive(Event, Debug)]
@@ -255,6 +301,9 @@ fn write_dynamic_entity_to_world(
 }
 
 // TODO We need a way to delete wanderers from the database.
+struct DeleteWanderer {
+    wanderer_id: WandererId,
+}
 
 #[cfg(test)]
 mod test {
@@ -300,5 +349,48 @@ mod test {
         let wanderers = wanderers.iter(app.world_mut()).collect::<Vec<_>>();
 
         assert_eq!(wanderers, vec![(&Wanderer(wanderer_id), &transform)]);
+    }
+
+    #[test]
+    fn wanderer_tracking() {
+        let mut app = App::new();
+        app.add_plugins((super::super::MapPlugin,));
+
+        let wanderer_id = WandererId::new(1).unwrap();
+
+        let entity_id = {
+            let world = app.world_mut();
+            world.spawn(Wanderer(wanderer_id)).id()
+        };
+
+        app.update();
+
+        {
+            let world = app.world();
+            let tracker: &WandererTracker = world.resource();
+
+            assert_eq!(
+                tracker.wanderers_to_entities,
+                HashMap::from([(wanderer_id, entity_id)])
+            );
+            assert_eq!(
+                tracker.entities_to_wanderers,
+                HashMap::from([(entity_id, wanderer_id)])
+            );
+        }
+
+        {
+            let world = app.world_mut();
+            world.despawn(entity_id);
+        }
+
+        app.update();
+        {
+            let world = app.world();
+            let tracker: &WandererTracker = world.resource();
+
+            assert_eq!(tracker.wanderers_to_entities, HashMap::from([]));
+            assert_eq!(tracker.entities_to_wanderers, HashMap::from([]));
+        }
     }
 }

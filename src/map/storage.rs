@@ -22,12 +22,13 @@ impl Plugin for StoragePlugin {
             Update,
             (
                 WandererTracker::insert.after(load_wanderers),
-                WandererTracker::remove,
+                WandererTracker::remove.after(delete_wanderers),
             ),
         );
         app.add_systems(
             Update,
-            (save_wanderers, load_wanderers).run_if(resource_exists::<MapStorage>),
+            (save_wanderers, load_wanderers, delete_wanderers)
+                .run_if(resource_exists::<MapStorage>),
         );
         app.add_event::<RequestLoadWanderer>();
         app.add_event::<LoadResult>();
@@ -39,6 +40,10 @@ impl Plugin for StoragePlugin {
 /// Marks an entity as needing to be saved to the database.
 #[derive(Component)]
 pub struct ToSave;
+
+/// Marks an entity as needing to be deleted from the database.
+#[derive(Component)]
+struct ToDelete;
 
 /// An ID for an entity that can move freely through the world.
 pub type WandererId = NonZeroU32;
@@ -300,9 +305,63 @@ fn write_dynamic_entity_to_world(
     Ok(entity_world_mut.id())
 }
 
-// TODO We need a way to delete wanderers from the database.
-struct DeleteWanderer {
-    wanderer_id: WandererId,
+/// Deletes wanderers from the database and then despawns the entity.
+fn delete_wanderers(
+    to_delete: Query<(Entity, &Wanderer), With<ToDelete>>,
+    map_storage: Res<MapStorage>,
+    mut commands: Commands,
+) {
+    dbg!();
+    let tst = &map_storage.wanderer_storage;
+    for (entity, to_delete) in to_delete.iter() {
+        dbg!(entity);
+        let id = to_delete.0;
+        let key = id.get().to_le_bytes();
+
+        if let Err(error) = tst.remove(key) {
+            error!("Failed to save wanderer to database: {error}");
+        }
+
+        // We assume all child entities have already been despawned.
+        commands.entity(entity).despawn();
+    }
+}
+
+pub trait DeleteWanderer {
+    fn delete_wanderer(&mut self);
+}
+
+impl DeleteWanderer for EntityCommands<'_> {
+    fn delete_wanderer(&mut self) {
+        self.retain::<Wanderer>().insert(ToDelete);
+    }
+}
+
+pub trait GetWanderer {
+    fn wanderer(
+        &mut self,
+        tracker: &WandererTracker,
+        wanderer_id: WandererId,
+    ) -> EntityCommands<'_> {
+        self.get_wanderer(tracker, wanderer_id)
+            .expect("Wanderer did not exist")
+    }
+    fn get_wanderer(
+        &mut self,
+        tracker: &WandererTracker,
+        wanderer_id: WandererId,
+    ) -> Option<EntityCommands<'_>>;
+}
+
+impl GetWanderer for Commands<'_, '_> {
+    fn get_wanderer(
+        &mut self,
+        tracker: &WandererTracker,
+        wanderer_id: WandererId,
+    ) -> Option<EntityCommands<'_>> {
+        let entity = tracker.get_entity(wanderer_id)?;
+        self.get_entity(entity)
+    }
 }
 
 #[cfg(test)]
@@ -351,6 +410,7 @@ mod test {
         assert_eq!(wanderers, vec![(&Wanderer(wanderer_id), &transform)]);
     }
 
+    /// Tracks the wanderer<->entity association.
     #[test]
     fn wanderer_tracking() {
         let mut app = App::new();
@@ -392,5 +452,71 @@ mod test {
             assert_eq!(tracker.wanderers_to_entities, HashMap::from([]));
             assert_eq!(tracker.entities_to_wanderers, HashMap::from([]));
         }
+    }
+
+    #[test]
+    fn delete_wanderers() {
+        let mut app = App::new();
+        app.add_plugins((super::super::MapPlugin,));
+
+        let tempdir = TempDir::new();
+
+        let wanderer_id = WandererId::new(1).unwrap();
+        let transform = Transform::from_translation(Vec3::new(1.0, 2.0, 3.0));
+
+        {
+            let world = app.world_mut();
+            world.insert_resource(
+                MapStorage::open(tempdir.path().join("delete_wanderers")).unwrap(),
+            );
+
+            world.spawn((Wanderer(wanderer_id), ToSave, transform));
+        };
+
+        app.update();
+
+        {
+            let world = app.world_mut();
+            world.clear_entities();
+            world.send_event(RequestLoadWanderer(wanderer_id));
+        }
+
+        app.update();
+
+        // The GlobalTransform component is required by Transform and should have been added
+        // automatically.
+        let mut wanderers = app
+            .world_mut()
+            .query_filtered::<(&Wanderer, &Transform), With<GlobalTransform>>();
+
+        let wanderers_list = wanderers.iter(app.world_mut()).collect::<Vec<_>>();
+        assert_eq!(wanderers_list, vec![(&Wanderer(wanderer_id), &transform)]);
+
+        {
+            let world = app.world_mut();
+            let delete_system = world.register_system(
+                move |tracker: Res<WandererTracker>, mut commands: Commands| {
+                    commands.wanderer(&tracker, wanderer_id).delete_wanderer();
+                },
+            );
+
+            world.run_system(delete_system).unwrap();
+        }
+
+        app.update();
+
+        let mut wanderers = app.world_mut().query_filtered::<(), With<Wanderer>>();
+        let wanderers_list = wanderers.iter(app.world_mut()).collect::<Vec<_>>();
+        assert_eq!(wanderers_list, vec![]);
+
+        let does_not_exist_in_database = app
+            .world()
+            .resource::<MapStorage>()
+            .wanderer_storage
+            .get(wanderer_id.get().to_le_bytes())
+            .unwrap()
+            .is_none();
+
+        assert!(does_not_exist_in_database);
     }
 }

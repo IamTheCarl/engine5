@@ -16,30 +16,10 @@ use bevy::{
     },
 };
 
-/// Plugin for handling storage of maps.
-#[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
-pub struct StoragePlugin;
-
-impl Plugin for StoragePlugin {
-    fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            (
-                WandererTracker::insert.before(load_wanderers),
-                WandererTracker::remove.after(delete_wanderers),
-            ),
-        );
-        app.add_systems(
-            Update,
-            (save_wanderers, load_wanderers, delete_wanderers)
-                .run_if(resource_exists::<MapStorage>),
-        );
-        app.add_event::<RequestLoadWanderer>();
-        app.add_event::<LoadResult>();
-        app.register_type::<Transform>();
-        app.insert_resource(WandererTracker::default());
-    }
-}
+/// Marks an entity as a persistant entity and attaches an ID to it.
+/// This ID is to be consistent between play sessions and multiplayer instances.
+#[derive(Component, Debug, Eq, PartialEq)]
+pub struct Persistant(PersistantId);
 
 /// Marks an entity as needing to be saved to the database.
 #[derive(Component)]
@@ -47,94 +27,93 @@ pub struct ToSave;
 
 /// Marks an entity as needing to be deleted from the database.
 #[derive(Component)]
-struct ToDelete;
+pub struct ToDelete;
 
-/// An ID for an entity that can move freely through the world.
-pub type WandererId = NonZeroU32;
+/// An ID for an entity that persists between sessions (saved/loaded from saves or over
+/// multi-player).
+pub type PersistantId = NonZeroU32;
 
-/// Requests that a wanderer be loaded.
+/// Requests that a persistant entity to be loaded.
 #[derive(Event, Debug)]
-pub struct RequestLoadWanderer(pub WandererId);
+pub struct RequestLoad(pub PersistantId);
 
 #[derive(Resource, Default)]
-pub struct WandererTracker {
-    wanderers_to_entities: HashMap<WandererId, Entity>,
-    entities_to_wanderers: HashMap<Entity, WandererId>,
+pub struct PersistantEntityTracker {
+    persistant_to_entities: HashMap<PersistantId, Entity>,
+    entities_to_persistant: HashMap<Entity, PersistantId>,
 }
 
-impl WandererTracker {
-    fn insert(
-        new_wanderers: Query<(Entity, &Wanderer), Added<Wanderer>>,
+impl PersistantEntityTracker {
+    pub(super) fn insert(
+        new_entities: Query<(Entity, &Persistant), Added<Persistant>>,
         mut tracker: ResMut<Self>,
     ) {
-        for (entity, wanderer) in new_wanderers.iter() {
-            tracker.insert_association(wanderer.0, entity);
+        for (entity, persistant) in new_entities.iter() {
+            tracker.insert_association(persistant.0, entity);
         }
     }
 
-    fn remove(mut removals: RemovedComponents<Wanderer>, mut tracker: ResMut<Self>) {
+    pub(super) fn remove(mut removals: RemovedComponents<Persistant>, mut tracker: ResMut<Self>) {
         for removed_entity in removals.read() {
-            let wanderer_id = tracker
-                .entities_to_wanderers
+            let persistant_id = tracker
+                .entities_to_persistant
                 .remove(&removed_entity)
                 .expect("Wanderer was not being tracked.");
 
             let entity = tracker
-                .wanderers_to_entities
-                .remove(&wanderer_id)
+                .persistant_to_entities
+                .remove(&persistant_id)
                 .expect("Wanderer was not being tracked.");
 
-            assert_eq!(entity, removed_entity, "Entity did not match its wanderer.");
+            assert_eq!(
+                entity, removed_entity,
+                "Entity did not match its persistant id."
+            );
         }
     }
 
-    fn insert_association(&mut self, wanderer_id: WandererId, entity_id: Entity) {
-        self.wanderers_to_entities.insert(wanderer_id, entity_id);
-        self.entities_to_wanderers.insert(entity_id, wanderer_id);
+    fn insert_association(&mut self, persistant_id: PersistantId, entity_id: Entity) {
+        self.persistant_to_entities.insert(persistant_id, entity_id);
+        self.entities_to_persistant.insert(entity_id, persistant_id);
     }
 
-    pub fn get_entity(&self, wanderer_id: WandererId) -> Option<Entity> {
-        self.wanderers_to_entities.get(&wanderer_id).copied()
+    pub fn get_entity(&self, persistant_id: PersistantId) -> Option<Entity> {
+        self.persistant_to_entities.get(&persistant_id).copied()
     }
 }
 
-/// Indicates the result of loading a wanderer
+/// Indicates the result of loading a persistant entity.
 #[derive(Event, Debug)]
 pub struct LoadResult {
-    /// The wanderer ID
-    pub id: WandererId,
+    /// The persistant ID
+    pub id: PersistantId,
 
-    /// The result of loading the wanderer.
+    /// The result of loading the persistant.
     pub status: LoadStatus,
 }
 
 #[derive(Debug)]
 pub enum LoadStatus {
-    /// The object was loaded. Here's its Entity ID.
+    /// The entity was loaded. Here's its Entity ID.
     Success(Entity),
 
-    /// Object is not available in the database.
+    /// Entity is not available in the database.
     NotPresent,
 
     /// Something out of our control failed, like an IO error or corrupted data.
-    // TODO I'm not sure we should be presenting this to entities. It can be complex
+    // TODO I'm not sure we should be presenting this to other systems. It can be complex
     // to know how to properly handle this situation.
     OtherError,
 }
 
-/// Marks an entity as a wandering entity and attaches an ID to it.
-/// This ID is to be consistent between play sessions and multiplayer instances.
-#[derive(Component, Debug, Eq, PartialEq)]
-pub struct Wanderer(WandererId);
-
 /// Wrapper for the database used to store the map.
 #[derive(Resource)]
 pub struct MapStorage {
-    /// Metadata, such as "which wanderers should be loaded when bootstrapping the world".
+    /// Metadata, such as "which persistant entities should be loaded when bootstrapping the world".
     meta_storage: sled::Tree,
 
-    /// Storage for wandering entities.
-    wanderer_storage: sled::Tree,
+    /// Storage for persistant entities.
+    persistant_entity_storage: sled::Tree,
 }
 
 impl MapStorage {
@@ -144,30 +123,30 @@ impl MapStorage {
         let meta_storage = database
             .open_tree("metadata")
             .context("Failed to open metadata tree")?;
-        let wanderer_storage = database
-            .open_tree("wanderers")
-            .context("Failed to open wanderer tree")?;
+        let persistant_entity_storage = database
+            .open_tree("persistant_entities")
+            .context("Failed to open persistant entity tree")?;
 
         Ok(Self {
             meta_storage,
-            wanderer_storage,
+            persistant_entity_storage,
         })
     }
 }
 
-/// Serializes and saves wanderers.
-fn save_wanderers(
+/// Serializes and saves persistant entities.
+pub fn save_persistant_entities(
     world: &World,
     type_registry: Res<AppTypeRegistry>,
-    wanderers: Query<(Entity, &Wanderer), With<ToSave>>,
+    persistant_entities: Query<(Entity, &Persistant), With<ToSave>>,
     map_storage: Res<MapStorage>,
     mut commands: Commands,
 ) {
     let type_registry = type_registry.read();
-    let tst = &map_storage.wanderer_storage;
+    let tst = &map_storage.persistant_entity_storage;
 
     // TODO we should probably make a "serializable whitelist".
-    for (entity, wanderer) in wanderers.iter() {
+    for (entity, persistant) in persistant_entities.iter() {
         // TODO is it more efficent to extract multiple entities with this scene builder at once?
         let mut dynamic_scene = DynamicSceneBuilder::from_world(world)
             .allow_all_components()
@@ -185,22 +164,22 @@ fn save_wanderers(
         let mut serializer = bincode::Serializer::new(&mut buffer, DefaultOptions::default());
         match entity_serializer.serialize(&mut serializer) {
             Ok(()) => {
-                let key = wanderer.0.get().to_le_bytes();
+                let key = persistant.0.get().to_le_bytes();
 
                 if let Err(error) = tst.insert(key, buffer) {
-                    error!("Failed to save wanderer to database: {error}");
+                    error!("Failed to save persitant entity to database: {error}");
                 }
             }
-            Err(error) => error!("Failed to serialize wanderer: {error}"),
+            Err(error) => error!("Failed to serialize persistant entity: {error}"),
         }
 
         commands.entity(entity).remove::<ToSave>();
     }
 }
 
-/// Loads and spawns wandering entities into the map.
-fn load_wanderers(
-    mut load_wanderer: EventReader<RequestLoadWanderer>,
+/// Loads and spawns persistant entities into the map.
+pub fn load_persistant_entities(
+    mut load_requests: EventReader<RequestLoad>,
     type_registry: Res<AppTypeRegistry>,
     map_storage: Res<MapStorage>,
     mut commands: Commands,
@@ -208,10 +187,10 @@ fn load_wanderers(
     let mut dynamic_entities = Vec::new();
     {
         let type_registry = type_registry.read();
-        let tst = &map_storage.wanderer_storage;
+        let tst = &map_storage.persistant_entity_storage;
         let mut already_loading = HashSet::new();
 
-        for to_load in load_wanderer.read() {
+        for to_load in load_requests.read() {
             let id = to_load.0;
 
             // Don't load it if it's already loaded.
@@ -231,15 +210,13 @@ fn load_wanderers(
                                 dynamic_entities.push((id, dynamic_entity));
                             }
                             Err(error) => {
-                                error!("Failed to deserialize wanderer: {error}");
+                                error!("Failed to deserialize persistant entity: {error}");
                                 commands.send_event(LoadResult {
                                     id,
                                     status: LoadStatus::OtherError,
                                 });
                             }
                         }
-
-                        // We leave pushing the result to the next system, which inserts the wanderer.
                     }
                     Ok(None) => {
                         commands.send_event(LoadResult {
@@ -248,7 +225,7 @@ fn load_wanderers(
                         });
                     }
                     Err(error) => {
-                        error!("Failed to load wanderer: {error}");
+                        error!("Failed to load persistant entity: {error}");
                         commands.send_event(LoadResult {
                             id,
                             status: LoadStatus::OtherError,
@@ -267,7 +244,7 @@ fn load_wanderers(
             match write_dynamic_entity_to_world(dynamic_entity, id, &type_registry, world) {
                 Ok(entity) => {
                     world
-                        .resource_mut::<WandererTracker>()
+                        .resource_mut::<PersistantEntityTracker>()
                         .insert_association(id, entity);
                     world.send_event(LoadResult {
                         id,
@@ -290,11 +267,11 @@ fn load_wanderers(
 /// function just cleanly wraps that up.
 fn write_dynamic_entity_to_world(
     dynamic_entity: DynamicEntity,
-    wanderer_id: WandererId,
+    persistant_id: PersistantId,
     type_registry: &TypeRegistry,
     world: &mut World,
 ) -> Result<Entity> {
-    let mut entity_world_mut = world.spawn(Wanderer(wanderer_id));
+    let mut entity_world_mut = world.spawn(Persistant(persistant_id));
 
     // Oh yeah, this is totally just a re-implementation of how Bevy's scene deserialization works.
     // https://docs.rs/bevy_scene/0.15.1/src/bevy_scene/dynamic_scene.rs.html#87
@@ -321,19 +298,20 @@ fn write_dynamic_entity_to_world(
     Ok(entity_world_mut.id())
 }
 
-/// Deletes wanderers from the database and then despawns the entity.
-fn delete_wanderers(
-    to_delete: Query<(Entity, &Wanderer), With<ToDelete>>,
+/// Deletes persistant entities from the database and then despawns the entity.
+pub fn delete_persistant_entities(
+    to_delete: Query<(Entity, &Persistant), With<ToDelete>>,
     map_storage: Res<MapStorage>,
     mut commands: Commands,
 ) {
-    let tst = &map_storage.wanderer_storage;
+    let tst = &map_storage.persistant_entity_storage;
     for (entity, to_delete) in to_delete.iter() {
         let id = to_delete.0;
         let key = id.get().to_le_bytes();
 
         if let Err(error) = tst.remove(key) {
-            error!("Failed to save wanderer to database: {error}");
+            // This indicates something like an IO error, not that it wasn't present.
+            error!("Failed to remove persistant entity from database: {error}");
         }
 
         // We assume all child entities have already been despawned.
@@ -341,39 +319,39 @@ fn delete_wanderers(
     }
 }
 
-pub trait DeleteWanderer {
-    fn delete_wanderer(&mut self);
+pub trait DeletePersistantEntities {
+    fn delete_persistant(&mut self);
 }
 
-impl DeleteWanderer for EntityCommands<'_> {
-    fn delete_wanderer(&mut self) {
-        self.retain::<Wanderer>().insert(ToDelete);
+impl DeletePersistantEntities for EntityCommands<'_> {
+    fn delete_persistant(&mut self) {
+        self.retain::<Persistant>().insert(ToDelete);
     }
 }
 
-pub trait GetWanderer {
-    fn wanderer(
+pub trait GetPersistant {
+    fn persistant(
         &mut self,
-        tracker: &WandererTracker,
-        wanderer_id: WandererId,
+        tracker: &PersistantEntityTracker,
+        persistant_id: PersistantId,
     ) -> EntityCommands<'_> {
-        self.get_wanderer(tracker, wanderer_id)
+        self.get_persistant(tracker, persistant_id)
             .expect("Wanderer did not exist")
     }
-    fn get_wanderer(
+    fn get_persistant(
         &mut self,
-        tracker: &WandererTracker,
-        wanderer_id: WandererId,
+        tracker: &PersistantEntityTracker,
+        persistant_id: PersistantId,
     ) -> Option<EntityCommands<'_>>;
 }
 
-impl GetWanderer for Commands<'_, '_> {
-    fn get_wanderer(
+impl GetPersistant for Commands<'_, '_> {
+    fn get_persistant(
         &mut self,
-        tracker: &WandererTracker,
-        wanderer_id: WandererId,
+        tracker: &PersistantEntityTracker,
+        persistant_id: PersistantId,
     ) -> Option<EntityCommands<'_>> {
-        let entity = tracker.get_entity(wanderer_id)?;
+        let entity = tracker.get_entity(persistant_id)?;
         self.get_entity(entity)
     }
 }
@@ -383,24 +361,27 @@ mod test {
     use outdir_tempdir::TempDir;
 
     use super::*;
+    use crate::map::MapPlugin;
 
     /// Spawns an entity, saves it to the database, deletes the entity, then restores it from the
     /// database.
     #[test]
-    fn save_wanderers() {
+    fn save_persistant_entities() {
         let mut app = App::new();
-        app.add_plugins((super::super::MapPlugin,));
+        app.add_plugins((MapPlugin,));
 
         let tempdir = TempDir::new();
 
-        let wanderer_id = WandererId::new(1).unwrap();
+        let persistant_id = PersistantId::new(1).unwrap();
         let transform = Transform::from_translation(Vec3::new(1.0, 2.0, 3.0));
 
         {
             let world = app.world_mut();
-            world.insert_resource(MapStorage::open(tempdir.path().join("save_wanderers")).unwrap());
+            world.insert_resource(
+                MapStorage::open(tempdir.path().join("save_persistant_entities")).unwrap(),
+            );
 
-            world.spawn((Wanderer(wanderer_id), ToSave, transform));
+            world.spawn((Persistant(persistant_id), ToSave, transform));
         };
 
         app.update();
@@ -408,48 +389,48 @@ mod test {
         {
             let world = app.world_mut();
             world.clear_entities();
-            world.send_event(RequestLoadWanderer(wanderer_id));
+            world.send_event(RequestLoad(persistant_id));
         }
 
         app.update();
 
         // The GlobalTransform component is required by Transform and should have been added
         // automatically.
-        let mut wanderers = app
+        let mut entities = app
             .world_mut()
-            .query_filtered::<(&Wanderer, &Transform), With<GlobalTransform>>();
+            .query_filtered::<(&Persistant, &Transform), With<GlobalTransform>>();
 
-        let wanderers = wanderers.iter(app.world_mut()).collect::<Vec<_>>();
+        let entities = entities.iter(app.world_mut()).collect::<Vec<_>>();
 
-        assert_eq!(wanderers, vec![(&Wanderer(wanderer_id), &transform)]);
+        assert_eq!(entities, vec![(&Persistant(persistant_id), &transform)]);
     }
 
-    /// Tracks the wanderer<->entity association.
+    /// Tracks the persistant_id<->entity association.
     #[test]
-    fn wanderer_tracking() {
+    fn persistant_entity_tracking() {
         let mut app = App::new();
-        app.add_plugins((super::super::MapPlugin,));
+        app.add_plugins((MapPlugin,));
 
-        let wanderer_id = WandererId::new(1).unwrap();
+        let persistant_id = PersistantId::new(1).unwrap();
 
         let entity_id = {
             let world = app.world_mut();
-            world.spawn(Wanderer(wanderer_id)).id()
+            world.spawn(Persistant(persistant_id)).id()
         };
 
         app.update();
 
         {
             let world = app.world();
-            let tracker: &WandererTracker = world.resource();
+            let tracker: &PersistantEntityTracker = world.resource();
 
             assert_eq!(
-                tracker.wanderers_to_entities,
-                HashMap::from([(wanderer_id, entity_id)])
+                tracker.persistant_to_entities,
+                HashMap::from([(persistant_id, entity_id)])
             );
             assert_eq!(
-                tracker.entities_to_wanderers,
-                HashMap::from([(entity_id, wanderer_id)])
+                tracker.entities_to_persistant,
+                HashMap::from([(entity_id, persistant_id)])
             );
         }
 
@@ -461,31 +442,31 @@ mod test {
         app.update();
         {
             let world = app.world();
-            let tracker: &WandererTracker = world.resource();
+            let tracker: &PersistantEntityTracker = world.resource();
 
-            assert_eq!(tracker.wanderers_to_entities, HashMap::from([]));
-            assert_eq!(tracker.entities_to_wanderers, HashMap::from([]));
+            assert_eq!(tracker.persistant_to_entities, HashMap::from([]));
+            assert_eq!(tracker.entities_to_persistant, HashMap::from([]));
         }
     }
 
-    /// Delete a wanderer from the database and then prove it can't be loaded anymore.
+    /// Delete a persistant entity from the database and then prove it can't be loaded anymore.
     #[test]
-    fn delete_wanderers() {
+    fn delete_persistant_entities() {
         let mut app = App::new();
-        app.add_plugins((super::super::MapPlugin,));
+        app.add_plugins((MapPlugin,));
 
         let tempdir = TempDir::new();
 
-        let wanderer_id = WandererId::new(1).unwrap();
+        let persistant_id = PersistantId::new(1).unwrap();
         let transform = Transform::from_translation(Vec3::new(1.0, 2.0, 3.0));
 
         {
             let world = app.world_mut();
             world.insert_resource(
-                MapStorage::open(tempdir.path().join("delete_wanderers")).unwrap(),
+                MapStorage::open(tempdir.path().join("delete_persistant_entity")).unwrap(),
             );
 
-            world.spawn((Wanderer(wanderer_id), ToSave, transform));
+            world.spawn((Persistant(persistant_id), ToSave, transform));
         };
 
         app.update();
@@ -493,25 +474,30 @@ mod test {
         {
             let world = app.world_mut();
             world.clear_entities();
-            world.send_event(RequestLoadWanderer(wanderer_id));
+            world.send_event(RequestLoad(persistant_id));
         }
 
         app.update();
 
         // The GlobalTransform component is required by Transform and should have been added
         // automatically.
-        let mut wanderers = app
+        let mut persistants = app
             .world_mut()
-            .query_filtered::<(&Wanderer, &Transform), With<GlobalTransform>>();
+            .query_filtered::<(&Persistant, &Transform), With<GlobalTransform>>();
 
-        let wanderers_list = wanderers.iter(app.world_mut()).collect::<Vec<_>>();
-        assert_eq!(wanderers_list, vec![(&Wanderer(wanderer_id), &transform)]);
+        let persistant_entity_list = persistants.iter(app.world_mut()).collect::<Vec<_>>();
+        assert_eq!(
+            persistant_entity_list,
+            vec![(&Persistant(persistant_id), &transform)]
+        );
 
         {
             let world = app.world_mut();
             let delete_system = world.register_system(
-                move |tracker: Res<WandererTracker>, mut commands: Commands| {
-                    commands.wanderer(&tracker, wanderer_id).delete_wanderer();
+                move |tracker: Res<PersistantEntityTracker>, mut commands: Commands| {
+                    commands
+                        .persistant(&tracker, persistant_id)
+                        .delete_persistant();
                 },
             );
 
@@ -520,39 +506,39 @@ mod test {
 
         app.update();
 
-        let mut wanderers = app.world_mut().query_filtered::<(), With<Wanderer>>();
-        let wanderers_list = wanderers.iter(app.world_mut()).collect::<Vec<_>>();
-        assert_eq!(wanderers_list, vec![]);
+        let mut persistants = app.world_mut().query_filtered::<(), With<Persistant>>();
+        let persistant_entity_list = persistants.iter(app.world_mut()).collect::<Vec<_>>();
+        assert_eq!(persistant_entity_list, vec![]);
 
         let does_not_exist_in_database = app
             .world()
             .resource::<MapStorage>()
-            .wanderer_storage
-            .get(wanderer_id.get().to_le_bytes())
+            .persistant_entity_storage
+            .get(persistant_id.get().to_le_bytes())
             .unwrap()
             .is_none();
 
         assert!(does_not_exist_in_database);
     }
 
-    /// Try to load a wanderer twice. Only one instance should be loaded.
+    /// Try to load a persistant entity twice. Only one instance should be loaded.
     #[test]
-    fn double_load_wanderers() {
+    fn double_load_persistant_entity() {
         let mut app = App::new();
-        app.add_plugins((super::super::MapPlugin,));
+        app.add_plugins((MapPlugin,));
 
         let tempdir = TempDir::new();
 
-        let wanderer_id = WandererId::new(1).unwrap();
+        let persistant_id = PersistantId::new(1).unwrap();
         let transform = Transform::from_translation(Vec3::new(1.0, 2.0, 3.0));
 
         {
             let world = app.world_mut();
             world.insert_resource(
-                MapStorage::open(tempdir.path().join("double_load_wanderers")).unwrap(),
+                MapStorage::open(tempdir.path().join("double_load_persistant_entity")).unwrap(),
             );
 
-            world.spawn((Wanderer(wanderer_id), ToSave, transform));
+            world.spawn((Persistant(persistant_id), ToSave, transform));
         };
 
         app.update();
@@ -561,21 +547,21 @@ mod test {
             let world = app.world_mut();
             world.clear_entities();
 
-            // Look, we tried to load the wanderer twice!
-            world.send_event(RequestLoadWanderer(wanderer_id));
-            world.send_event(RequestLoadWanderer(wanderer_id));
+            // Look, we tried to load the entity twice!
+            world.send_event(RequestLoad(persistant_id));
+            world.send_event(RequestLoad(persistant_id));
         }
 
         app.update();
 
         // The GlobalTransform component is required by Transform and should have been added
         // automatically.
-        let mut wanderers = app
+        let mut entities = app
             .world_mut()
-            .query_filtered::<(&Wanderer, &Transform), With<GlobalTransform>>();
+            .query_filtered::<(&Persistant, &Transform), With<GlobalTransform>>();
 
-        let wanderers = wanderers.iter(app.world_mut()).collect::<Vec<_>>();
+        let entities = entities.iter(app.world_mut()).collect::<Vec<_>>();
 
-        assert_eq!(wanderers, vec![(&Wanderer(wanderer_id), &transform)]);
+        assert_eq!(entities, vec![(&Persistant(persistant_id), &transform)]);
     }
 }

@@ -1,7 +1,11 @@
 use anyhow::{Context, Result};
 use bincode::DefaultOptions;
 use serde::{de::DeserializeSeed, Serialize};
-use std::{collections::HashMap, num::NonZeroU32, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    num::NonZeroU32,
+    path::Path,
+};
 
 use bevy::{
     prelude::*,
@@ -21,7 +25,7 @@ impl Plugin for StoragePlugin {
         app.add_systems(
             Update,
             (
-                WandererTracker::insert.after(load_wanderers),
+                WandererTracker::insert.before(load_wanderers),
                 WandererTracker::remove.after(delete_wanderers),
             ),
         );
@@ -64,8 +68,7 @@ impl WandererTracker {
         mut tracker: ResMut<Self>,
     ) {
         for (entity, wanderer) in new_wanderers.iter() {
-            tracker.wanderers_to_entities.insert(wanderer.0, entity);
-            tracker.entities_to_wanderers.insert(entity, wanderer.0);
+            tracker.insert_association(wanderer.0, entity);
         }
     }
 
@@ -83,6 +86,11 @@ impl WandererTracker {
 
             assert_eq!(entity, removed_entity, "Entity did not match its wanderer.");
         }
+    }
+
+    fn insert_association(&mut self, wanderer_id: WandererId, entity_id: Entity) {
+        self.wanderers_to_entities.insert(wanderer_id, entity_id);
+        self.entities_to_wanderers.insert(entity_id, wanderer_id);
     }
 
     pub fn get_entity(&self, wanderer_id: WandererId) -> Option<Entity> {
@@ -201,46 +209,51 @@ fn load_wanderers(
     {
         let type_registry = type_registry.read();
         let tst = &map_storage.wanderer_storage;
+        let mut already_loading = HashSet::new();
 
         for to_load in load_wanderer.read() {
             let id = to_load.0;
-            let key = id.get().to_le_bytes();
-            match tst.get(key) {
-                Ok(Some(payload)) => {
-                    let entity_deserializer = SceneEntityDeserializer {
-                        entity: Entity::PLACEHOLDER,
-                        type_registry: &type_registry,
-                    };
 
-                    let mut deserializer =
-                        bincode::Deserializer::from_slice(&payload, DefaultOptions::new());
-                    match entity_deserializer.deserialize(&mut deserializer) {
-                        Ok(dynamic_entity) => {
-                            dynamic_entities.push((id, dynamic_entity));
+            // Don't load it if it's already loaded.
+            if already_loading.insert(id) {
+                let key = id.get().to_le_bytes();
+                match tst.get(key) {
+                    Ok(Some(payload)) => {
+                        let entity_deserializer = SceneEntityDeserializer {
+                            entity: Entity::PLACEHOLDER,
+                            type_registry: &type_registry,
+                        };
+
+                        let mut deserializer =
+                            bincode::Deserializer::from_slice(&payload, DefaultOptions::new());
+                        match entity_deserializer.deserialize(&mut deserializer) {
+                            Ok(dynamic_entity) => {
+                                dynamic_entities.push((id, dynamic_entity));
+                            }
+                            Err(error) => {
+                                error!("Failed to deserialize wanderer: {error}");
+                                commands.send_event(LoadResult {
+                                    id,
+                                    status: LoadStatus::OtherError,
+                                });
+                            }
                         }
-                        Err(error) => {
-                            error!("Failed to deserialize wanderer: {error}");
-                            commands.send_event(LoadResult {
-                                id,
-                                status: LoadStatus::OtherError,
-                            });
-                        }
+
+                        // We leave pushing the result to the next system, which inserts the wanderer.
                     }
-
-                    // We leave pushing the result to the next system, which inserts the wanderer.
-                }
-                Ok(None) => {
-                    commands.send_event(LoadResult {
-                        id,
-                        status: LoadStatus::NotPresent,
-                    });
-                }
-                Err(error) => {
-                    error!("Failed to load wanderer: {error}");
-                    commands.send_event(LoadResult {
-                        id,
-                        status: LoadStatus::OtherError,
-                    });
+                    Ok(None) => {
+                        commands.send_event(LoadResult {
+                            id,
+                            status: LoadStatus::NotPresent,
+                        });
+                    }
+                    Err(error) => {
+                        error!("Failed to load wanderer: {error}");
+                        commands.send_event(LoadResult {
+                            id,
+                            status: LoadStatus::OtherError,
+                        });
+                    }
                 }
             }
         }
@@ -253,6 +266,9 @@ fn load_wanderers(
         for (id, dynamic_entity) in dynamic_entities {
             match write_dynamic_entity_to_world(dynamic_entity, id, &type_registry, world) {
                 Ok(entity) => {
+                    world
+                        .resource_mut::<WandererTracker>()
+                        .insert_association(id, entity);
                     world.send_event(LoadResult {
                         id,
                         status: LoadStatus::Success(entity),
@@ -311,10 +327,8 @@ fn delete_wanderers(
     map_storage: Res<MapStorage>,
     mut commands: Commands,
 ) {
-    dbg!();
     let tst = &map_storage.wanderer_storage;
     for (entity, to_delete) in to_delete.iter() {
-        dbg!(entity);
         let id = to_delete.0;
         let key = id.get().to_le_bytes();
 
@@ -454,6 +468,7 @@ mod test {
         }
     }
 
+    /// Delete a wanderer from the database and then prove it can't be loaded anymore.
     #[test]
     fn delete_wanderers() {
         let mut app = App::new();
@@ -518,5 +533,49 @@ mod test {
             .is_none();
 
         assert!(does_not_exist_in_database);
+    }
+
+    /// Try to load a wanderer twice. Only one instance should be loaded.
+    #[test]
+    fn double_load_wanderers() {
+        let mut app = App::new();
+        app.add_plugins((super::super::MapPlugin,));
+
+        let tempdir = TempDir::new();
+
+        let wanderer_id = WandererId::new(1).unwrap();
+        let transform = Transform::from_translation(Vec3::new(1.0, 2.0, 3.0));
+
+        {
+            let world = app.world_mut();
+            world.insert_resource(
+                MapStorage::open(tempdir.path().join("double_load_wanderers")).unwrap(),
+            );
+
+            world.spawn((Wanderer(wanderer_id), ToSave, transform));
+        };
+
+        app.update();
+
+        {
+            let world = app.world_mut();
+            world.clear_entities();
+
+            // Look, we tried to load the wanderer twice!
+            world.send_event(RequestLoadWanderer(wanderer_id));
+            world.send_event(RequestLoadWanderer(wanderer_id));
+        }
+
+        app.update();
+
+        // The GlobalTransform component is required by Transform and should have been added
+        // automatically.
+        let mut wanderers = app
+            .world_mut()
+            .query_filtered::<(&Wanderer, &Transform), With<GlobalTransform>>();
+
+        let wanderers = wanderers.iter(app.world_mut()).collect::<Vec<_>>();
+
+        assert_eq!(wanderers, vec![(&Wanderer(wanderer_id), &transform)]);
     }
 }

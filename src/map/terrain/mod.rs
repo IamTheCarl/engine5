@@ -6,16 +6,24 @@ use std::{
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use super::storage::PersistantId;
+
 type VoxelID = NonZeroU16;
 pub type VoxelCoordinate = IVec3;
-type StructureID = NonZeroU64;
-
 type ChunkIndex = IVec3;
+type LocalVoxelCoordinate = UVec3;
 
 const CHUNK_BIT_SHIFT: u32 = 4;
 const CHUNK_DIAMETER: i32 = 1 << CHUNK_BIT_SHIFT as i32;
 const NUM_BLOCKS: usize =
     CHUNK_DIAMETER as usize * CHUNK_DIAMETER as usize * CHUNK_DIAMETER as usize;
+
+fn calculate_block_indexes(coordinate: VoxelCoordinate) -> (ChunkIndex, LocalVoxelCoordinate) {
+    let chunk_index: ChunkIndex = coordinate >> CHUNK_BIT_SHIFT;
+    let local_block_coordinate = coordinate.as_uvec3() & (!0u32 >> (32u32 - CHUNK_BIT_SHIFT));
+
+    (chunk_index, local_block_coordinate)
+}
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 pub struct TerrainPlugin;
@@ -71,6 +79,13 @@ impl TerrainAABB {
 
         key
     }
+
+    // pub fn intersected_chunks(&self) -> impl Iterator<Item = ChunkIndex> {
+    //     let (chunk_index_a, _local_voxel_coordinate) = calculate_block_indexes(self.a);
+    //     let (chunk_index_b, _local_voxel_coordinate) = calculate_block_indexes(self.b);
+
+    //     todo!()
+    // }
 }
 
 #[derive(Component, Reflect)]
@@ -79,26 +94,15 @@ pub struct Structure;
 
 #[derive(Component, Reflect)]
 pub struct StructureStorage {
-    /// Stores multi-block structures. Structures can be a single block, or
-    /// exceed the bounds of a chunk. The chunk that owns the structure is
-    /// determined by the A coordinate of the AABB.
-    structures: HashMap<TerrainAABB, StructureID>,
-}
-
-#[derive(Default, Resource)]
-pub struct StructureTracker {
-    structures: HashMap<StructureID, Entity>,
+    /// Stores references to multi-block structures.
+    structures: HashMap<TerrainAABB, PersistantId>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub enum UpdateOperation {
-    AddVoxels {
+    FillVoxels {
         space: TerrainAABB,
-        voxels: Vec<VoxelID>,
-    },
-    AddStructure {
-        space: TerrainAABB,
-        structure_id: StructureID,
+        voxel: Option<VoxelID>,
     },
 }
 
@@ -129,6 +133,37 @@ mod test {
                 0x00, 0x00, 0x00, 0x00, 0x11, 0x11, 0x11, 0x11, 0x22, 0x22, 0x22, 0x22, 0x33, 0x33,
                 0x33, 0x33, 0x44, 0x44, 0x44, 0x44, 0x55, 0x55, 0x55, 0x55
             ]
+        );
+    }
+
+    #[test]
+    fn block_index_calculation() {
+        let (chunk_index, local_block_coordinate) =
+            calculate_block_indexes(VoxelCoordinate::new(0, 0, 0));
+        assert_eq!(chunk_index, ChunkIndex::new(0, 0, 0));
+        assert_eq!(local_block_coordinate, LocalVoxelCoordinate::new(0, 0, 0));
+
+        let (chunk_index, local_block_coordinate) =
+            calculate_block_indexes(VoxelCoordinate::new(CHUNK_DIAMETER, 0, 0));
+        assert_eq!(chunk_index, ChunkIndex::new(1, 0, 0));
+        assert_eq!(local_block_coordinate, LocalVoxelCoordinate::new(0, 0, 0));
+
+        let (chunk_index, local_block_coordinate) =
+            calculate_block_indexes(VoxelCoordinate::new(-CHUNK_DIAMETER, 0, 0));
+        assert_eq!(chunk_index, ChunkIndex::new(-1, 0, 0));
+        assert_eq!(local_block_coordinate, LocalVoxelCoordinate::new(0, 0, 0));
+
+        let (chunk_index, local_block_coordinate) =
+            calculate_block_indexes(VoxelCoordinate::new(-CHUNK_DIAMETER + 1, 0, 0));
+        assert_eq!(chunk_index, ChunkIndex::new(-1, 0, 0));
+        assert_eq!(local_block_coordinate, LocalVoxelCoordinate::new(1, 0, 0));
+
+        let (chunk_index, local_block_coordinate) =
+            calculate_block_indexes(VoxelCoordinate::new(-CHUNK_DIAMETER - 1, 0, 0));
+        assert_eq!(chunk_index, ChunkIndex::new(-2, 0, 0));
+        assert_eq!(
+            local_block_coordinate,
+            LocalVoxelCoordinate::new(CHUNK_DIAMETER as u32 - 1, 0, 0)
         );
     }
 }

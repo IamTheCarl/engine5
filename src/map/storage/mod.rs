@@ -7,7 +7,7 @@ use persistant_entities::{
 mod persistant_entities;
 
 pub use persistant_entities::{
-    DeletePersistantEntities, GetPersistant, LoadResult, MapStorage, RequestLoad,
+    DeletePersistantEntities, GetPersistant, LoadResult, MapStorage, PersistantId, RequestLoad,
 };
 
 /// Plugin for handling storage of maps.

@@ -4,11 +4,11 @@ use bevy::{prelude::*, utils::HashSet};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
-use super::storage::PersistantId;
+pub use super::storage::PersistantId;
 
-type VoxelID = NonZeroU16;
+pub type VoxelID = NonZeroU16;
 pub type VoxelIndex = IVec3;
-type ChunkIndex = IVec3;
+pub type ChunkIndex = IVec3;
 type LocalVoxelIndex = UVec3;
 
 const CHUNK_BIT_SHIFT: u32 = 4;
@@ -47,9 +47,7 @@ pub struct VoxelStorage {
         CHUNK_DIAMETER as usize],
 }
 
-#[derive(
-    Component, Default, Clone, Debug, PartialEq, Eq, Hash, Reflect, Serialize, Deserialize,
-)]
+#[derive(Debug, Reflect, Serialize, Deserialize)]
 pub struct TerrainAABB {
     pub a: VoxelIndex,
     pub b: VoxelIndex,
@@ -79,13 +77,8 @@ impl TerrainAABB {
 }
 
 #[derive(Component, Reflect)]
-#[require(TerrainAABB)]
-pub struct Structure;
-
-#[derive(Component, Serialize, Deserialize)]
-pub struct StructureStorage {
-    /// Stores references to multi-block structures.
-    structures: HashSet<PersistantId>,
+pub struct Structure {
+    pub aabb: TerrainAABB,
 }
 
 #[derive(Serialize, Deserialize)]

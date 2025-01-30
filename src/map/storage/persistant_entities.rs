@@ -4,7 +4,6 @@ use serde::{de::DeserializeSeed, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     num::NonZeroU32,
-    path::Path,
 };
 
 use bevy::{
@@ -15,6 +14,8 @@ use bevy::{
         DynamicEntity,
     },
 };
+
+use super::MapStorage;
 
 /// Marks an entity as a persistant entity and attaches an ID to it.
 /// This ID is to be consistent between play sessions and multiplayer instances.
@@ -106,34 +107,6 @@ pub enum LoadStatus {
     OtherError,
 }
 
-/// Wrapper for the database used to store the map.
-#[derive(Resource)]
-pub struct MapStorage {
-    /// Metadata, such as "which persistant entities should be loaded when bootstrapping the world".
-    meta_storage: sled::Tree,
-
-    /// Storage for persistant entities.
-    persistant_entity_storage: sled::Tree,
-}
-
-impl MapStorage {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let database = sled::open(path).context("Failed to open database")?;
-
-        let meta_storage = database
-            .open_tree("metadata")
-            .context("Failed to open metadata tree")?;
-        let persistant_entity_storage = database
-            .open_tree("persistant_entities")
-            .context("Failed to open persistant entity tree")?;
-
-        Ok(Self {
-            meta_storage,
-            persistant_entity_storage,
-        })
-    }
-}
-
 /// Serializes and saves persistant entities.
 pub fn save_persistant_entities(
     world: &World,
@@ -143,7 +116,7 @@ pub fn save_persistant_entities(
     mut commands: Commands,
 ) {
     let type_registry = type_registry.read();
-    let tst = &map_storage.persistant_entity_storage;
+    let tst = &map_storage.persistant_entities;
 
     // TODO we should probably make a "serializable whitelist".
     for (entity, persistant) in persistant_entities.iter() {
@@ -187,7 +160,7 @@ pub fn load_persistant_entities(
     let mut dynamic_entities = Vec::new();
     {
         let type_registry = type_registry.read();
-        let tst = &map_storage.persistant_entity_storage;
+        let tst = &map_storage.persistant_entities;
         let mut already_loading = HashSet::new();
 
         for to_load in load_requests.read() {
@@ -304,7 +277,7 @@ pub fn delete_persistant_entities(
     map_storage: Res<MapStorage>,
     mut commands: Commands,
 ) {
-    let tst = &map_storage.persistant_entity_storage;
+    let tst = &map_storage.persistant_entities;
     for (entity, to_delete) in to_delete.iter() {
         let id = to_delete.0;
         let key = id.get().to_le_bytes();
@@ -513,7 +486,7 @@ mod test {
         let does_not_exist_in_database = app
             .world()
             .resource::<MapStorage>()
-            .persistant_entity_storage
+            .persistant_entities
             .get(persistant_id.get().to_le_bytes())
             .unwrap()
             .is_none();

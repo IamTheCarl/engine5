@@ -20,7 +20,7 @@ use super::MapStorage;
 /// Marks an entity as a persistant entity and attaches an ID to it.
 /// This ID is to be consistent between play sessions and multiplayer instances.
 #[derive(Component, Debug, Eq, PartialEq)]
-pub struct Persistant(PersistantId);
+pub struct Persistant(pub(super) PersistantId);
 
 /// Marks an entity as needing to be saved to the database.
 #[derive(Component)]

@@ -17,7 +17,7 @@ pub(super) fn calculate_block_indexes(coordinate: VoxelIndex) -> (ChunkIndex, Lo
     (chunk_index, local_block_coordinate)
 }
 
-#[derive(Component, Default, Reflect)]
+#[derive(Debug, Component, Default, Reflect, Eq, PartialEq)]
 pub struct ChunkPosition {
     pub index: ChunkIndex,
 }

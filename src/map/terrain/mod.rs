@@ -5,7 +5,7 @@ use std::{
     sync::atomic::{AtomicU32, Ordering},
 };
 
-use bevy::{ecs::removal_detection::RemovedComponentEntity, prelude::*};
+use bevy::prelude::*;
 use chunks::{calculate_block_indexes, ChunkPosition, VoxelStorage};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -50,7 +50,7 @@ impl Plugin for TerrainPlugin {
 pub type TerrainSpaceId = u16;
 pub type UpdateId = NonZeroU32;
 
-#[derive(Component, Reflect)]
+#[derive(Debug, Component, Reflect, Eq, PartialEq)]
 #[require(Transform, UpdateQueue)]
 pub struct TerrainSpace {
     id: TerrainSpaceId,
@@ -230,7 +230,7 @@ fn remove_chunk_from_space(
                 .expect("Terrain space was not being tracked");
 
             let old = terrain_space.chunks.remove(&chunk_index);
-            assert!(old.is_none(), "Terrain space was not tracking its chunk");
+            assert!(old.is_some(), "Terrain space was not tracking its chunk");
         }
     }
 }
@@ -269,12 +269,130 @@ mod test {
 
     use super::*;
 
-    // TODO test that chunks are added to the terrain space when spawned.
-    // TODO test that chunks are removed from the terrain space when despawned.
-    // TODO test what happens if the whole terrain space is removed. All the child chunks should
-    // also be removed and no error should happen if the child chunks fail to find the space on
-    // their removal. Those children should also be removed from the chunk tracker.
-    // TODO track terrain spaces.
+    #[test]
+    fn track_chunks() {
+        let mut app = App::new();
+        app.add_plugins((MapPlugin,));
+
+        let space_id = 12;
+        let chunk_index = ChunkIndex::new(1, 2, 3);
+
+        let space_entity = {
+            let world = app.world_mut();
+            world
+                .spawn(TerrainSpace {
+                    id: space_id,
+                    chunks: HashMap::new(),
+                })
+                .id()
+        };
+
+        let chunk_entity = {
+            let world = app.world_mut();
+
+            // We are manually spawning a chunk. This is not how it should normally be done.
+            world
+                .spawn(ChunkPosition { index: chunk_index })
+                .set_parent(space_entity)
+                .id()
+        };
+
+        app.update();
+
+        {
+            let world = app.world_mut();
+
+            let mut spaces = world.query::<&TerrainSpace>();
+            let spaces = spaces.iter(world).collect::<Vec<_>>();
+
+            assert_eq!(
+                spaces,
+                vec![&TerrainSpace {
+                    id: space_id,
+                    chunks: HashMap::from([(chunk_index, chunk_entity)])
+                }]
+            );
+
+            world.despawn(chunk_entity);
+        }
+
+        app.update();
+
+        {
+            let world = app.world_mut();
+
+            let mut spaces = world.query::<&TerrainSpace>();
+            let spaces = spaces.iter(world).collect::<Vec<_>>();
+
+            assert_eq!(
+                spaces,
+                vec![&TerrainSpace {
+                    id: space_id,
+                    chunks: HashMap::from([])
+                }]
+            );
+        }
+    }
+
+    #[test]
+    fn delete_space() {
+        let mut app = App::new();
+        app.add_plugins((MapPlugin,));
+
+        let space_id = 12;
+        let chunk_index = ChunkIndex::new(1, 2, 3);
+
+        let space_entity = {
+            let world = app.world_mut();
+            world
+                .spawn(TerrainSpace {
+                    id: space_id,
+                    chunks: HashMap::new(),
+                })
+                .id()
+        };
+
+        let chunk_entity = {
+            let world = app.world_mut();
+
+            // We are manually spawning a chunk. This is not how it should normally be done.
+            world
+                .spawn(ChunkPosition { index: chunk_index })
+                .set_parent(space_entity)
+                .id()
+        };
+
+        app.update();
+
+        {
+            let world = app.world_mut();
+
+            let mut spaces = world.query::<&TerrainSpace>();
+            let spaces = spaces.iter(world).collect::<Vec<_>>();
+
+            assert_eq!(
+                spaces,
+                vec![&TerrainSpace {
+                    id: space_id,
+                    chunks: HashMap::from([(chunk_index, chunk_entity)])
+                }]
+            );
+
+            world.commands().entity(space_entity).despawn_descendants();
+        }
+
+        app.update();
+
+        {
+            let world = app.world_mut();
+
+            let mut chunks = world.query::<&ChunkPosition>();
+            let chunks = chunks.iter(world).collect::<Vec<_>>();
+
+            // All chunks should have been despawned
+            assert!(chunks.is_empty());
+        }
+    }
 
     #[test]
     fn track_terrain_spaces() {

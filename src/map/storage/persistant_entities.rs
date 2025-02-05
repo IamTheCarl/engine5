@@ -288,6 +288,7 @@ pub fn delete_persistant_entities(
         }
 
         // We assume all child entities have already been despawned.
+        // FIXME we need a way to despawn desendants as well.
         commands.entity(entity).despawn();
     }
 }

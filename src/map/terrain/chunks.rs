@@ -10,7 +10,7 @@ const CHUNK_DIAMETER: i32 = 1 << CHUNK_BIT_SHIFT as i32;
 const NUM_BLOCKS: usize =
     CHUNK_DIAMETER as usize * CHUNK_DIAMETER as usize * CHUNK_DIAMETER as usize;
 
-pub fn calculate_block_indexes(coordinate: VoxelIndex) -> (ChunkIndex, LocalVoxelIndex) {
+pub(super) fn calculate_block_indexes(coordinate: VoxelIndex) -> (ChunkIndex, LocalVoxelIndex) {
     let chunk_index: ChunkIndex = coordinate >> CHUNK_BIT_SHIFT;
     let local_block_coordinate = coordinate.as_uvec3() & (!0u32 >> (32u32 - CHUNK_BIT_SHIFT));
 

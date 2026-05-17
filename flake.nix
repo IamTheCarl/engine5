@@ -1,0 +1,101 @@
+{
+  description = "Grid Locked voxel game";
+
+  inputs = {
+    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
+    flake-utils.url = "github:numtide/flake-utils";
+    crane.url = "github:ipetkov/crane";
+    fenix = {
+      url = "github:nix-community/fenix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
+
+  outputs =
+    {
+      nixpkgs,
+      flake-utils,
+      crane,
+      fenix,
+      ...
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
+      let
+        pkgs = import nixpkgs {
+          inherit system;
+        };
+        fenix-pkgs = fenix.packages.${system};
+        fenix-channel = fenix-pkgs.stable;
+        fenix-toolchain = fenix-channel.withComponents [
+          "cargo"
+          "clippy"
+          "rust-src"
+          "rustc"
+          "rustfmt"
+          "rust-analyzer"
+        ];
+        craneLib = (crane.mkLib pkgs).overrideScope (
+          final: prev: {
+            cargo = fenix-channel.cargo;
+            rustc = fenix-channel.rustc;
+          }
+        );
+
+        gui-dependencies = with pkgs; [
+          wayland
+          libxkbcommon
+          libX11
+          libXcursor
+          libXi
+          vulkan-loader
+          libGL
+          alsa-lib
+          udev
+        ];
+      in
+      {
+        packages.default =
+          with pkgs;
+          craneLib.buildPackage {
+            nativeBuildInputs = [
+              openssl
+              pkg-config
+            ];
+
+            buildInputs = [
+              openssl
+            ];
+
+            src = craneLib.cleanCargoSource ./.;
+            strictDeps = true;
+          };
+
+        devShells.default =
+          with pkgs;
+          pkgs.mkShell {
+            buildInputs = [
+              bashInteractive
+              fenix-toolchain
+              cargo-expand
+              openssl
+              pkg-config
+            ]
+            ++ gui-dependencies;
+
+            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath (
+              [
+                openssl
+              ]
+              ++ gui-dependencies
+            );
+
+            shellHook = ''
+              export SHELL=${pkgs.bashInteractive}/bin/bash
+              export NIX_HARDENING_ENABLE=""
+            '';
+          };
+
+      }
+    );
+}

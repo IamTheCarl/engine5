@@ -42,7 +42,7 @@ No test framework is configured. The only "tests" are the shell scripts above.
 
 ### Proc macros (`crates/proc_macros`)
 
-- `#[entity_serialization(type_id = N, marker = Foo)]` — generates `SpatialEntity` trait impl for entity archetypes. Supports `bootstrap`, `#[get = ...]`, and `#[query = ...]` field attributes.
+- `#[entity_serialization(type_id = N, marker = Foo)]` — generates `SpatialEntity` trait impl for entity archetypes. Supports `bootstrap`, `#[get = ...]`, and `#[query = ...]` field attributes. Also emits the Parameters struct as `pub`. Field-level extraction for compact binary storage in sled.
 - `#[ref_serializable]` — derives `Serialize`/`Deserialize` plus a `FooRef` variant with borrowed fields. Supports `#[owned_box]` and `#[borrowed_ref]` field attributes for zero-copy serialization of large data.
 
 ## Gotchas
@@ -54,3 +54,21 @@ No test framework is configured. The only "tests" are the shell scripts above.
 - **`src/logging.rs:43-45`** — the author left a note about tracing_subscriber difficulty; the `ConsoleSubscriber` layer is hand-written and not a complete implementation.
 - **Multiplayer channels**: entity updates are unreliable; terrain updates are reliable-ordered with 300ms resend.
 - **`exit_condition: DontExit`** — Bevy's default window-close exit is disabled; shutdown is handled via `GameState::ShuttingDown` → `AppExit`.
+- **`bevy_ui_navigation` has no Bevy 0.18 version** — all code is commented out as stubs. Navigation must be re-implemented manually.
+- **`bevy_console 0.17.1`** is used with Bevy 0.18. ConsoleCommand uses `.take()` pattern, `MessageWriter`/`MessageReader` instead of events.
+- **Bevy 0.18 API changes**: `States` derive (not `State`), `MessageWriter`/`MessageReader` (not `EventWriter`/`EventReader`), `add_message()` (not `add_events()`), `AppExit` is a `Message` not `Event`.
+- **Proc macro borrow-checker gotcha**: Never use `LocalDataSaver` (which mutably borrows `save_result`, `bytes`, etc.) and then call `serialize_fields_for_save()` — the borrow conflicts. Always call the serialize function first, collect bytes, then write to storage. See `crates/proc_macros/src/lib.rs`.
+
+## Debugging with `cargo expand`
+
+Use `cargo expand` to see what proc macros generate. This is essential for debugging proc macro issues:
+
+```bash
+# Expand all items in a binary crate
+cargo expand --bin engine5
+
+# Filter output for a specific type/system
+cargo expand --bin engine5 | grep -A 50 "save_system_for_entity_type"
+```
+
+The engine's `#[entity_serialization]` proc macro generates specialized save systems that query specific component tuples — expand to verify the generated query types and check for borrow-checker issues before they surface as cryptic errors.

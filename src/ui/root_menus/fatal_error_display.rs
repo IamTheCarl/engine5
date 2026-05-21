@@ -7,14 +7,15 @@ use crate::{
 };
 
 use bevy::prelude::*;
-use bevy_ui_navigation::{
-    prelude::{NavEvent, NavRequest},
-    NavRequestSystem,
-};
+// TODO: restore bevy_ui_navigation
+// use bevy_ui_navigation::{
+//     prelude::{NavEvent, NavRequest},
+//     NavRequestSystem,
+// };
 
 #[derive(Resource)]
 pub struct ErrorContext {
-    pub error: anyhow::Error,
+    pub error: String,
 }
 
 #[derive(Component)]
@@ -38,139 +39,120 @@ fn spawn(mut commands: Commands, error_context: Option<Res<ErrorContext>>) {
     let error_text = extract_error_context(&error_context);
     log::error!("Fatal Error: {:?}", error_text);
 
-    commands.spawn((Camera2dBundle::default(), FatalErrorDisplay));
+    commands.spawn((Camera2d::default(), FatalErrorDisplay));
 
     let menu_entity = commands
         .spawn((
-            NodeBundle {
-                style: Style {
-                    display: Display::Flex,
-                    width: Val::Percent(100.0),
-                    height: Val::Percent(100.0),
-                    align_items: AlignItems::Center,
-                    align_content: AlignContent::Center,
-                    justify_content: JustifyContent::Center,
-                    flex_direction: FlexDirection::Column,
-                    ..Default::default()
-                },
+            Node {
+                display: Display::Flex,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                align_items: AlignItems::Center,
+                align_content: AlignContent::Center,
+                justify_content: JustifyContent::Center,
+                flex_direction: FlexDirection::Column,
                 ..Default::default()
             },
             FatalErrorDisplay,
         ))
         .with_children(|commands| {
-            commands.spawn(TextBundle::from_section(
-                "Fatal Error",
-                TextStyle {
+            commands.spawn((
+                Text::new("Fatal Error"),
+                TextFont {
                     font_size: 60.0,
-                    color: Color::WHITE,
                     ..Default::default()
                 },
+                TextColor(Color::WHITE),
             ));
             commands
-                .spawn(NodeBundle {
-                    style: Style {
+                .spawn((
+                    Node {
                         display: Display::Flex,
                         flex_direction: FlexDirection::Column,
                         width: Val::Percent(60.0),
                         ..Default::default()
                     },
-                    background_color: Color::DARK_GRAY.into(),
-                    ..Default::default()
-                })
+                    BackgroundColor(Color::srgba(0.25, 0.25, 0.25, 1.0).into()),
+                ))
                 .with_children(|commands| {
-                    commands.spawn(TextBundle::from_section(
-                        "I'm sorry, but the game has crashed.",
-                        TextStyle {
+                    commands.spawn((
+                        Text::new("I'm sorry, but the game has crashed."),
+                        TextFont {
                             font_size: 30.0,
-                            color: Color::WHITE,
                             ..Default::default()
                         },
+                        TextColor(Color::WHITE),
                     ));
-                    commands.spawn(TextBundle::from_section(
-                        error_text,
-                        TextStyle {
+                    commands.spawn((
+                        Text::new(error_text),
+                        TextFont {
                             font_size: 20.0,
-                            color: Color::WHITE,
                             ..Default::default()
                         },
+                        TextColor(Color::WHITE),
                     ));
                 });
 
-            commands.spawn(NodeBundle {
-                style: Style {
-                    height: Val::Percent(20.0),
-                    ..Default::default()
-                },
+            commands.spawn(Node {
+                height: Val::Percent(20.0),
                 ..Default::default()
             });
         })
         .id();
 
-    spawn_button(&mut commands, "Quit", QuitButton).set_parent(menu_entity);
+    spawn_button(&mut commands, "Quit", QuitButton).insert(ChildOf(menu_entity));
     spawn_prioritized_button(&mut commands, "Copy error to Clipboard", CopyButton)
-        .set_parent(menu_entity);
+        .insert(ChildOf(menu_entity));
 }
 
 fn despawn(mut commands: Commands, main_menu: Query<Entity, With<FatalErrorDisplay>>) {
     for menu in main_menu.iter() {
-        if let Some(menu) = commands.get_entity(menu) {
-            menu.despawn_recursive();
-        }
+        commands.entity(menu).despawn();
     }
 }
 
-fn handle_selections(
-    mut events: EventReader<NavEvent>,
-    mut next_state: ResMut<NextState<GameState>>,
-    quit_buttons: Query<(), With<QuitButton>>,
-    copy_buttons: Query<(), With<CopyButton>>,
-    error_context: Option<Res<ErrorContext>>,
-    mut clipboard: Option<ResMut<Clipboard>>,
-) {
-    for event in events.iter() {
-        if let NavEvent::NoChanges { from, request } = event {
-            if matches!(request, NavRequest::Action) {
-                if quit_buttons.contains(*from.first()) {
-                    next_state.set(GameState::ShuttingDown);
-                }
-
-                if copy_buttons.contains(*from.first()) {
-                    // TODO we need some kind of on-screen conformation of this event.
-                    match clipboard.as_mut() {
-                        Some(clipboard) => {
-                            match clipboard.set_contents(extract_error_context(&error_context)) {
-                                Ok(()) => {
-                                    log::info!("Copied error message to clipboard.");
-
-                                    // Linux requires this, for some reason...
-                                    // https://github.com/alacritty/copypasta/issues/49
-                                    clipboard.get_contents().ok();
-                                }
-                                Err(error) => {
-                                    log::error!(
-                                        "Failed to copy error message to system clipboard: {:?}",
-                                        error
-                                    );
-                                }
-                            }
-                        }
-                        None => {
-                            log::error!("Clipboard was unavailable when trying to copy error message to it.");
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
+// TODO: restore bevy_ui_navigation event handler
+// fn handle_selections(
+//     mut events: EventReader<NavEvent>,
+//     mut next_state: ResMut<NextState<GameState>>,
+//     quit_buttons: Query<(), With<QuitButton>>,
+//     copy_buttons: Query<(), With<CopyButton>>,
+//     error_context: Option<Res<ErrorContext>>,
+//     mut clipboard: Option<ResMut<Clipboard>>,
+// ) {
+//     for event in events.iter() {
+//         if let NavEvent::NoChanges { from, request } = event {
+//             if matches!(request, NavRequest::Action) {
+//                 if quit_buttons.contains(*from.first()) {
+//                     next_state.set(GameState::ShuttingDown);
+//                 }
+//                 if copy_buttons.contains(*from.first()) {
+//                     match clipboard.as_mut() {
+//                         Some(clipboard) => {
+//                             match clipboard.set_contents(extract_error_context(&error_context)) {
+//                                 Ok(()) => {
+//                                     log::info!("Copied error message to clipboard.");
+//                                     clipboard.get_contents().ok();
+//                                 }
+//                                 Err(error) => {
+//                                     log::error!(
+//                                         "Failed to copy error message to system clipboard: {:?}",
+//                                         error
+//                                     );
+//                                 }
+//                             }
+//                         }
+//                         None => {
+//                             log::error!("Clipboard was unavailable when trying to copy error message to it.");
+//                         }
+//                     }
+//                 }
+//             }
+//         }
+//     }
+// }
 
 pub fn setup(app: &mut App) {
     app.add_systems(OnEnter(GameState::FatalError), spawn);
     app.add_systems(OnExit(GameState::FatalError), despawn);
-    app.add_systems(
-        Update,
-        handle_selections
-            .after(NavRequestSystem)
-            .run_if(in_state(GameState::FatalError)),
-    );
 }

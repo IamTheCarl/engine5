@@ -13,6 +13,7 @@ use crate::world::{
 };
 
 #[entity_serialization(type_id = 1, marker = GlobalTerrainEntity, bootstrap = BootstrapEntityInfo::GlobalTerrain)]
+#[derive(serde::Deserialize)]
 pub struct GlobalTerrainParameters {
     #[query = TerrainSpace]
     #[get = generator]
@@ -29,11 +30,10 @@ impl GlobalTerrainEntity {
         storage: &EntityStorage,
         generator: impl Into<WorldGeneratorEnum>,
     ) -> Result<()> {
-        let (storable, tree) =
-            storage.new_storable_component_with_tree::<GlobalTerrainEntity, _, _, _>()?;
+        let (storable, tree) = storage.new_storable_component_with_tree::<GlobalTerrainEntity>()?;
 
         let mut commands = commands.spawn(storable);
-        commands.set_parent(parent);
+        commands.insert(ChildOf(parent));
         Self::common_construction(
             GlobalTerrainParameters {
                 generator: generator.into(),
@@ -63,7 +63,7 @@ impl GlobalTerrainEntity {
                 transform: Transform::default(),
                 global_transform: GlobalTransform::default(),
                 visibility: Visibility::Inherited,
-                computed_visibility: ComputedVisibility::default(),
+                computed_visibility: InheritedVisibility::default(),
             },
             Velocity {
                 translation: Vec3::ZERO,
@@ -90,5 +90,5 @@ impl EntityConstruction<GlobalTerrainParameters> for GlobalTerrainEntity {
 }
 
 pub fn setup(app: &mut App) {
-    EntitySerializationManager::register::<GlobalTerrainEntity, _, _, _>(app);
+    EntitySerializationManager::register::<GlobalTerrainEntity>(app);
 }

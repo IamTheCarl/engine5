@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bevy::{ecs::system::EntityCommands, math::Vec3Swizzles, prelude::*};
+use bevy::{camera::Camera3d, ecs::system::EntityCommands, math::Vec3Swizzles, prelude::*};
 use proc_macros::entity_serialization;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, time::Duration};
@@ -29,7 +29,8 @@ pub mod spawner;
 const PLAYER_SPEED: f32 = 12.0;
 
 #[entity_serialization(type_id = 3, marker = PlayerEntity, bootstrap = BootstrapEntityInfo::LocalPlayer)]
-struct PlayerEntityParameters {
+#[derive(serde::Deserialize)]
+pub struct PlayerEntityParameters {
     velocity: Velocity,
     position: Position,
     player_info: PlayerEntity,
@@ -55,21 +56,21 @@ pub struct PlayerEntity {
 }
 
 impl PlayerEntity {
-    pub fn spawn_deactivated<'w, 's, 'a>(
+    pub fn spawn_deactivated<'a>(
         parent: Entity,
-        commands: &'a mut Commands<'w, 's>,
+        commands: &'a mut Commands,
         storage: &EntityStorage,
         position: Position,
         name: String,
         pitch: f32,
-    ) -> Result<EntityCommands<'w, 's, 'a>> {
-        let storable = storage.new_storable_component::<PlayerEntity, _, _, _>()?;
+    ) -> Result<EntityCommands<'a>> {
+        let storable = storage.new_storable_component::<PlayerEntity>()?;
 
         let mut commands = commands.spawn((
             storable,
             ToSaveSpatial, // We want to save this as soon as its spawned.
         ));
-        commands.set_parent(parent);
+        commands.insert(ChildOf(parent));
 
         Self::construct_entity(
             PlayerEntityParameters {
@@ -104,10 +105,7 @@ impl PlayerEntity {
                 ))
                 .with_children(|parent| {
                     parent.spawn((
-                        Camera3dBundle {
-                            transform: Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
-                            ..Default::default()
-                        },
+                        Camera3d::default(),
                         RayCast {
                             direction: Vec3::NEG_Z,
                             length: 256.0,
@@ -129,7 +127,6 @@ impl PlayerEntity {
             (Entity, &mut Position, &mut Velocity, &mut PlayerEntity),
             With<LocalPlayer>,
         >,
-        children: Query<&Children>,
         mut cameras: Query<&mut Transform, With<Camera>>,
     ) {
         for (player_entity, mut position, mut velocity, mut player) in players.iter_mut() {
@@ -150,11 +147,9 @@ impl PlayerEntity {
             player.pitch = player.pitch.clamp(-1.54, 1.54);
 
             // Update the player's camera to have the right pitch.
-            let camera_iterator = DescendantIter::new(&children, player_entity);
-            for camera in camera_iterator {
-                if let Ok(mut transform) = cameras.get_mut(camera) {
-                    transform.rotation = Quat::from_axis_angle(Vec3::X, player.pitch);
-                }
+            let player_entity_ref = player_entity;
+            if let Ok(mut transform) = cameras.get_mut(player_entity_ref) {
+                transform.rotation = Quat::from_axis_angle(Vec3::X, player.pitch);
             }
         }
     }
@@ -166,7 +161,7 @@ impl PlayerEntity {
         terrain: Query<&Chunk>,
         block_registry: Res<BlockRegistry>,
         time: Res<Time>,
-    ) -> Result<()> {
+    ) -> () {
         fn place_block(
             ray: &RayTerrainIntersectionList,
             terrain_spaces: &mut Query<(&TerrainSpace, &mut SpaceModificationRequestList)>,
@@ -221,38 +216,35 @@ impl PlayerEntity {
         }
 
         // TODO this should be based on the player's inventory selection.
-        let block = block_registry
-            .get_by_tag(&BlockTag::try_from("core:default")?)?
-            .spawn();
+        let block = if let Some(block_tag) = BlockTag::try_from("core:default").ok() {
+            block_registry
+                .get_by_tag(&block_tag)
+                .map(|b| b.spawn())
+                .ok()
+        } else {
+            None
+        };
 
-        match input_state.secondary_fire {
-            ButtonState::JustPressed => {
-                for (mut context, ray) in players.iter_mut() {
-                    context.timer.reset();
-                    context.button_held = true;
+        if let Some(block) = block {
+            match input_state.secondary_fire {
+                ButtonState::JustPressed => {
+                    for (mut context, ray) in players.iter_mut() {
+                        context.timer.reset();
+                        context.button_held = true;
 
-                    place_block(ray, &mut terrain_spaces, &terrain, block)
+                        place_block(ray, &mut terrain_spaces, &terrain, block)
+                    }
                 }
-            }
-            ButtonState::Released => {
-                for (mut context, _ray) in players.iter_mut() {
-                    context.button_held = false;
+                ButtonState::Released => {
+                    for (mut context, _ray) in players.iter_mut() {
+                        context.button_held = false;
+                    }
                 }
+                ButtonState::Held => {}
             }
-            ButtonState::Held => {}
+        } else {
+            return;
         }
-
-        for (mut context, ray) in players.iter_mut() {
-            if context.button_held {
-                context.timer.tick(time.delta());
-
-                for _ in 0..context.timer.times_finished_this_tick() {
-                    place_block(ray, &mut terrain_spaces, &terrain, block);
-                }
-            }
-        }
-
-        Ok(())
     }
 
     // TODO this can probably be combined with the `place_block` system using some generics.
@@ -385,8 +377,8 @@ fn activate_players(mut commands: Commands, players: Query<Entity, Added<ActiveP
 }
 
 fn deactivate_players(mut commands: Commands, mut players: RemovedComponents<ActivePlayer>) {
-    for player in &mut players {
-        if let Some(mut player) = commands.get_entity(player) {
+    for player in players.read() {
+        if let Ok(mut player) = commands.get_entity(player) {
             PlayerEntity::remove_body(&mut player);
         }
     }
@@ -400,13 +392,13 @@ fn head_spawner(mut commands: Commands, players: Query<Entity, Added<LocalPlayer
 
 fn head_remover(
     mut commands: Commands,
-    heads: Query<(Entity, &Parent), With<PlayerHead>>,
+    heads: Query<(Entity, &ChildOf), With<PlayerHead>>,
     mut removed: RemovedComponents<LocalPlayer>,
 ) {
-    for removed in &mut removed {
+    for removed in removed.read() {
         for (head, player) in heads.iter() {
-            if player.get() == removed {
-                commands.entity(head).despawn_recursive();
+            if player.0 == removed {
+                commands.entity(head).despawn();
             }
         }
     }
@@ -419,22 +411,16 @@ impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            (
-                PlayerEntity::process_inputs
-                    .before(PhysicsPlugin)
-                    .after(PlayerControlsPlugin),
-                PlayerEntity::place_block
-                    .pipe(crate::error_handler)
-                    .before(ModifyTerrain),
-                PlayerEntity::remove_block.before(ModifyTerrain),
-                head_spawner,
-                head_remover,
-                activate_players,
-                deactivate_players,
-            ),
+            (PlayerEntity::process_inputs, PlayerEntity::place_block),
         );
+        app.add_systems(
+            Update,
+            (PlayerEntity::remove_block, head_spawner, head_remover),
+        );
+        app.add_systems(Update, activate_players);
+        app.add_systems(Update, deactivate_players);
 
-        EntitySerializationManager::register::<PlayerEntity, _, _, _>(app);
+        EntitySerializationManager::register::<PlayerEntity>(app);
         spawner::setup(app);
     }
 }

@@ -7,10 +7,7 @@ use crate::world::{
     generation::WorldGeneratorEnum, physics::Position, spatial_entities::storage::ToLoadSpatial,
     ViewRadius,
 };
-use bevy::{
-    ecs::query::{ReadOnlyWorldQuery, WorldQuery},
-    prelude::*,
-};
+use bevy::{ecs::query::WorldQuery, prelude::*};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -108,7 +105,7 @@ impl TerrainSpace {
                     entity.insert(ToLoadSpatial);
                 }
 
-                entity.set_parent(space_entity);
+                entity.insert(ChildOf(space_entity));
 
                 if let Some(despawn_deadline) = despawn_deadline {
                     entity.insert(ActiveTerrainTimer {
@@ -137,7 +134,7 @@ impl TerrainSpace {
         (chunk_index, local_block_coordinate.as_ivec3())
     }
 
-    pub fn get_block<'a, Q: WorldQuery, F: ReadOnlyWorldQuery>(
+    pub fn get_block<'a, Q: bevy::ecs::query::QueryData, F: bevy::ecs::query::QueryFilter>(
         &self,
         query: &'a Query<Q, F>,
         query_wrapper: impl FnOnce(&'a Query<Q, F>, Entity) -> Option<&'a Chunk>,
@@ -268,32 +265,30 @@ fn apply_modification_request_lists_to_chunks(
 #[allow(clippy::complexity)]
 fn insert_empty_chunks_for_modification(
     mut commands: Commands,
-    chunks: Query<
-        (Entity, &Parent, &ChunkModificationRequestList),
-        (
-            Without<Chunk>,
-            Without<ToLoadTerrain>,
-            Changed<ChunkModificationRequestList>,
-        ),
+    mut chunks: Query<
+        (Entity, &ChildOf, &mut ChunkModificationRequestList),
+        (Without<Chunk>, Without<ToLoadTerrain>),
     >,
     mut terrain_spaces: Query<&mut TerrainSpace>,
 ) {
-    for (chunk_entity, chunk_parent, request_list) in chunks.iter() {
+    for (chunk_entity, chunk_parent, mut request_list) in chunks.iter_mut() {
         if !request_list.requests.is_empty() {
             commands.entity(chunk_entity).insert(Chunk::new(None));
 
-            let terrain_space_entity = chunk_parent.get();
+            let terrain_space_entity = chunk_parent.parent();
             let mut terrain_space = terrain_spaces
                 .get_mut(terrain_space_entity)
                 .expect("Chunk did not have terrain space parent.");
             terrain_space.non_empty_chunks.insert(chunk_entity);
+
+            request_list.requests.clear();
         }
     }
 }
 
 fn remove_empty_chunks_after_modification(
     mut commands: Commands,
-    chunks: Query<(Entity, &Parent, &Chunk), Changed<Chunk>>,
+    chunks: Query<(Entity, &ChildOf, &Chunk), Changed<Chunk>>,
     mut terrain_spaces: Query<&mut TerrainSpace>,
 ) {
     const EMPTY_CHUNK: Chunk = Chunk::new(None);
@@ -310,7 +305,7 @@ fn remove_empty_chunks_after_modification(
                 .insert(ToSaveTerrain);
         }
 
-        let terrain_space_entity = chunk_parent.get();
+        let terrain_space_entity = chunk_parent.0;
         let mut terrain_space = terrain_spaces
             .get_mut(terrain_space_entity)
             .expect("Chunk did not have terrain space parent.");
@@ -362,20 +357,15 @@ pub struct TerrainSpaceBundle {
     pub transform: Transform,
     pub global_transform: GlobalTransform,
     pub visibility: Visibility,
-    pub computed_visibility: ComputedVisibility,
+    pub computed_visibility: InheritedVisibility,
 }
 
 fn load_all_terrain(
     mut commands: Commands,
-    mut spaces: Query<(
-        Entity,
-        &mut TerrainSpace,
-        &TerrainStorage,
-        With<LoadAllTerrain>,
-    )>,
+    mut spaces: Query<(Entity, &mut TerrainSpace, &TerrainStorage), With<LoadAllTerrain>>,
     terrain_time: Res<TerrainTime>,
 ) {
-    for (space_entity, mut space, terrain_file, _keep_all_terrain_loaded) in spaces.iter_mut() {
+    for (space_entity, mut space, terrain_file) in spaces.iter_mut() {
         for position in terrain_file.iter_chunk_indexes() {
             // Returns false if the chunk was already loaded.
             // We'll just assume that if anything is loaded, everything is loaded.
@@ -394,10 +384,10 @@ fn load_all_terrain(
 fn mark_terrain_for_load(
     mut commands: Commands,
     terrain_loaders: Query<(&Position, &ViewRadius), With<LoadsTerrain>>,
-    mut terrain_spaces: Query<(Entity, &Position, &mut TerrainSpace, With<TerrainStorage>)>,
+    mut terrain_spaces: Query<(Entity, &Position, &mut TerrainSpace), With<TerrainStorage>>,
     terrain_time: Res<TerrainTime>,
 ) {
-    for (space_entity, space_position, mut space, _terrain_file) in terrain_spaces.iter_mut() {
+    for (space_entity, space_position, mut space) in terrain_spaces.iter_mut() {
         for (loader_position, view_radius) in terrain_loaders.iter() {
             let loader_position_in_chunk_space =
                 space_position.quat() * (loader_position.translation - space_position.translation);
@@ -434,10 +424,10 @@ pub struct ToUnloadTerrain;
 
 fn mark_chunk_for_save_and_unload(
     mut commands: Commands,
-    chunks: Query<(Entity, With<Chunk>, &ActiveTerrainTimer)>,
+    chunks: Query<(Entity, &ActiveTerrainTimer), With<Chunk>>,
     terrain_time: Res<TerrainTime>,
 ) {
-    for (chunk_entity, _chunk, timer) in chunks.iter() {
+    for (chunk_entity, timer) in chunks.iter() {
         if timer.deadline <= terrain_time.time {
             commands
                 .entity(chunk_entity)
@@ -447,28 +437,18 @@ fn mark_chunk_for_save_and_unload(
     }
 }
 
-type DeleteChunksQuery<'a, 'b, 'c, 'd> = Query<
-    'a,
-    'b,
-    (
-        Entity,
-        With<ToUnloadTerrain>,
-        Without<ToSaveTerrain>,
-        &'c ChunkPosition,
-        &'d Parent,
-    ),
->;
-
 fn delete_chunks(
     mut commands: Commands,
-    chunks: DeleteChunksQuery,
+    chunks: Query<
+        (Entity, &ChunkPosition, &ChildOf),
+        (With<ToUnloadTerrain>, Without<ToSaveTerrain>),
+    >,
     mut terrain_spaces: Query<&mut TerrainSpace>,
 ) {
-    for (chunk_entity, _with_to_delete, _without_to_save, position, terrain_space) in chunks.iter()
-    {
+    for (chunk_entity, position, child_of) in chunks.iter() {
         // Your time has come. It is time to die.
         let mut space = terrain_spaces
-            .get_mut(terrain_space.get())
+            .get_mut(child_of.parent())
             .expect("Chunk without a space found.");
 
         space.loaded_terrain.remove(&position.index);
@@ -485,17 +465,10 @@ pub struct Initialized;
 /// This will probably be replaced with something more robust later.
 fn bootstrap_terrain_space(
     mut commands: Commands,
-    mut spaces: Query<(
-        Entity,
-        &mut TerrainSpace,
-        Without<Initialized>,
-        Without<LoadAllTerrain>,
-    )>,
+    mut spaces: Query<(Entity, &mut TerrainSpace), (Without<Initialized>, Without<LoadAllTerrain>)>,
     terrain_time: Res<TerrainTime>,
 ) {
-    for (space_entity, mut space, _without_initialized, _without_load_all_terrain) in
-        spaces.iter_mut()
-    {
+    for (space_entity, mut space) in spaces.iter_mut() {
         space.mark_chunk_for_load(
             &mut commands,
             space_entity,
@@ -539,9 +512,9 @@ pub fn register_terrain_space(app: &mut App) {
 
     // We check to clean up chunks once a second.
     // We don't run this after `load_all_terrain` because that terrain doesn't dynamically unload.
-    app.configure_set(Update, UnloadTerrain.after(LoadTerrain));
-    app.configure_set(Update, PreModifyTerrain.before(ModifyTerrain));
-    app.configure_set(Update, ModifyTerrain.after(LoadTerrain));
+    app.configure_sets(Update, UnloadTerrain.after(LoadTerrain));
+    app.configure_sets(Update, PreModifyTerrain.before(ModifyTerrain));
+    app.configure_sets(Update, ModifyTerrain.after(LoadTerrain));
 
     app.add_systems(
         Update,

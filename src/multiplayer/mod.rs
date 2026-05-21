@@ -30,7 +30,7 @@ impl Plugin for MultiplayerPlugin {
     fn build(&self, app: &mut App) {
         // We run this before the save system set so that the save system will
         // know which entities need to be serialized.
-        app.configure_set(Update, MultiplayerPlugin.before(SaveSystemSet));
+        app.configure_sets(Update, MultiplayerPlugin.before(SaveSystemSet));
 
         // If we unload the world, we disconnect from the host or end our hosting session.
         app.add_systems(OnExit(GameState::InGame), |mut commands: Commands| {
@@ -38,8 +38,8 @@ impl Plugin for MultiplayerPlugin {
             commands.remove_resource::<ClientContext>();
         });
 
-        app.add_event::<PlayerConnect>();
-        app.add_event::<PlayerDisconnect>();
+        app.init_resource::<bevy::ecs::message::Messages<PlayerConnect>>();
+        app.init_resource::<bevy::ecs::message::Messages<PlayerDisconnect>>();
 
         HostContext::setup(app);
         ClientContext::setup(app);
@@ -114,15 +114,15 @@ fn connection_config() -> ConnectionConfig {
     }
 }
 
-#[derive(Debug, Event)]
+#[derive(bevy::ecs::message::Message, Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PlayerConnect {
-    client_id: u64,
-    name: String,
+    pub client_id: u64,
+    pub name: String,
 }
 
-#[derive(Debug, Event)]
+#[derive(bevy::ecs::message::Message, Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PlayerDisconnect {
-    client_id: u64,
+    pub client_id: u64,
 }
 
 #[ref_serializable]

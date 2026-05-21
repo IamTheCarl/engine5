@@ -1,7 +1,7 @@
 use std::{collections::HashMap, num::NonZeroUsize};
 
+use bevy::prelude::Gizmos;
 use bevy::prelude::*;
-use bevy_prototype_debug_lines::DebugLines;
 
 use super::{calculate_global_transform, DebugRenderSettings, Position, RayCast};
 use crate::world::terrain::{Chunk, ChunkPosition, GlobalBlockCoordinate, TerrainSpace};
@@ -35,11 +35,12 @@ pub fn check_for_intersections(
     mut rays: Query<(Entity, &RayCast, &mut RayTerrainIntersectionList)>,
     terrain_spaces: Query<(Entity, &TerrainSpace, &Position)>,
     terrain: Query<(&ChunkPosition, &Chunk)>,
-    transforms: Query<(Option<&Parent>, &Transform)>,
+    transforms: Query<(Option<&ChildOf>, &Transform)>,
     debug_render_settings: Res<DebugRenderSettings>,
-    mut lines: ResMut<DebugLines>,
+    mut gizmos: Gizmos,
 ) {
-    rays.for_each_mut(|(_entity, _ray, mut list)| list.contacts.clear());
+    rays.iter_mut()
+        .for_each(|(_entity, _ray, mut list)| list.contacts.clear());
 
     // Since a terrain space is a *much* bigger piece of memory, lets iterate through those less often than we iterate through rays.
     for (terrain_space_entity, terrain_space, terrain_position) in terrain_spaces.iter() {
@@ -48,7 +49,7 @@ pub fn check_for_intersections(
         for (ray_entity, ray, mut intersection_list) in rays.iter_mut() {
             let ray_transform = calculate_global_transform(ray_entity, |entity| {
                 let (parent, transform) = transforms.get(entity).expect("A parent didn't exist.");
-                (parent.map(|parent| parent.get()), transform)
+                (parent.map(|parent| parent.0), transform)
             });
 
             // Move ray into terrain space.
@@ -200,8 +201,8 @@ pub fn check_for_intersections(
 
                     if debug_render_settings.terrain_ray_casts {
                         draw_debug_cube(
-                            &mut lines,
-                            Color::DARK_GREEN,
+                            &mut gizmos,
+                            Color::srgba(0.0, 0.39, 0.0, 1.0),
                             terrain_position.translation
                                 + terrain_quat.inverse() * block_position.as_vec3(),
                         );
@@ -235,16 +236,16 @@ pub fn check_for_intersections(
 
                         if debug_render_settings.terrain_ray_casts {
                             draw_debug_cube(
-                                &mut lines,
-                                Color::CRIMSON,
+                                &mut gizmos,
+                                Color::srgba(0.86, 0.08, 0.24, 1.0),
                                 terrain_position.translation
                                     + terrain_quat.inverse() * block_position.as_vec3(),
                             );
                         }
                     } else if debug_render_settings.terrain_ray_casts {
                         draw_debug_cube(
-                            &mut lines,
-                            Color::BLUE,
+                            &mut gizmos,
+                            Color::srgba(0.0, 0.0, 1.0, 1.0),
                             terrain_position.translation
                                 + terrain_quat.inverse() * block_position.as_vec3(),
                         );
@@ -262,7 +263,7 @@ pub fn check_for_intersections(
 pub fn debug_render(
     rays: Query<&mut RayTerrainIntersectionList>,
     terrain_spaces: Query<&Position>,
-    mut lines: ResMut<DebugLines>,
+    mut gizmos: Gizmos,
 ) {
     for intersection_list in rays.iter() {
         for (terrain_space_entity, contacts) in intersection_list.contacts.iter() {
@@ -278,16 +279,15 @@ pub fn debug_render(
 
                     let color = match contact.intersection_type {
                         RayTerrainIntersectionType::Entry => {
-                            lines.line_colored(
+                            gizmos.line(
                                 point,
                                 point + inverse_terrain_quat * contact.normal.as_vec3() * 0.25,
-                                0.0,
-                                Color::GREEN,
+                                Color::srgba(0.0, 0.5, 0.0, 1.0),
                             );
-                            Color::GREEN
+                            Color::srgba(0.0, 0.5, 0.0, 1.0)
                         }
-                        RayTerrainIntersectionType::Tunneled => Color::ORANGE,
-                        RayTerrainIntersectionType::Exit => Color::RED,
+                        RayTerrainIntersectionType::Tunneled => Color::srgba(1.0, 0.5, 0.0, 1.0),
+                        RayTerrainIntersectionType::Exit => Color::srgba(1.0, 0.0, 0.0, 1.0),
                     };
 
                     let next_point = contact_iterator
@@ -297,49 +297,43 @@ pub fn debug_render(
                         })
                         .unwrap_or(point + Vec3::Y);
 
-                    lines.line_colored(point, next_point, 0.0, color);
+                    gizmos.line(point, next_point, color);
                 }
             }
         }
     }
 }
 
-fn draw_debug_cube(lines: &mut ResMut<DebugLines>, color: Color, position: Vec3) {
-    lines.line_colored(
+fn draw_debug_cube(gizmos: &mut Gizmos, color: Color, position: Vec3) {
+    gizmos.line(
         position + Vec3::new(0.0, 0.0, 0.0),
         position + Vec3::new(1.0, 0.0, 0.0),
-        0.0,
         color,
     );
-    lines.line_colored(
+    gizmos.line(
         position + Vec3::new(0.0, 0.0, 0.0),
         position + Vec3::new(0.0, 1.0, 0.0),
-        0.0,
         color,
     );
-    lines.line_colored(
+    gizmos.line(
         position + Vec3::new(0.0, 0.0, 0.0),
         position + Vec3::new(0.0, 0.0, 1.0),
-        0.0,
         color,
     );
 
-    lines.line_colored(
+    gizmos.line(
         position + Vec3::new(1.0, 1.0, 1.0),
         position + Vec3::new(0.0, 1.0, 1.0),
-        0.0,
         color,
     );
-    lines.line_colored(
+    gizmos.line(
         position + Vec3::new(1.0, 1.0, 1.0),
         position + Vec3::new(1.0, 0.0, 1.0),
-        0.0,
         color,
     );
-    lines.line_colored(
+    gizmos.line(
         position + Vec3::new(1.0, 1.0, 1.0),
         position + Vec3::new(1.0, 1.0, 0.0),
-        0.0,
         color,
     );
 }

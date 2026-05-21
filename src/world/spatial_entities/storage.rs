@@ -25,6 +25,19 @@ use crate::{
 
 use super::SpatialEntityTracker;
 
+fn has_entity_storage(es: Option<Res<EntityStorage>>) -> bool {
+    es.is_some()
+}
+fn has_host_context(hc: Option<Res<HostContext>>) -> bool {
+    hc.is_some()
+}
+fn has_world_entity(we: Option<Res<WorldEntity>>) -> bool {
+    we.is_some()
+}
+fn has_client_context(cc: Option<Res<ClientContext>>) -> bool {
+    cc.is_some()
+}
+
 const ENTITY_TREE_PREFIX: &[u8] = b"ENTITY-";
 
 #[derive(Component)]
@@ -111,7 +124,7 @@ impl EntityTracer {
 pub struct EntityStorage {
     database: sled::Db,
     spatial_hash_storage: sled::Tree,
-    spatial_entities_storage: sled::Tree,
+    pub spatial_entities_storage: sled::Tree,
 
     bootstrap_list: Mutex<BootstrapList>,
     bootstrap_complete: AtomicBool,
@@ -190,11 +203,9 @@ impl EntityStorage {
         Ok(())
     }
 
-    pub fn new_storable_component<E, Q, U, P>(&self) -> Result<Storable>
+    pub fn new_storable_component<E>(&self) -> Result<Storable>
     where
-        E: SpatialEntity<Q, U, P>,
-        Q: WorldQuery,
-        U: WorldQuery,
+        E: SpatialEntity,
     {
         // Start by getting a valid entity ID.
         let tracer_id = self
@@ -243,13 +254,11 @@ impl EntityStorage {
         Ok(Storable { id: tracer_id })
     }
 
-    pub fn new_storable_component_with_tree<E, Q, U, P>(&self) -> Result<(Storable, sled::Tree)>
+    pub fn new_storable_component_with_tree<E>(&self) -> Result<(Storable, sled::Tree)>
     where
-        E: SpatialEntity<Q, U, P>,
-        Q: WorldQuery,
-        U: WorldQuery,
+        E: SpatialEntity,
     {
-        let storable = self.new_storable_component::<E, Q, U, P>()?;
+        let storable = self.new_storable_component::<E>()?;
         let tree_name = tree_name_for_entity(storable.id);
 
         let tree = self
@@ -316,7 +325,7 @@ fn new_tracings(
 }
 
 fn clean_up_tracings(mut removed: RemovedComponents<Storable>, mut tracer: ResMut<EntityTracer>) {
-    for entity_id in removed.iter() {
+    for entity_id in removed.read() {
         if let Some(tracker_id) = tracer.entities_to_tracers.remove(&entity_id) {
             tracer.tracers_to_entities.remove(&tracker_id);
         } else {
@@ -491,7 +500,7 @@ impl DataLoader for RemoteDataLoader {
 }
 
 pub trait DataSaver {
-    fn save<S: Serialize>(self, entity: Entity, storable: &Storable, to_serialize: S);
+    fn save(self, entity: Entity, storable: &Storable, bytes: &[u8]);
 }
 
 pub struct LocalDataSaver<'a> {
@@ -502,9 +511,8 @@ pub struct LocalDataSaver<'a> {
 }
 
 impl<'a> DataSaver for LocalDataSaver<'a> {
-    fn save<S: Serialize>(self, entity: Entity, storable: &Storable, to_serialize: S) {
-        *self.result = ciborium::into_writer(&to_serialize, self.storage)
-            .context("Failed to serialize entity");
+    fn save(self, entity: Entity, storable: &Storable, bytes: &[u8]) {
+        self.storage.extend_from_slice(bytes);
         *self.tracer_id = storable.id;
         *self.entity = entity;
     }
@@ -518,9 +526,8 @@ pub struct RemoteDataSaver<'a> {
 }
 
 impl<'a> DataSaver for RemoteDataSaver<'a> {
-    fn save<S: Serialize>(self, entity: Entity, storable: &Storable, to_serialize: S) {
-        *self.result = bincode::serialize_into(self.storage, &to_serialize)
-            .context("Failed to serialize entity");
+    fn save(self, entity: Entity, storable: &Storable, bytes: &[u8]) {
+        self.storage.extend_from_slice(bytes);
         *self.tracer_id = storable.id;
         *self.entity = entity;
     }
@@ -528,16 +535,128 @@ impl<'a> DataSaver for RemoteDataSaver<'a> {
 
 pub type EntityTypeId = u32;
 
-pub trait SpatialEntity<Q: WorldQuery, U: WorldQuery, P>: EntityConstruction<P> {
+pub trait SpatialEntity {
     const TYPE_ID: EntityTypeId;
     const BOOTSTRAP: BootstrapEntityInfo = BootstrapEntityInfo::NonBootstrap;
+    type Parameters: for<'de> serde::Deserialize<'de> + 'static;
 
     fn load(data_loader: impl DataLoader, commands: &mut EntityCommands) -> Result<()>;
-    fn update(data_loader: impl DataLoader, query: <U as WorldQuery>::Item<'_>) -> Result<()>;
+    fn update(data_loader: impl DataLoader, commands: &mut EntityCommands) -> Result<()>;
     fn save(
-        query: <<Q as WorldQuery>::ReadOnly as WorldQuery>::Item<'_>,
+        entity: Entity,
+        storable: &Storable,
         data_saver: impl DataSaver,
+        serialize_data: impl FnOnce() -> Vec<u8>,
     );
+
+    fn save_data(
+        entity: Entity,
+        storable: &Storable,
+        serialize_data: impl FnOnce() -> Vec<u8>,
+    ) -> Vec<u8>;
+}
+
+fn save_system<E: SpatialEntity + Component>(
+    mut commands: Commands,
+    storage: Res<EntityStorage>,
+    query: Query<(Entity, &Storable), (With<E>, With<ToSaveSpatial>)>,
+) {
+    for (entity, storable) in query.iter() {
+        let mut bytes: Vec<u8> = Vec::new();
+        bytes.extend(E::TYPE_ID.to_le_bytes().iter());
+
+        let mut save_result = Err(anyhow::anyhow!("Entity was never saved."));
+        let mut tracer_id = 0;
+        let mut entity_id = Entity::PLACEHOLDER;
+
+        let data_saver = LocalDataSaver {
+            result: &mut save_result,
+            storage: &mut bytes,
+            tracer_id: &mut tracer_id,
+            entity: &mut entity_id,
+        };
+
+        E::save(entity, storable, data_saver, || {
+            let mut bytes = Vec::<u8>::new();
+            ciborium::into_writer(&(), &mut bytes).unwrap();
+            bytes
+        });
+        commands.entity(entity).remove::<ToSaveSpatial>();
+
+        if let Err(error) = save_result {
+            log::error!(
+                "Failed to serialize entity {} of type {}: {:?}",
+                tracer_id,
+                E::TYPE_ID,
+                error
+            );
+        }
+
+        if let Err(error) = storage
+            .spatial_entities_storage
+            .insert(tracer_id.to_be_bytes(), bytes)
+        {
+            log::error!(
+                "Failed to write entity {} of type {} to database: {:?}",
+                tracer_id,
+                E::TYPE_ID,
+                error
+            );
+        }
+    }
+}
+
+fn transmit_system<E: SpatialEntity + Component>(
+    mut commands: Commands,
+    mut host: ResMut<HostContext>,
+    to_transmit: Query<(Entity, &ToTransmitEntity), With<E>>,
+    entities: Query<(Entity, &Storable), With<ToTransmitEntity>>,
+) {
+    for (entity_to_transmit, target_clients) in to_transmit.iter() {
+        let (entity, storable) = entities
+            .get(entity_to_transmit)
+            .expect("Transmittable entity was missing necessary component(s).");
+
+        let message = EntityUpdate::serialize(|bytes| {
+            let mut save_result = Err(anyhow::anyhow!("Entity was never saved."));
+            let mut tracer_id = 0;
+
+            let mut entity_id = Entity::PLACEHOLDER;
+            let data_saver = RemoteDataSaver {
+                result: &mut save_result,
+                storage: bytes,
+                tracer_id: &mut tracer_id,
+                entity: &mut entity_id,
+            };
+
+            E::save(entity, storable, data_saver, || {
+                let mut bytes = Vec::new();
+                ciborium::into_writer(&(), &mut bytes).unwrap();
+                bytes
+            });
+
+            Ok((tracer_id, E::TYPE_ID))
+        });
+
+        match message {
+            Ok(message) => {
+                for client_id in target_clients.clients.iter() {
+                    host.server.send_message(
+                        *client_id,
+                        ServerChannels::UpdateEntity,
+                        message.clone(),
+                    );
+                }
+
+                commands
+                    .entity(entity_to_transmit)
+                    .remove::<ToTransmitEntity>();
+            }
+            Err(error) => {
+                log::error!("Failed to serialize entity for transmission: {:?}", error)
+            }
+        }
+    }
 }
 
 #[derive(Resource)]
@@ -555,126 +674,10 @@ pub struct EntitySerializationManager {
 }
 
 impl EntitySerializationManager {
-    pub fn register<E, Q, U, P: 'static>(app: &mut App)
-    where
-        E: SpatialEntity<Q, U, P> + Component + 'static,
-        Q: WorldQuery + 'static,
-        U: WorldQuery + 'static,
-    {
-        fn save_system<E, Q, U, P>(
-            mut commands: Commands,
-            storage: Res<EntityStorage>,
-            query: Query<Q, (With<E>, With<ToSaveSpatial>)>,
-        ) where
-            E: SpatialEntity<Q, U, P> + Component,
-            Q: WorldQuery,
-            U: WorldQuery,
-        {
-            for to_save in query.iter() {
-                let mut bytes: Vec<u8> = Vec::new();
-                bytes.extend(E::TYPE_ID.to_le_bytes().iter());
-
-                let mut save_result = Err(anyhow::anyhow!("Entity was never saved."));
-                let mut tracer_id = 0;
-                let mut entity = Entity::PLACEHOLDER;
-
-                let data_saver = LocalDataSaver {
-                    result: &mut save_result,
-                    storage: &mut bytes,
-                    tracer_id: &mut tracer_id,
-                    entity: &mut entity,
-                };
-
-                E::save(to_save, data_saver);
-                commands.entity(entity).remove::<ToSaveSpatial>();
-
-                if let Err(error) = save_result {
-                    log::error!(
-                        "Failed to serialize entity {} of type {}: {:?}",
-                        tracer_id,
-                        E::TYPE_ID,
-                        error
-                    );
-                }
-
-                if let Err(error) = storage
-                    .spatial_entities_storage
-                    .insert(tracer_id.to_be_bytes(), bytes)
-                {
-                    log::error!(
-                        "Failed to write entity {} of type {} to database: {:?}",
-                        tracer_id,
-                        E::TYPE_ID,
-                        error
-                    );
-                }
-            }
-        }
-
-        fn transmit_system<E, Q, U, P>(
-            mut commands: Commands,
-            mut host: ResMut<HostContext>,
-            to_transmit: Query<(Entity, &ToTransmitEntity), With<E>>,
-            entities: Query<Q, With<ToTransmitEntity>>,
-        ) where
-            E: SpatialEntity<Q, U, P> + Component,
-            Q: WorldQuery,
-            U: WorldQuery,
-        {
-            // TODO this could be made more efficient if we generated a "transmit" function that automatically
-            // includes the ToTransmitEntity component.
-            for (entity_to_transmit, target_clients) in to_transmit.iter() {
-                // First we need to serialize the entity.
-                let to_transmit = entities
-                    .get(entity_to_transmit)
-                    .expect("Transmittable entity was missing necessary component(s).");
-
-                let message = EntityUpdate::serialize(|bytes| {
-                    let mut save_result = Err(anyhow::anyhow!("Entity was never saved."));
-                    let mut tracer_id = 0;
-
-                    let mut entity = Entity::PLACEHOLDER;
-                    let data_saver = RemoteDataSaver {
-                        result: &mut save_result,
-                        storage: bytes,
-                        tracer_id: &mut tracer_id,
-                        entity: &mut entity,
-                    };
-
-                    E::save(to_transmit, data_saver);
-
-                    Ok((tracer_id, E::TYPE_ID))
-                });
-
-                match message {
-                    Ok(message) => {
-                        for client_id in target_clients.clients.iter() {
-                            host.server.send_message(
-                                *client_id,
-                                ServerChannels::UpdateEntity,
-                                message.clone(),
-                            );
-                        }
-
-                        commands
-                            .entity(entity_to_transmit)
-                            .remove::<ToTransmitEntity>();
-                    }
-                    Err(error) => {
-                        log::error!("Failed to serialize entity for transmission: {:?}", error)
-                    }
-                }
-            }
-        }
-
-        fn setup_deserialization<E, Q, U, P>(
-            mut serialization_manager: ResMut<EntitySerializationManager>,
-        ) where
-            E: SpatialEntity<Q, U, P>,
-            Q: WorldQuery,
-            U: WorldQuery,
-        {
-            let is_not_duplicate = serialization_manager
+    pub fn register<E: SpatialEntity + Component + 'static>(app: &mut App) {
+        let is_not_duplicate =
+            app.world_mut()
+                .resource_mut::<EntitySerializationManager>()
                 .entity_loaders
                 .insert(
                     E::TYPE_ID,
@@ -687,49 +690,33 @@ impl EntitySerializationManager {
                         };
 
                         let mut entity_commands = commands.spawn(Storable { id: tracer_id });
-                        entity_commands.set_parent(parent);
+                        entity_commands.insert(ChildOf(parent));
 
                         E::load(data_loader, &mut entity_commands)?;
 
                         Ok(())
                     },
                 )
-                .is_none();
-            assert!(is_not_duplicate, "Duplicate entity type ID detected.");
+                .is_some();
+        assert!(is_not_duplicate, "Duplicate entity type ID detected.");
 
-            serialization_manager.entity_receivers.insert(
-                E::TYPE_ID,
-                &|tracer_id, bytes, mut commands| {
-                    let data_loader = RemoteDataLoader {
-                        type_id: E::TYPE_ID,
-                        tracer_id,
-                        bytes,
-                    };
+        app.world_mut()
+            .resource_mut::<EntitySerializationManager>()
+            .entity_receivers
+            .insert(E::TYPE_ID, &|tracer_id, bytes, mut commands| {
+                let data_loader = RemoteDataLoader {
+                    type_id: E::TYPE_ID,
+                    tracer_id,
+                    bytes,
+                };
 
-                    E::load(data_loader, &mut commands)?;
+                E::load(data_loader, &mut commands)?;
 
-                    Ok(())
-                },
-            );
-        }
+                Ok(())
+            });
 
-        app.add_systems(
-            Update,
-            (
-                save_system::<E, Q, U, P>
-                    .run_if(resource_exists::<EntityStorage>())
-                    .in_set(SaveSystemSet),
-                transmit_system::<E, Q, U, P>
-                    .run_if(resource_exists::<HostContext>())
-                    .in_set(SaveSystemSet),
-            ),
-        );
-        app.add_systems(
-            Startup,
-            setup_deserialization::<E, Q, U, P>.in_set(SerializationSetup),
-        );
+        app.add_systems(Update, (save_system::<E>, transmit_system::<E>));
     }
-
     fn load_entity(
         &self,
         tracer_id: TracerId,
@@ -788,7 +775,7 @@ impl EntitySerializationManager {
                 commands.entity(*entity)
             } else {
                 let mut entity_commands = commands.spawn(Storable { id: tracer_id });
-                entity_commands.set_parent(parent);
+                entity_commands.insert(ChildOf(parent));
 
                 // We insert this into the entity tracer ourselves.
                 // We can't afford to wait until the system to add those does
@@ -927,33 +914,27 @@ fn setup(mut commands: Commands) {
 }
 
 pub(super) fn register_storage(app: &mut App) {
-    app.configure_set(PostUpdate, SaveSystemSet);
-    app.configure_set(Startup, SerializationSetup);
+    app.configure_sets(PostUpdate, SaveSystemSet);
+    app.configure_sets(Startup, SerializationSetup);
 
-    app.add_systems(
-        Startup,
-        (
-            setup.before(SerializationSetup),
-            apply_deferred.after(setup).before(SerializationSetup),
-        ),
-    );
+    app.add_systems(Startup, (setup.before(SerializationSetup), load_entities));
 
     app.add_systems(
         Update,
         (
-            new_tracings.run_if(resource_exists::<EntityStorage>()),
-            clean_up_tracings.run_if(resource_exists::<EntityStorage>()),
+            new_tracings.run_if(has_entity_storage),
+            clean_up_tracings.run_if(has_entity_storage),
             load_entities
-                .run_if(resource_exists::<EntityStorage>())
-                .run_if(resource_exists::<WorldEntity>()),
-            save_spatial_hashes.run_if(resource_exists::<EntityStorage>()),
-            save_bootstrap_entity_list.run_if(resource_exists::<EntityStorage>()),
+                .run_if(has_entity_storage)
+                .run_if(has_world_entity),
+            save_spatial_hashes.run_if(has_entity_storage),
+            save_bootstrap_entity_list.run_if(has_entity_storage),
             bootstrap_entities
-                .run_if(resource_exists::<EntityStorage>())
-                .run_if(resource_exists::<WorldEntity>()),
+                .run_if(has_entity_storage)
+                .run_if(has_world_entity),
             receive_entities
-                .run_if(resource_exists::<ClientContext>())
-                .run_if(resource_exists::<WorldEntity>()),
+                .run_if(has_client_context)
+                .run_if(has_world_entity),
         ),
     );
 

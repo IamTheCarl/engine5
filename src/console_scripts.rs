@@ -9,18 +9,17 @@ use bevy::prelude::*;
 use bevy_console::{ConsoleCommandEntered, ConsoleConfiguration};
 use shlex::Shlex;
 
-#[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 pub struct ConsoleScripts;
 
 impl Plugin for ConsoleScripts {
     fn build(&self, app: &mut App) {
-        app.add_event::<RequestScript>();
+        app.add_message::<RequestScript>();
         app.add_systems(Update, run_scripts);
         app.add_systems(Startup, request_startup_script);
     }
 }
 
-fn request_startup_script(mut script_requests: EventWriter<RequestScript>) {
+fn request_startup_script(mut script_requests: MessageWriter<RequestScript>) {
     let path = match std::env::var("ENGINE5_STARTUP_SCRIPT") {
         Ok(startup_script) => Some(PathBuf::from(&startup_script)),
         Err(error) => match error {
@@ -30,23 +29,23 @@ fn request_startup_script(mut script_requests: EventWriter<RequestScript>) {
     };
 
     if let Some(path) = path {
-        script_requests.send(RequestScript { path });
+        script_requests.write(RequestScript { path });
     } else {
         log::info!("No startup script specified.");
     }
 }
 
-#[derive(Event)]
+#[derive(Message, Default)]
 pub struct RequestScript {
     pub path: PathBuf,
 }
 
 fn run_scripts(
-    mut script_requests: EventReader<RequestScript>,
+    mut script_requests: MessageReader<RequestScript>,
     console_config: Res<ConsoleConfiguration>,
-    mut command_entered: EventWriter<ConsoleCommandEntered>,
+    mut command_entered: MessageWriter<ConsoleCommandEntered>,
 ) {
-    for request in script_requests.iter() {
+    for request in script_requests.read() {
         if let Err(error) = run_script(request, &console_config, &mut command_entered) {
             log::error!("Failed to run script {:?}: {:?}", request.path, error);
         }
@@ -56,7 +55,7 @@ fn run_scripts(
 fn run_script(
     request: &RequestScript,
     console_config: &ConsoleConfiguration,
-    command_entered: &mut EventWriter<ConsoleCommandEntered>,
+    command_entered: &mut MessageWriter<ConsoleCommandEntered>,
 ) -> Result<()> {
     let script = File::open(&request.path).context("Failed to open script file.")?;
     let script = BufReader::new(script);
@@ -68,10 +67,8 @@ fn run_script(
         let mut args = Shlex::new(&line).collect::<Vec<_>>();
         if !args.is_empty() {
             let command_name = args.remove(0);
-            let command = console_config.commands.get(command_name.as_str());
-
-            if command.is_some() {
-                command_entered.send(ConsoleCommandEntered { command_name, args });
+            if console_config.commands.contains_key(command_name.as_str()) {
+                command_entered.write(ConsoleCommandEntered { command_name, args });
             } else {
                 bail!("Unknown command on line {}.", line_index)
             }

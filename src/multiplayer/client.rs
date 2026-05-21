@@ -6,12 +6,9 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use bevy::prelude::*;
-use renet::{
-    transport::{
-        ClientAuthentication, NetcodeClientTransport, NetcodeDisconnectReason,
-        NETCODE_USER_DATA_BYTES,
-    },
-    ConnectionConfig, RenetClient,
+use renet::{ConnectionConfig, RenetClient};
+use renet_netcode::{
+    ClientAuthentication, NetcodeClientTransport, NetcodeDisconnectReason, NETCODE_USER_DATA_BYTES,
 };
 
 use crate::{
@@ -20,6 +17,10 @@ use crate::{
 };
 
 use super::{ClientHeader, EntityUpdate, MultiplayerPlugin};
+
+fn has_client_context(client: Option<Res<ClientContext>>) -> bool {
+    client.is_some()
+}
 
 #[derive(Resource)]
 pub struct ClientContext {
@@ -37,7 +38,7 @@ impl ClientContext {
         app.add_systems(
             PreUpdate,
             Self::update_client
-                .run_if(resource_exists::<Self>())
+                .run_if(has_client_context)
                 .in_set(MultiplayerPlugin),
         );
 
@@ -45,7 +46,7 @@ impl ClientContext {
             PostUpdate,
             Self::send_packets
                 .after(MultiplayerPlugin)
-                .run_if(resource_exists::<Self>()),
+                .run_if(has_client_context),
         );
     }
 

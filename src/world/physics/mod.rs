@@ -116,7 +116,10 @@ impl MeshCollection {
                 NotNan::new(cylinder.radius).expect("Cylinder radius was NaN"),
             ))
             .or_insert_with(|| {
-                let mut mesh = Mesh::new(PrimitiveTopology::LineList);
+                let mut mesh = Mesh::new(
+                    PrimitiveTopology::LineList,
+                    bevy::asset::RenderAssetUsages::default(),
+                );
                 let mut vertices = Vec::new();
 
                 const INDEXES: i32 = 16;
@@ -194,13 +197,19 @@ pub struct Cylinder {
     pub radius: f32,
 }
 
+#[derive(Component)]
+struct DebugMesh {
+    mesh: Handle<Mesh>,
+    material: Handle<StandardMaterial>,
+}
+
 fn add_debug_mesh_cylinders(
     mut commands: Commands,
     settings: Res<DebugRenderSettings>,
     mut meshes: ResMut<Assets<Mesh>>,
     debug_shader_material: Res<DebugShaderMaterial>,
     mut mesh_collections: ResMut<MeshCollection>,
-    cylinders: Query<(Entity, &Cylinder), Without<Handle<Mesh>>>,
+    cylinders: Query<(Entity, &Cylinder), Without<DebugMesh>>,
 ) {
     // TODO is there a way we can make a conditional run of this system instead of this?
     if settings.cylinders {
@@ -209,11 +218,13 @@ fn add_debug_mesh_cylinders(
         for (entity, cylinder) in cylinders.iter() {
             let mesh = mesh_collections.get_cylinder(&mut meshes, cylinder);
             commands.entity(entity).insert((
-                mesh,
-                material.clone(),
+                DebugMesh {
+                    mesh: mesh.clone(),
+                    material: material.clone(),
+                },
                 GlobalTransform::default(),
                 Visibility::default(),
-                ComputedVisibility::default(),
+                InheritedVisibility::default(),
             ));
         }
     }
@@ -222,20 +233,20 @@ fn add_debug_mesh_cylinders(
 fn disable_debug_mesh_cylinders(
     mut commands: Commands,
     settings: Res<DebugRenderSettings>,
-    cylinders: Query<Entity, (With<Cylinder>, With<Handle<Mesh>>)>,
+    cylinders: Query<Entity, (With<Cylinder>, With<DebugMesh>)>,
 ) {
     // FIXME this whole system is problematic. Entities can't have a cylender debug mesh *and* a normal mesh at the same time.
     if !settings.cylinders {
         for entity in cylinders.iter() {
-            commands.entity(entity).remove::<Handle<Mesh>>();
+            commands.entity(entity).remove::<DebugMesh>();
         }
     }
 }
 
 fn remove_debug_mesh_cylinders(mut commands: Commands, mut cylinders: RemovedComponents<Cylinder>) {
-    for cylinder in &mut cylinders {
-        if let Some(mut cylinder) = commands.get_entity(cylinder) {
-            cylinder.remove::<Handle<Mesh>>();
+    for cylinder in cylinders.read() {
+        if let Ok(mut cylinder) = commands.get_entity(cylinder) {
+            cylinder.remove::<DebugMesh>();
         }
     }
 }
@@ -244,8 +255,8 @@ fn update_movement(time: Res<Time>, mut entities: Query<(&mut Position, &Velocit
     // TODO Remove velocity from objects that are no longer moving?
 
     for (mut position, velocity) in entities.iter_mut() {
-        position.translation += velocity.translation * time.delta_seconds();
-        position.rotation += velocity.rotational * time.delta_seconds();
+        position.translation += velocity.translation * time.delta_secs();
+        position.rotation += velocity.rotational * time.delta_secs();
     }
 }
 
@@ -299,14 +310,17 @@ impl Plugin for PhysicsPlugin {
         app.add_systems(
             Startup,
             |mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>| {
-                let debug_shader_material = materials.add(Color::RED.into());
+                let debug_shader_material = materials.add(StandardMaterial {
+                    base_color: Color::srgba(1.0, 0.0, 0.0, 1.0),
+                    ..default()
+                });
                 commands.insert_resource(DebugShaderMaterial(debug_shader_material));
 
                 commands.insert_resource(MeshCollection::new());
             },
         );
 
-        app.configure_set(
+        app.configure_sets(
             Update,
             PhysicsPlugin
                 .after(LoadTerrain)
@@ -322,7 +336,7 @@ impl Plugin for PhysicsPlugin {
         app.add_systems(Update, update_movement.in_set(PhysicsPlugin));
 
         // TODO we should take advantage of the "Modified" tag so we only do collision checks on things that actually move.
-        app.configure_set(
+        app.configure_sets(
             Update,
             CollisionCheck.after(update_movement).in_set(PhysicsPlugin),
         );
@@ -335,7 +349,7 @@ impl Plugin for PhysicsPlugin {
             ),
         );
 
-        app.configure_set(
+        app.configure_sets(
             Update,
             PostCollisionCheck
                 .after(CollisionCheck)

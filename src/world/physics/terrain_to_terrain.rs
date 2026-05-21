@@ -1,5 +1,5 @@
+use bevy::prelude::Gizmos;
 use bevy::prelude::*;
-use bevy_prototype_debug_lines::DebugLines;
 
 use crate::world::terrain::{Chunk, ChunkPosition, TerrainSpace};
 
@@ -9,7 +9,7 @@ pub(super) fn check_for_intersections(
     mut terrain_space: Query<(&TerrainSpace, &mut Position)>,
     terrain: Query<(&ChunkPosition, &Chunk)>,
     debug_render_settings: Res<DebugRenderSettings>,
-    mut lines: ResMut<DebugLines>,
+    mut gizmos: Gizmos,
 ) {
     let mut iter = terrain_space.iter_combinations_mut();
 
@@ -66,11 +66,19 @@ pub(super) fn check_for_intersections(
                                 if debug_render_settings.terrain_terrain_checks {
                                     let point = (b_inverse_quat * block_a_in_b_space)
                                         + position_b.translation;
-                                    lines.line_colored(point, point + Vec3::Y, 0.0, Color::GREEN);
+                                    gizmos.line(
+                                        point,
+                                        point + Vec3::Y,
+                                        Color::srgba(0.0, 0.5, 0.0, 1.0),
+                                    );
 
                                     let point = (b_inverse_quat * block_b_position)
                                         + position_b.translation;
-                                    lines.line_colored(point, point + Vec3::Y, 0.0, Color::RED);
+                                    gizmos.line(
+                                        point,
+                                        point + Vec3::Y,
+                                        Color::srgba(1.0, 0.0, 0.0, 1.0),
+                                    );
                                 }
 
                                 // We have a collision. Let's figure out the normal of the collision.

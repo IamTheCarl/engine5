@@ -1,5 +1,5 @@
+use bevy::prelude::Gizmos;
 use bevy::{math::Vec3Swizzles, prelude::*};
-use bevy_prototype_debug_lines::DebugLines;
 
 use crate::world::{
     spatial_entities::SpatialHash,
@@ -9,23 +9,16 @@ use crate::world::{
 use super::{Cylinder, DebugRenderSettings, Position};
 
 pub(super) fn check_for_intersections(
-    mut cylinders: Query<(
-        &mut Position,
-        &Cylinder,
-        With<SpatialHash>,
-        Without<TerrainSpace>,
-    )>,
+    mut cylinders: Query<(&mut Position, &Cylinder), (With<SpatialHash>, Without<TerrainSpace>)>,
     terrain_space: Query<(&TerrainSpace, &Position)>,
     terrain: Query<(&ChunkPosition, &Chunk)>,
     debug_render_settings: Res<DebugRenderSettings>,
-    mut lines: ResMut<DebugLines>,
+    mut gizmos: Gizmos,
 ) {
     for (space, space_position) in terrain_space.iter() {
         let terrain_quat = space_position.quat();
 
-        for (mut cylinder_position, cylinder, _with_spatial_hash, _without_terrain_space) in
-            cylinders.iter_mut()
-        {
+        for (mut cylinder_position, cylinder) in cylinders.iter_mut() {
             let scan_x_radius = cylinder.radius.ceil() as i8 + 1;
             let z_range_squared = ((scan_x_radius) as f32).powi(2);
 
@@ -43,12 +36,8 @@ pub(super) fn check_for_intersections(
                     let closest_point =
                         localized_cylinder_position.clamp(block_index, block_index + Vec3::ONE);
 
-                    let terrain_color = Color::Hsla {
-                        hue: space_position.rotation.to_degrees(),
-                        saturation: 1.0,
-                        lightness: 0.5,
-                        alpha: 1.0,
-                    };
+                    let terrain_color =
+                        Color::hsla(space_position.rotation.to_degrees(), 1.0, 0.5, 1.0);
 
                     let collision_normal = localized_cylinder_position - closest_point;
 
@@ -57,7 +46,7 @@ pub(super) fn check_for_intersections(
                             + space_position.translation;
                         let collision_normal = space_position.inverse_quat() * collision_normal;
 
-                        lines.line_colored(point, point + collision_normal, 0.0, terrain_color);
+                        gizmos.line(point, point + collision_normal, terrain_color);
                     }
 
                     // Okay actually make it 2D now.
@@ -128,12 +117,12 @@ pub(super) fn check_for_intersections(
                                     let color = if local_y_collision_depth.abs()
                                         < collision_xz_normal.length()
                                     {
-                                        Color::PURPLE
+                                        Color::srgba(0.5, 0.0, 0.5, 1.0)
                                     } else {
-                                        Color::CYAN
+                                        Color::srgba(0.0, 1.0, 1.0, 1.0)
                                     };
 
-                                    lines.line_colored(
+                                    gizmos.line(
                                         point,
                                         point
                                             + Vec3::new(
@@ -141,7 +130,6 @@ pub(super) fn check_for_intersections(
                                                 local_y_collision_depth,
                                                 collision_xz_normal.y,
                                             ),
-                                        0.0,
                                         color,
                                     );
 
@@ -149,9 +137,9 @@ pub(super) fn check_for_intersections(
                                         * (block_index.as_vec3() + Vec3::new(0.5, 0.0, 0.5)))
                                         + space_position.translation;
 
-                                    lines.line_colored(point, point + Vec3::Y, 0.0, color);
+                                    gizmos.line(point, point + Vec3::Y, color);
 
-                                    lines.line_colored(
+                                    gizmos.line(
                                         point,
                                         point
                                             + space_position.inverse_quat()
@@ -160,15 +148,14 @@ pub(super) fn check_for_intersections(
                                                     block_side_direction.y as f32,
                                                     block_side_direction.z as f32,
                                                 ),
-                                        0.0,
-                                        Color::PINK,
+                                        Color::srgba(1.0, 0.75, 0.8, 1.0),
                                     );
 
                                     let point = (space_position.inverse_quat()
                                         * (block_index.as_vec3() + Vec3::new(0.5, 0.5, 0.5)))
                                         + space_position.translation;
 
-                                    lines.line_colored(
+                                    gizmos.line(
                                         point,
                                         point
                                             + space_position.inverse_quat()
@@ -177,8 +164,7 @@ pub(super) fn check_for_intersections(
                                                     local_y_collision_depth.signum(),
                                                     0.0,
                                                 ),
-                                        0.0,
-                                        Color::CRIMSON,
+                                        Color::srgba(0.86, 0.08, 0.24, 1.0),
                                     );
                                 }
 

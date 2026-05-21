@@ -15,6 +15,7 @@ use crate::world::{
 };
 
 #[entity_serialization(type_id = 2, marker = DynamicTerrainEntity)]
+#[derive(serde::Deserialize)]
 pub struct DynamicTerrainParameters {
     #[query = TerrainSpace]
     #[get = generator]
@@ -36,7 +37,7 @@ impl DynamicTerrainEntity {
         velocity: Velocity,
     ) -> Result<()> {
         let (storable, tree) =
-            storage.new_storable_component_with_tree::<DynamicTerrainEntity, _, _, _>()?;
+            storage.new_storable_component_with_tree::<DynamicTerrainEntity>()?;
 
         Self::spawn_internal(
             parent,
@@ -72,11 +73,11 @@ impl DynamicTerrainEntity {
                     transform: Transform::default(),
                     global_transform: GlobalTransform::default(),
                     visibility: Visibility::Inherited,
-                    computed_visibility: ComputedVisibility::default(),
+                    computed_visibility: InheritedVisibility::default(),
                 },
                 parameters.velocity,
             ))
-            .set_parent(parent);
+            .insert(ChildOf(parent));
     }
 
     fn common_construction(
@@ -114,5 +115,5 @@ impl EntityConstruction<DynamicTerrainParameters> for DynamicTerrainEntity {
 }
 
 pub fn setup(app: &mut App) {
-    EntitySerializationManager::register::<DynamicTerrainEntity, _, _, _>(app);
+    EntitySerializationManager::register::<DynamicTerrainEntity>(app);
 }

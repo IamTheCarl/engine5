@@ -45,41 +45,39 @@ pub fn entity_serialization(attribute_input: TokenStream, input: TokenStream) ->
     };
 
     let input = parse_macro_input!(input as DeriveInput);
+    let input_ident = input.ident.clone();
 
-    let fields = match input.data {
-        syn::Data::Struct(data) => match data.fields {
-            Fields::Named(fields) => fields.named,
+    // Clone input before we move input.data
+    let input_data = input.data.clone();
+    let input_fields = match input_data {
+        syn::Data::Struct(ref data) => match &data.fields {
+            Fields::Named(fields) => fields.named.clone(),
             _ => panic!("Struct must have named fields."),
         },
-        _ => {
-            panic!("Entity serialization can only be done with a strut.");
-        }
+        _ => panic!("Entity serialization can only be done with a strut."),
     };
 
-    let deserialize_struct_name = &input.ident;
-
-    let field_iter = fields.iter().map(|field| {
-        let ident = &field.ident;
-        let ty = &field.ty;
-
-        quote! {
-            #ident: #ty
+    // First, parse field configs from original fields (before stripping)
+   let (fields, field_configs): (Punctuated<Field, Token![,]>, Vec<FieldConfig>) = {
+        let mut cloned = input_fields.clone();
+        let configs: Vec<FieldConfig> = input_fields.iter().map(|f| parse_field_attributes(&f.attrs)).collect();
+        for field in cloned.iter_mut() {
+            field.attrs.retain(|attr| {
+                !attr.path().is_ident("query") && !attr.path().is_ident("get")
+            });
         }
-    });
-    let deserialize_struct = quote! {
-        #[derive(serde::Deserialize)]
-        struct #deserialize_struct_name {
-            #(#field_iter),*
-        }
+        (cloned, configs)
     };
+
+    let deserialize_struct_name = input_ident.clone();
 
     let serialize_struct_name = Ident::new(
-        &format!("{}Serialize", input.ident.to_string()),
+        &format!("{}Serialize", input_ident.to_string()),
         Span::call_site(),
     );
 
     // We need to convert these into references, unless we're supposed to own them.
-    let field_iter = fields.iter().map(|field| {
+    let _field_iter = fields.iter().map(|field| {
         let ident = &field.ident;
         let ty = &field.ty;
 
@@ -88,132 +86,287 @@ pub fn entity_serialization(attribute_input: TokenStream, input: TokenStream) ->
         }
     });
 
+   // Collect all iterator-based fields into owned Vecs to avoid borrow conflicts
+    let serialize_field_tokens: Vec<_> = fields.iter().map(|field| {
+        let ident = &field.ident;
+        let ty = &field.ty;
+        quote! { #ident: &'a #ty }
+    }).collect();
+
     #[rustfmt::skip]
     let serialize_struct = quote! {
         #[derive(serde::Serialize)]
         struct #serialize_struct_name <'a> {
-            #(#field_iter),*
+            #(#serialize_field_tokens),*
         }
     };
 
-    let parameter_names = fields.iter().map(|field| &field.ident).collect::<Vec<_>>();
-    let parameter_access = fields.iter().map(|field| {
+    let parameter_names: Vec<_> = fields.iter().map(|field| &field.ident).collect();
+
+    // Allow custom attributes #[query] and #[get] that are only used by this proc macro
+    let allow_unused_attrs: proc_macro2::TokenStream = quote! {
+        #[allow(unused_attributes)]
+    };
+
+    // Fields for update - the types that update_data accepts
+    let update_param_types: Vec<_> = fields.iter().map(|field| {
+        let ty = &field.ty;
+        quote! { #ty }
+    }).collect();
+
+    let _update_param_names = fields.iter().map(|field| &field.ident).collect::<Vec<_>>();
+
+    let _update_query_types: Vec<_> = fields.iter().map(|field| {
         let config = parse_field_attributes(&field.attrs);
-
-        let parameter_name = &field.ident;
-
-        if let Some(get) = config.get {
-            quote! { #parameter_name: &#parameter_name.#get }
+        if let Some(query_type) = config.query_type {
+            quote! { &#query_type }
         } else {
-            quote! { #parameter_name }
+            let ty = &field.ty;
+            quote! { &#ty }
         }
-    });
-    let save_query_types = fields
-        .iter()
-        .map(|field| {
-            let config = parse_field_attributes(&field.attrs);
-            if let Some(query_type) = config.query_type {
+    }).collect();
+
+    let _update_param_refs: Vec<_> = fields.iter().map(|field| {
+        let param_name = &field.ident;
+        quote! { &#param_name }
+    }).collect();
+
+    let update_actions: Vec<_> = fields.iter().map(|field| {
+        let config = parse_field_attributes(&field.attrs);
+        let parameter_name = &field.ident;
+        if let Some(get) = config.get {
+            quote! { #parameter_name.#get = parameters.#parameter_name; }
+        } else {
+            quote! { *#parameter_name = parameters.#parameter_name; }
+        }
+    }).collect();
+
+    let query_param_names: Vec<_> = fields.iter()
+        .filter_map(|field| field.ident.as_ref())
+        .collect();
+
+    // Query destructuring includes entity, storable, then component fields
+    let mut query_destructure_names: Vec<proc_macro2::TokenStream> =
+        vec![quote! { entity }, quote! { storable }];
+    for name in &query_param_names {
+        query_destructure_names.push(quote! { #name });
+    }
+
+    let query_param_types_with_ref: Vec<_> = fields.iter()
+        .zip(field_configs.iter())
+        .map(|(field, config)| {
+            if let Some(query_type) = &config.query_type {
                 quote! { &#query_type }
             } else {
                 let ty = &field.ty;
                 quote! { &#ty }
             }
         })
-        .collect::<Vec<_>>();
+        .collect();
 
-    let update_query = fields
-        .iter()
-        .map(|field| {
-            let config = parse_field_attributes(&field.attrs);
-            if let Some(query_type) = config.query_type {
-                quote! { &mut #query_type }
+    let _query_param_refs: Vec<_> = fields.iter().map(|field| {
+        let param_name = &field.ident;
+        quote! { &#param_name }
+    }).collect();
+
+    let serialize_param_access: Vec<_> = fields.iter()
+        .zip(field_configs.iter())
+        .map(|(field, config)| {
+            let parameter_name = &field.ident;
+            if let Some(get) = &config.get {
+                quote! { &#parameter_name.#get }
             } else {
-                let ty = &field.ty;
-                quote! { &mut #ty }
+                quote! { #parameter_name }
             }
         })
-        .collect::<Vec<_>>();
+        .collect();
 
-    let update_query_types = fields
-        .iter()
-        .map(|field| {
-            let config = parse_field_attributes(&field.attrs);
-            if let Some(query_type) = config.query_type {
-                quote! { bevy::prelude::Mut<'_, #query_type> }
-            } else {
-                let ty = &field.ty;
-                quote! { bevy::prelude::Mut<'_, #ty> }
+    // Owned Vec for serialize_call_args to avoid borrow issues
+    let _serialize_call_args: Vec<_> = fields.iter().map(|field| {
+        let param_name = &field.ident;
+        quote! { #param_name }
+    }).collect();
+
+    let serialize_fields_fn = quote! {
+        impl #tag {
+            pub fn serialize_fields_for_save(
+                #(#query_param_names: #query_param_types_with_ref),*
+            ) -> Vec<u8> {
+                let serialized_data = #serialize_struct_name {
+                    #(#query_param_names: #serialize_param_access),*
+                };
+                let mut bytes = Vec::<u8>::new();
+                ciborium::into_writer(&serialized_data, &mut bytes).unwrap();
+                bytes
             }
-        })
-        .collect::<Vec<_>>();
-
-    let update_actions = fields.iter().map(|field| {
-        let config = parse_field_attributes(&field.attrs);
-
-        let parameter_name = &field.ident;
-
-        if let Some(get) = config.get {
-            quote! { #parameter_name.#get = parameters.#parameter_name; }
-        } else {
-            quote! { *#parameter_name = parameters.#parameter_name; }
         }
+    };
+
+    let update_fields_fn = quote! {
+        pub fn update_fields(
+            data_loader: impl crate::world::spatial_entities::storage::DataLoader,
+            #(#parameter_names: &mut #update_param_types),*
+        ) -> Result<()> {
+            let parameters =
+                data_loader.load::<#deserialize_struct_name>()?;
+            #(#update_actions)*
+            Ok(())
+        }
+    };
+
+    // Generate query tuple types for the specialized save system (always references)
+    let save_query_field_types: Vec<syn::Type> = fields
+        .iter()
+        .zip(field_configs.iter())
+        .map(|(field, config)| {
+            if let Some(query_type) = &config.query_type {
+                syn::parse_quote!(&#query_type)
+            } else {
+                let ty: &syn::Type = &field.ty;
+                let ty_str = quote!(&#ty).to_string();
+                syn::parse_str(&ty_str).expect("Failed to parse field type")
+            }
+        })
+        .collect();
+
+    // Build query types: Entity, &Storable, then each component type
+    let mut query_types = Vec::new();
+    query_types.extend([
+        syn::parse_quote!(bevy::prelude::Entity),
+        syn::parse_quote!(&crate::world::spatial_entities::storage::Storable),
+    ]);
+    for qt in save_query_field_types {
+        query_types.push(qt);
+    }
+
+    // Build query parameter names
+    let mut query_param_names_list = Vec::new();
+    query_param_names_list.extend([
+        quote! { entity },
+        quote! { storable },
+    ]);
+    query_param_names_list.extend(query_param_names.iter().map(|n| quote! { #n }));
+
+    // Build serialize_fields call arguments
+    let serialize_call_args = fields.iter().map(|field| {
+        let param_name = &field.ident;
+        quote! { #param_name }
     });
-    // dbg!(&save_query_types, &update_query, &update_query_types);
+
+    let specialized_save_system = quote! {
+        pub fn save_system_for_entity_type(
+            mut commands: bevy::prelude::Commands,
+            storage: bevy::prelude::Res<crate::world::spatial_entities::storage::EntityStorage>,
+            query: bevy::prelude::Query<
+                (#(#query_types),*),
+                (bevy::ecs::query::With<#tag>, bevy::ecs::query::With<crate::world::spatial_entities::storage::ToSaveSpatial>)
+            >,
+        ) {
+            for (#(#query_destructure_names),*) in query.iter() {
+                let serialized_payload = #tag::serialize_fields_for_save(#(#serialize_call_args),*);
+                let mut bytes: Vec<u8> = Vec::new();
+                bytes.extend(<#tag as crate::world::spatial_entities::storage::SpatialEntity>::TYPE_ID.to_le_bytes().iter());
+                bytes.extend(&serialized_payload);
+
+                let tracer_id = storable.id();
+                if let Err(error) = storage
+                    .spatial_entities_storage
+                    .insert(tracer_id.to_be_bytes(), bytes)
+                {
+                    log::error!(
+                        "Failed to write entity of type {} to database: {:?}",
+                        <#tag as crate::world::spatial_entities::storage::SpatialEntity>::TYPE_ID,
+                        error
+                    );
+                }
+
+                commands.entity(entity).remove::<crate::world::spatial_entities::storage::ToSaveSpatial>();
+            }
+        }
+
+        pub fn register_save_system(app: &mut bevy::app::App) {
+            app.add_systems(
+                bevy::app::Update,
+                save_system_for_entity_type,
+            );
+        }
+    };
 
     #[rustfmt::skip]
     let spatial_entity_impl = quote! {
-        impl crate::world::spatial_entities::storage::SpatialEntity<
-	    (bevy::prelude::Entity, &crate::world::spatial_entities::storage::Storable, #(#save_query_types),*),
-	(#(#update_query),*),
-	#deserialize_struct_name> for #tag {
+        impl crate::world::spatial_entities::storage::SpatialEntity for #tag {
             const TYPE_ID: crate::world::spatial_entities::storage::EntityTypeId = #type_id;
-	    #bootstrap_info
-	    
+            type Parameters = #deserialize_struct_name;
+            #bootstrap_info
+            
             fn load(data_loader: impl crate::world::spatial_entities::storage::DataLoader, entity_commands: &mut bevy::ecs::system::EntityCommands) -> Result<()> {
-		if Self::REQUEST_TREE {
-		    let (parameters, tree) =  
-			data_loader.load_with_tree::<#deserialize_struct_name>()?;
-		    
-		    if let Some(tree) = tree {
-			Self::construct_entity_with_tree(parameters, entity_commands, tree);
-		    } else {
-			Self::construct_entity(parameters, entity_commands);
-		    }
-		} else {
-		    let parameters =
-			data_loader.load::<#deserialize_struct_name>()?;
-		    
-		    Self::construct_entity(parameters, entity_commands);
-		}
+                if <Self as crate::world::spatial_entities::storage::EntityConstruction<Self::Parameters>>::REQUEST_TREE {
+                    let (parameters, tree) =  
+                        data_loader.load_with_tree::<#deserialize_struct_name>()?;
+                    
+                    if let Some(tree) = tree {
+                        <Self as crate::world::spatial_entities::storage::EntityConstruction<Self::Parameters>>::construct_entity_with_tree(parameters, entity_commands, tree);
+                    } else {
+                        <Self as crate::world::spatial_entities::storage::EntityConstruction<Self::Parameters>>::construct_entity(parameters, entity_commands);
+                    }
+                } else {
+                    let parameters =
+                        data_loader.load::<#deserialize_struct_name>()?;
+                    
+                    <Self as crate::world::spatial_entities::storage::EntityConstruction<Self::Parameters>>::construct_entity(parameters, entity_commands);
+                }
 
-		Ok(())
+                Ok(())
             }
-	    
-            fn update(data_loader: impl crate::world::spatial_entities::storage::DataLoader, (#(mut #parameter_names),*): (#(#update_query_types),*)) -> Result<()> {
-		let parameters =
-		    data_loader.load::<#deserialize_struct_name>()?;
-
-		#(#update_actions)*
-		
-		Ok(())
-	    }
-	    
-            fn save((entity, storable, #(#parameter_names),*): (bevy::prelude::Entity, &crate::world::spatial_entities::storage::Storable, #(#save_query_types),*), data_saver: impl crate::world::spatial_entities::storage::DataSaver) {
-		#serialize_struct
-
-		data_saver.save(
-                    entity,
-                    storable,
-                    &#serialize_struct_name { #(#parameter_access),* },
-		);
+            
+            fn update(data_loader: impl crate::world::spatial_entities::storage::DataLoader, commands: &mut bevy::ecs::system::EntityCommands) -> Result<()> {
+                let _ = (data_loader, commands);
+                Ok(())
             }
-	}
+            
+            fn save(
+                entity: bevy::prelude::Entity,
+                storable: &crate::world::spatial_entities::storage::Storable,
+                data_saver: impl crate::world::spatial_entities::storage::DataSaver,
+                serialize_data: impl FnOnce() -> Vec<u8>,
+            ) {
+                let bytes = serialize_data();
+                data_saver.save(entity, storable, &bytes);
+            }
+
+            fn save_data(
+                entity: bevy::prelude::Entity,
+                storable: &crate::world::spatial_entities::storage::Storable,
+                serialize_data: impl FnOnce() -> Vec<u8>,
+            ) -> Vec<u8> {
+                serialize_data()
+            }
+        }
+    };
+
+    // Generate struct definition from field names and types - pass through the struct
+    let struct_fields: Vec<_> = fields.iter().map(|field| {
+        let ident = &field.ident;
+        let ty = &field.ty;
+        quote! { #ident: #ty }
+    }).collect();
+    let passthrough_struct: proc_macro2::TokenStream = quote! {
+        #[allow(unused_attributes)]
+        #[derive(serde::Deserialize)]
+        pub struct #input_ident {
+            #(#struct_fields),*
+        }
     };
 
     #[rustfmt::skip]
     let result = TokenStream::from(quote! {
-	#deserialize_struct
-	#spatial_entity_impl
+        #allow_unused_attrs
+        #passthrough_struct
+        #spatial_entity_impl
+        #serialize_fields_fn
+        #update_fields_fn
+        #serialize_struct
+        #specialized_save_system
     });
 
     result
@@ -339,7 +492,7 @@ fn modify_field(
 }
 
 fn make_into_reference(ty: &mut Type) {
-    // We need a filler to hold the space. We'll ust set it to "never".
+    // We need a filler to hold the space. We'll just set it to "never".
     let mut original_ty = Type::Never(TypeNever {
         bang_token: Token![!](Span::call_site()),
     });
@@ -358,7 +511,7 @@ fn make_into_reference(ty: &mut Type) {
 }
 
 fn make_into_box(ty: &mut Type) {
-    // We need a filler to hold the space. We'll ust set it to "never".
+    // We need a filler to hold the space. We'll just set it to "never".
     let mut original_ty = Type::Never(TypeNever {
         bang_token: Token![!](Span::call_site()),
     });

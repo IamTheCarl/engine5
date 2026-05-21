@@ -1,12 +1,14 @@
 use bevy::prelude::*;
-use bevy_ui_navigation::menu::{MenuBuilder, MenuSetting, NavMarker};
+// TODO: restore bevy_ui_navigation
+// use bevy_ui_navigation::menu::{MenuBuilder, MenuSetting, NavMarker};
 
 use crate::{
     config::graphics::GraphicsConfig,
     ui::widgets::{spawn_button, BackButton},
 };
 
-use super::setup_submenu;
+// TODO: restore bevy_ui_navigation
+// use super::setup_submenu;
 
 mod controls;
 mod graphics;
@@ -26,59 +28,48 @@ struct ControlsButton;
 pub fn spawn(commands: &mut Commands, parent: Entity, graphics_config: &GraphicsConfig) {
     let menu_entity = commands
         .spawn((
-            NodeBundle {
-                style: Style {
-                    display: Display::None,
-                    width: Val::Percent(100.0),
-                    height: Val::Percent(100.0),
-                    align_items: AlignItems::Center,
-                    align_content: AlignContent::Center,
-                    justify_content: JustifyContent::Center,
-                    flex_direction: FlexDirection::Column,
-                    ..Default::default()
-                },
+            Node {
+                display: Display::None,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                align_items: AlignItems::Center,
+                align_content: AlignContent::Center,
+                justify_content: JustifyContent::Center,
+                flex_direction: FlexDirection::Column,
                 ..Default::default()
             },
-            MenuSetting::new(),
-            MenuBuilder::EntityParent(parent),
             SettingsMenu,
-            NavMarker(SettingsMenuMarker),
         ))
         .with_children(|commands| {
-            commands.spawn(TextBundle::from_section(
-                "Settings",
-                TextStyle {
+            commands.spawn((
+                Text::new("Settings"),
+                TextFont {
                     font_size: 60.0,
-                    color: Color::WHITE,
                     ..Default::default()
                 },
+                TextColor(Color::WHITE),
             ));
-            commands.spawn(NodeBundle {
-                style: Style {
-                    height: Val::Percent(20.0),
-                    ..Default::default()
-                },
+            commands.spawn(Node {
+                height: Val::Percent(20.0),
                 ..Default::default()
             });
         })
         .id();
 
     let graphics_button_entity = spawn_button(commands, "Graphics", GraphicsButton)
-        .set_parent(menu_entity)
+        .insert(ChildOf(menu_entity))
         .id();
     let controls_button_entity = spawn_button(commands, "Controls", ControlsButton)
-        .set_parent(menu_entity)
+        .insert(ChildOf(menu_entity))
         .id();
 
-    spawn_button(commands, "Back", BackButton).set_parent(menu_entity);
+    spawn_button(commands, "Back", BackButton).insert(ChildOf(menu_entity));
 
     graphics::spawn(commands, graphics_button_entity, graphics_config);
     controls::spawn(commands, controls_button_entity);
 }
 
 pub fn setup(app: &mut App) {
-    setup_submenu::<SettingsMenu, SettingsMenuMarker>(app);
-
     graphics::setup(app);
     controls::setup(app);
 }

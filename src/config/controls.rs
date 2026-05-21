@@ -1,13 +1,12 @@
 use bevy::{
-    input::mouse,
+    input::mouse::AccumulatedMouseMotion,
     prelude::*,
-    utils::HashSet,
     window::{CursorGrabMode, PrimaryWindow},
 };
 use bevy_console::ConsoleOpen;
-use bevy_ui_navigation::{systems::InputMapping, NavRequestSystem};
 use ordered_float::NotNan;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 use super::{Config, LoadConfigSet};
 use crate::{world::WorldState, GameState};
@@ -16,7 +15,7 @@ use crate::{world::WorldState, GameState};
 pub enum RealButton {
     Key { key_code: KeyCode },
     MouseButton { mouse_button: MouseButton },
-    GamePad { gamepad_button: GamepadButtonType },
+    GamePad { gamepad_button: GamepadButton },
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
@@ -32,7 +31,7 @@ pub enum RealAnalogInput {
         scale: NotNan<f32>,
     },
     GamePad {
-        axis: GamepadAxisType,
+        axis: GamepadAxis,
         scale: NotNan<f32>,
     },
 }
@@ -93,19 +92,19 @@ impl Default for InputMap {
                 x: HashSet::from([
                     AnalogInput::Button {
                         button: RealButton::Key {
-                            key_code: KeyCode::D,
+                            key_code: KeyCode::KeyD,
                         },
                         scale: NotNan::new(1.0).unwrap(),
                     },
                     AnalogInput::Button {
                         button: RealButton::Key {
-                            key_code: KeyCode::A,
+                            key_code: KeyCode::KeyA,
                         },
                         scale: NotNan::new(-1.0).unwrap(),
                     },
                     AnalogInput::RealAnalogInput {
                         analog_input: RealAnalogInput::GamePad {
-                            axis: GamepadAxisType::LeftStickX,
+                            axis: GamepadAxis::LeftStickX,
                             scale: NotNan::new(1.0).unwrap(),
                         },
                     },
@@ -113,19 +112,19 @@ impl Default for InputMap {
                 y: HashSet::from([
                     AnalogInput::Button {
                         button: RealButton::Key {
-                            key_code: KeyCode::W,
+                            key_code: KeyCode::KeyW,
                         },
                         scale: NotNan::new(-1.0).unwrap(),
                     },
                     AnalogInput::Button {
                         button: RealButton::Key {
-                            key_code: KeyCode::S,
+                            key_code: KeyCode::KeyS,
                         },
                         scale: NotNan::new(1.0).unwrap(),
                     },
                     AnalogInput::RealAnalogInput {
                         analog_input: RealAnalogInput::GamePad {
-                            axis: GamepadAxisType::LeftStickY,
+                            axis: GamepadAxis::LeftStickY,
                             scale: NotNan::new(-1.0).unwrap(),
                         },
                     },
@@ -141,7 +140,7 @@ impl Default for InputMap {
                     },
                     AnalogInput::RealAnalogInput {
                         analog_input: RealAnalogInput::GamePad {
-                            axis: GamepadAxisType::RightStickX,
+                            axis: GamepadAxis::RightStickX,
                             scale: NotNan::new(-1.0).unwrap(),
                         },
                     },
@@ -155,7 +154,7 @@ impl Default for InputMap {
                     },
                     AnalogInput::RealAnalogInput {
                         analog_input: RealAnalogInput::GamePad {
-                            axis: GamepadAxisType::RightStickY,
+                            axis: GamepadAxis::RightStickY,
                             scale: NotNan::new(1.0).unwrap(),
                         },
                     },
@@ -169,7 +168,7 @@ impl Default for InputMap {
                 },
                 Button::RealButton {
                     button: RealButton::GamePad {
-                        gamepad_button: GamepadButtonType::RightThumb,
+                        gamepad_button: GamepadButton::RightThumb,
                     },
                 },
             ]),
@@ -181,7 +180,7 @@ impl Default for InputMap {
                 },
                 Button::RealButton {
                     button: RealButton::GamePad {
-                        gamepad_button: GamepadButtonType::LeftThumb,
+                        gamepad_button: GamepadButton::LeftThumb,
                     },
                 },
             ]),
@@ -193,14 +192,14 @@ impl Default for InputMap {
                 },
                 Button::AnalogSimulatedButton {
                     analog: RealAnalogInput::GamePad {
-                        axis: GamepadAxisType::RightZ,
+                        axis: GamepadAxis::RightZ,
                         scale: NotNan::new(1.0).unwrap(),
                     },
                     trigger_point: NotNan::new(0.5).unwrap(),
                 },
                 Button::RealButton {
                     button: RealButton::GamePad {
-                        gamepad_button: GamepadButtonType::RightTrigger2,
+                        gamepad_button: GamepadButton::RightTrigger,
                     },
                 },
             ]),
@@ -212,14 +211,14 @@ impl Default for InputMap {
                 },
                 Button::AnalogSimulatedButton {
                     analog: RealAnalogInput::GamePad {
-                        axis: GamepadAxisType::LeftZ,
+                        axis: GamepadAxis::LeftZ,
                         scale: NotNan::new(1.0).unwrap(),
                     },
                     trigger_point: NotNan::new(0.5).unwrap(),
                 },
                 Button::RealButton {
                     button: RealButton::GamePad {
-                        gamepad_button: GamepadButtonType::LeftTrigger2,
+                        gamepad_button: GamepadButton::LeftTrigger,
                     },
                 },
             ]),
@@ -239,10 +238,8 @@ impl IsPressed for RealButton {
             RealButton::GamePad { gamepad_button } => {
                 let mut pressed = false;
 
-                for gamepad in frame.gamepads.iter() {
-                    pressed |= frame
-                        .gamepad_status
-                        .pressed(GamepadButton::new(gamepad, *gamepad_button));
+                for gamepad in frame.gamepad_entities.iter() {
+                    pressed |= gamepad.pressed(*gamepad_button);
                 }
 
                 pressed
@@ -290,17 +287,13 @@ impl ReadAxis for RealAnalogInput {
                 MouseAxis::X => frame.mouse_movement.x * scale.into_inner(),
                 MouseAxis::Y => frame.mouse_movement.y * scale.into_inner(),
             },
-            RealAnalogInput::GamePad { axis, scale } => {
+            RealAnalogInput::GamePad {
+                axis: axis_type,
+                scale,
+            } => {
                 let mut reading = 0.0;
-                for gamepad in frame.gamepads.iter() {
-                    reading += frame
-                        .gamepad_axes
-                        .get(GamepadAxis {
-                            gamepad,
-                            axis_type: *axis,
-                        })
-                        .unwrap_or(0.0)
-                        * scale.into_inner();
+                for gamepad in frame.gamepad_entities {
+                    reading += gamepad.get(*axis_type).unwrap_or(0.0) * scale.into_inner();
                 }
 
                 reading * frame.time_delta
@@ -369,59 +362,56 @@ pub struct InputState {
     pub secondary_fire: ButtonState,
 }
 
-fn initial_grab_cursor(mut windows: Query<&mut Window, With<PrimaryWindow>>) {
-    if let Ok(mut window) = windows.get_single_mut() {
-        window.cursor.grab_mode = CursorGrabMode::Confined;
-        window.cursor.visible = false;
+fn initial_grab_cursor(mut cursors: Query<&mut bevy::window::CursorOptions, With<PrimaryWindow>>) {
+    if let Ok(mut cursor) = cursors.single_mut() {
+        cursor.grab_mode = CursorGrabMode::Confined;
+        cursor.visible = false;
     }
 }
 
-fn release_cursor(mut windows: Query<&mut Window, With<PrimaryWindow>>) {
-    if let Ok(mut window) = windows.get_single_mut() {
-        window.cursor.grab_mode = CursorGrabMode::None;
-        window.cursor.visible = true;
+fn release_cursor(mut cursors: Query<&mut bevy::window::CursorOptions, With<PrimaryWindow>>) {
+    if let Ok(mut cursor) = cursors.single_mut() {
+        cursor.grab_mode = CursorGrabMode::None;
+        cursor.visible = true;
     }
 }
 
 #[derive(Clone, Copy)]
 struct InputFrame<'a> {
     time_delta: f32,
-    gamepads: &'a Gamepads,
+    gamepad_entities: &'a Vec<&'a Gamepad>,
     mouse_movement: Vec2,
     gamepad_axes: &'a Axis<GamepadAxis>,
-    keyboard_status: &'a Input<KeyCode>,
-    mouse_status: &'a Input<MouseButton>,
-    gamepad_status: &'a Input<GamepadButton>,
+    keyboard_status: &'a ButtonInput<KeyCode>,
+    mouse_status: &'a ButtonInput<MouseButton>,
 }
 
 #[allow(clippy::too_many_arguments)]
 fn update_inputs(
     time: Res<Time>,
-    mut mouse_movement_input_events: EventReader<mouse::MouseMotion>,
+    mouse_movement: Res<AccumulatedMouseMotion>,
     gamepad_axes: Res<Axis<GamepadAxis>>,
-    keyboard_status: Res<Input<KeyCode>>,
-    mouse_status: Res<Input<MouseButton>>,
-    gamepad_status: Res<Input<GamepadButton>>,
-    windows: Query<&Window, With<PrimaryWindow>>,
-    gamepads: Res<Gamepads>,
+    keyboard_status: Res<ButtonInput<KeyCode>>,
+    mouse_status: Res<ButtonInput<MouseButton>>,
+    gamepad_status: Res<ButtonInput<GamepadButton>>,
+    windows: Query<(&Window, &bevy::window::CursorOptions), With<PrimaryWindow>>,
+    gamepads: Query<&Gamepad>,
     input_map: Res<InputMap>,
     mut input_state: ResMut<InputState>,
 ) {
-    let mouse_movement = if let Ok(window) = windows.get_single() {
+    let mouse_movement_input = if let Ok((window, cursor_options)) = windows.single() {
         let mut mouse_movement = Vec2::ZERO;
-        match window.cursor.grab_mode {
-            CursorGrabMode::Locked | CursorGrabMode::Confined => {
-                for event in mouse_movement_input_events.iter() {
-                    let window_scale = window.height().min(window.width());
+        match cursor_options.grab_mode {
+            bevy::window::CursorGrabMode::Locked | bevy::window::CursorGrabMode::Confined => {
+                let window_scale = window.resolution.scale_factor();
 
-                    mouse_movement += Vec2::new(
-                        (-event.delta.x * window_scale).to_radians(),
-                        (-event.delta.y * window_scale).to_radians(),
-                    ) * time.delta().as_secs_f32()
-                        * 100.0;
-                }
+                mouse_movement += Vec2::new(
+                    -mouse_movement.x * window_scale,
+                    -mouse_movement.y * window_scale,
+                ) * time.delta().as_secs_f32()
+                    * 100.0;
             }
-            CursorGrabMode::None => {}
+            bevy::window::CursorGrabMode::None => {}
         }
 
         mouse_movement
@@ -429,14 +419,15 @@ fn update_inputs(
         Vec2::ZERO
     };
 
+    let gamepad_entities: Vec<&Gamepad> = gamepads.iter().collect();
+
     let frame = InputFrame {
         time_delta: 1.0, // Horizontal movement automatically has the time delta applied to it by the physics engine.
-        gamepads: &gamepads,
-        mouse_movement,
+        gamepad_entities: &gamepad_entities,
+        mouse_movement: mouse_movement_input,
         gamepad_axes: &gamepad_axes,
         keyboard_status: &keyboard_status,
         mouse_status: &mouse_status,
-        gamepad_status: &gamepad_status,
     };
 
     let horizontal_movement = input_map.horizontal_movement.read(frame);
@@ -446,13 +437,12 @@ fn update_inputs(
     input_state.horizontal_movement = direction * norm.min(1.0);
 
     let frame = InputFrame {
-        time_delta: time.delta_seconds(),
-        gamepads: &gamepads,
-        mouse_movement,
+        time_delta: time.delta_secs(),
+        gamepad_entities: &gamepad_entities,
+        mouse_movement: mouse_movement_input,
         gamepad_axes: &gamepad_axes,
         keyboard_status: &keyboard_status,
         mouse_status: &mouse_status,
-        gamepad_status: &gamepad_status,
     };
 
     input_state.look_movement = input_map.look_movement.read(frame);
@@ -487,55 +477,14 @@ fn update_inputs(
     );
 }
 
-fn detect_gamepads(mut ui_input_mapping: ResMut<InputMapping>, gamepads: Res<Gamepads>) {
+fn detect_gamepads(_gamepads: Query<&Gamepad>) {
     // I want to accept input from all controllers because my computer is weird and makes
     // controller 0 the LED driver built into my motherboard. I assume other computers will have issues like this.
-    ui_input_mapping.gamepads = gamepads.iter().collect();
+    // TODO: restore when bevy_ui_navigation is available
 }
 
-fn update_ui_input_map(input_map: Res<InputMap>, mut ui_input_mapping: ResMut<InputMapping>) {
-    fn get_first_keyboard_key(
-        analog_inputs: &HashSet<AnalogInput>,
-        scale_check: impl Fn(f32) -> bool,
-    ) -> Option<KeyCode> {
-        for input in analog_inputs.iter() {
-            if let AnalogInput::Button {
-                button: RealButton::Key { key_code },
-                scale,
-            } = input
-            {
-                if scale_check(scale.into_inner()) {
-                    return Some(*key_code);
-                }
-            }
-        }
-
-        None
-    }
-
-    if let Some(key_code) =
-        get_first_keyboard_key(&input_map.horizontal_movement.x, |scale| scale < 0.0)
-    {
-        ui_input_mapping.key_left = key_code;
-    }
-
-    if let Some(key_code) =
-        get_first_keyboard_key(&input_map.horizontal_movement.x, |scale| scale > 0.0)
-    {
-        ui_input_mapping.key_right = key_code;
-    }
-
-    if let Some(key_code) =
-        get_first_keyboard_key(&input_map.horizontal_movement.y, |scale| scale < 0.0)
-    {
-        ui_input_mapping.key_up = key_code;
-    }
-
-    if let Some(key_code) =
-        get_first_keyboard_key(&input_map.horizontal_movement.y, |scale| scale > 0.0)
-    {
-        ui_input_mapping.key_down = key_code;
-    }
+fn update_ui_input_map(_input_map: Res<InputMap>) {
+    // TODO: restore when bevy_ui_navigation is available
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
@@ -543,36 +492,13 @@ pub struct PlayerControlsPlugin;
 
 impl Plugin for PlayerControlsPlugin {
     fn build(&self, app: &mut App) {
-        fn setup(mut commands: Commands, mut ui_input_mapping: ResMut<InputMapping>) {
+        fn setup(mut commands: Commands) {
             commands.insert_resource(InputState::default());
-
-            // Enable keyboard and mouse navigation.
-            ui_input_mapping.keyboard_navigation = true;
-            ui_input_mapping.focus_follows_mouse = true;
-            ui_input_mapping.key_action = KeyCode::Return;
-            ui_input_mapping.key_cancel = KeyCode::Escape;
-            ui_input_mapping.key_free = KeyCode::Unlabeled;
         }
 
         app.add_systems(Startup, setup.after(LoadConfigSet));
 
-        app.add_systems(
-            Update,
-            |mut ui_input_mapping: ResMut<InputMapping>, console_open_state: Res<ConsoleOpen>| {
-                // Disables the keyboard if the console is open.
-                ui_input_mapping.keyboard_navigation = !console_open_state.open;
-
-                if console_open_state.open {
-                    ui_input_mapping.key_action = KeyCode::Unlabeled;
-                    ui_input_mapping.key_cancel = KeyCode::Unlabeled;
-                } else {
-                    ui_input_mapping.key_action = KeyCode::Return;
-                    ui_input_mapping.key_cancel = KeyCode::Escape;
-                }
-            },
-        );
-
-        app.configure_set(Update, PlayerControlsPlugin);
+        app.configure_sets(Update, PlayerControlsPlugin);
 
         InputMap::app_setup(app);
         app.add_systems(
@@ -583,12 +509,7 @@ impl Plugin for PlayerControlsPlugin {
             OnExit(WorldState::Running),
             release_cursor.in_set(PlayerControlsPlugin),
         );
-        app.add_systems(
-            Update,
-            update_ui_input_map
-                .before(NavRequestSystem)
-                .in_set(PlayerControlsPlugin),
-        );
+        app.add_systems(Update, update_ui_input_map.in_set(PlayerControlsPlugin));
 
         app.add_systems(
             Update,

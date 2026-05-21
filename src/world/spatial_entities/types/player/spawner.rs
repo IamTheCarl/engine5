@@ -12,7 +12,8 @@ use crate::world::{
 pub struct PlayerSpawner;
 
 #[entity_serialization(type_id = 0, marker = PlayerSpawner, bootstrap = BootstrapEntityInfo::PlayerSpawner)]
-struct PlayerSpawnerStorage {
+#[derive(serde::Deserialize)]
+pub struct PlayerSpawnerStorage {
     position: Position,
 }
 
@@ -23,10 +24,10 @@ impl PlayerSpawner {
         storage: &EntityStorage,
         position: Position,
     ) -> Result<()> {
-        let storable = storage.new_storable_component::<PlayerSpawner, _, _, _>()?;
+        let storable = storage.new_storable_component::<PlayerSpawner>()?;
 
         let mut commands = commands.spawn(storable);
-        commands.set_parent(parent);
+        commands.insert(ChildOf(parent));
 
         Self::construct_entity(PlayerSpawnerStorage { position }, &mut commands);
 
@@ -46,5 +47,5 @@ impl EntityConstruction<PlayerSpawnerStorage> for PlayerSpawner {
 }
 
 pub fn setup(app: &mut App) {
-    EntitySerializationManager::register::<PlayerSpawner, _, _, _>(app);
+    EntitySerializationManager::register::<PlayerSpawner>(app);
 }

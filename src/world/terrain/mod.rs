@@ -1,18 +1,17 @@
 use anyhow::{anyhow, bail, Context, Result};
 use bevy::{
     asset::{AssetPath, LoadState},
-    pbr::{StandardMaterialFlags, StandardMaterialUniform},
+    mesh::{Indices, MeshVertexAttribute, MeshVertexBufferLayoutRef, VertexAttributeValues},
+    pbr::{MaterialPipeline, StandardMaterial, StandardMaterialKey, StandardMaterialUniform},
     prelude::*,
-    reflect::TypeUuid,
     render::{
-        mesh::{Indices, MeshVertexAttribute, VertexAttributeValues},
         render_asset::RenderAssets,
         render_resource::{
-            AsBindGroup, AsBindGroupShaderType, Extent3d, PrimitiveTopology, ShaderDefVal,
-            ShaderRef, TextureDimension, TextureFormat, VertexFormat,
+            AsBindGroup, Extent3d, PrimitiveTopology, SpecializedMeshPipelineError,
+            TextureDimension, TextureFormat, VertexFormat,
         },
-        texture::Volume,
     },
+    shader::{Shader, ShaderDefVal, ShaderRef},
 };
 use serde::{de::Visitor, ser::SerializeSeq, Deserialize, Serialize};
 use std::{
@@ -191,12 +190,12 @@ impl<'a> BlockTag<'a> {
             let namespace = iter
                 .next()
                 .filter(|s| !s.is_empty())
-                .context("Could not parse block namespace from block tag.")?;
+                .expect("Missing namespace in block tag");
 
             let block_name = iter
                 .next()
                 .filter(|s| !s.is_empty())
-                .context("Could not parse block name from block tag.")?;
+                .expect("Missing block name in block tag");
 
             if iter.next().is_some() {
                 bail!("Found too many components in block name.")
@@ -807,12 +806,15 @@ impl Chunk {
             }
         }
 
-        let mut mesh = Mesh::new(PrimitiveTopology::TriangleList);
+        let mut mesh = Mesh::new(
+            PrimitiveTopology::TriangleList,
+            bevy::asset::RenderAssetUsages::default(),
+        );
         mesh.insert_attribute(
             MeshVertexAttribute::new("vertex", 0, VertexFormat::Uint32),
             VertexAttributeValues::Uint32(vertex_buffer),
         );
-        mesh.set_indices(Some(Indices::U32(indices)));
+        mesh.insert_indices(Indices::U32(indices));
 
         mesh
     }
@@ -898,50 +900,56 @@ fn test_serialized_size() {
 }
 
 // TODO this was just copied from the core of Bevy. At this rate I'm starting to think I should customize it more to only have the features I actually use.
-#[derive(AsBindGroup, Reflect, Debug, Clone, TypeUuid)]
-#[uuid = "ab106dd3-3971-4655-a535-b3b47738c649"]
-#[uniform(0, StandardMaterialUniform)]
+#[derive(AsBindGroup, Reflect, Debug, Clone, Asset)]
+#[bind_group_data(StandardMaterialKey)]
 #[reflect(Default, Debug)]
 struct TerrainMaterial {
     pub base_color: Color,
 
-    #[texture(1, dimension = "2d_array")]
+    #[texture(1)]
     #[sampler(2)]
+    #[dependency]
     pub base_color_texture: Option<Handle<Image>>,
 
-    pub emissive: Color,
+    pub emissive: LinearRgba,
 
-    #[texture(3, dimension = "2d_array")]
+    #[texture(3)]
     #[sampler(4)]
+    #[dependency]
     pub emissive_texture: Option<Handle<Image>>,
+
     pub perceptual_roughness: f32,
 
     pub metallic: f32,
 
-    #[texture(5, dimension = "2d_array")]
+    #[texture(5)]
     #[sampler(6)]
+    #[dependency]
     pub metallic_roughness_texture: Option<Handle<Image>>,
+
     #[doc(alias = "specular_intensity")]
     pub reflectance: f32,
 
-    #[texture(9, dimension = "2d_array")]
-    #[sampler(10)]
+    #[texture(7)]
+    #[sampler(8)]
+    #[dependency]
     pub normal_map_texture: Option<Handle<Image>>,
 
     pub flip_normal_map_y: bool,
 
-    #[texture(7, dimension = "2d_array")]
-    #[sampler(8)]
+    #[texture(9)]
+    #[sampler(10)]
+    #[dependency]
     pub occlusion_texture: Option<Handle<Image>>,
+
     pub double_sided: bool,
-    // #[reflect(ignore)]
-    // pub cull_mode: Option<Face>,
     pub unlit: bool,
     pub alpha_mode: AlphaMode,
     pub depth_bias: f32,
 
-    #[texture(11, dimension = "2d_array")]
+    #[texture(11)]
     #[sampler(12)]
+    #[dependency]
     pub depth_map: Option<Handle<Image>>,
 
     pub parallax_depth_scale: f32,
@@ -963,6 +971,25 @@ impl TerrainMaterial {
     }
 }
 
+impl From<&TerrainMaterial> for StandardMaterialKey {
+    fn from(material: &TerrainMaterial) -> Self {
+        let mut key = StandardMaterialKey::empty();
+        key.set(
+            StandardMaterialKey::CULL_FRONT,
+            material.double_sided == false,
+        );
+        key.set(
+            StandardMaterialKey::NORMAL_MAP,
+            material.normal_map_texture.is_some(),
+        );
+        key.set(
+            StandardMaterialKey::RELIEF_MAPPING,
+            material.parallax_depth_scale > 0.0,
+        );
+        key
+    }
+}
+
 impl Default for TerrainMaterial {
     fn default() -> Self {
         let dimension = Extent3d {
@@ -972,7 +999,10 @@ impl Default for TerrainMaterial {
         };
 
         let format = TextureFormat::Rgba8UnormSrgb;
-        let data_length = dimension.volume() * 4;
+        let data_length = dimension.width as usize
+            * dimension.height as usize
+            * dimension.depth_or_array_layers as usize
+            * 4;
 
         // We can't use the default because it's not an array. It'll cause a validation failure.
         let mut fallback_image = Image::new(
@@ -980,16 +1010,17 @@ impl Default for TerrainMaterial {
             TextureDimension::D2,
             vec![0u8; data_length],
             format,
+            bevy::asset::RenderAssetUsages::default(),
         );
-        fallback_image.reinterpret_stacked_2d_as_array(2);
+        fallback_image.reinterpret_stacked_2d_as_array(2).unwrap();
 
         TerrainMaterial {
-            base_color: Color::rgb(1.0, 1.0, 1.0),
+            base_color: Color::srgb(1.0, 1.0, 1.0),
             base_color_texture: None,
-            emissive: Color::BLACK,
+            emissive: LinearRgba::BLACK,
             emissive_texture: None,
             // This is the minimum the roughness is clamped to in shader code
-            // See <https://google.github.io/filament/Filament.html#materialsystem/parameterization/>
+            // See <https://google.github.io/filament/Filament.html#material_system/parameterization/>
             // It's the minimum floating point value that won't be rounded down to 0 in the
             // calculations used. Although technically for 32-bit floats, 0.045 could be
             // used.
@@ -1019,91 +1050,30 @@ impl Default for TerrainMaterial {
     }
 }
 
-impl AsBindGroupShaderType<StandardMaterialUniform> for TerrainMaterial {
-    fn as_bind_group_shader_type(&self, images: &RenderAssets<Image>) -> StandardMaterialUniform {
-        let mut flags = StandardMaterialFlags::NONE;
-        if self.base_color_texture.is_some() {
-            flags |= StandardMaterialFlags::BASE_COLOR_TEXTURE;
-        }
-        if self.emissive_texture.is_some() {
-            flags |= StandardMaterialFlags::EMISSIVE_TEXTURE;
-        }
-        if self.metallic_roughness_texture.is_some() {
-            flags |= StandardMaterialFlags::METALLIC_ROUGHNESS_TEXTURE;
-        }
-        if self.occlusion_texture.is_some() {
-            flags |= StandardMaterialFlags::OCCLUSION_TEXTURE;
-        }
-        if self.double_sided {
-            flags |= StandardMaterialFlags::DOUBLE_SIDED;
-        }
-        if self.unlit {
-            flags |= StandardMaterialFlags::UNLIT;
-        }
-        let has_normal_map = self.normal_map_texture.is_some();
-        if has_normal_map {
-            if let Some(texture) = images.get(self.normal_map_texture.as_ref().unwrap()) {
-                match texture.texture_format {
-                    // All 2-component unorm formats
-                    TextureFormat::Rg8Unorm
-                    | TextureFormat::Rg16Unorm
-                    | TextureFormat::Bc5RgUnorm
-                    | TextureFormat::EacRg11Unorm => {
-                        flags |= StandardMaterialFlags::TWO_COMPONENT_NORMAL_MAP;
-                    }
-                    _ => {}
-                }
-            }
-            if self.flip_normal_map_y {
-                flags |= StandardMaterialFlags::FLIP_NORMAL_MAP_Y;
-            }
-        }
-        // NOTE: 0.5 is from the glTF default - do we want this?
-        let mut alpha_cutoff = 0.5;
-        match self.alpha_mode {
-            AlphaMode::Opaque => flags |= StandardMaterialFlags::ALPHA_MODE_OPAQUE,
-            AlphaMode::Mask(c) => {
-                alpha_cutoff = c;
-                flags |= StandardMaterialFlags::ALPHA_MODE_MASK;
-            }
-            AlphaMode::Blend => flags |= StandardMaterialFlags::ALPHA_MODE_BLEND,
-            AlphaMode::Premultiplied => flags |= StandardMaterialFlags::ALPHA_MODE_PREMULTIPLIED,
-            AlphaMode::Add => flags |= StandardMaterialFlags::ALPHA_MODE_ADD,
-            AlphaMode::Multiply => flags |= StandardMaterialFlags::ALPHA_MODE_MULTIPLY,
-        };
-
-        StandardMaterialUniform {
-            base_color: self.base_color.as_linear_rgba_f32().into(),
-            emissive: self.emissive.into(),
-            roughness: self.perceptual_roughness,
-            metallic: self.metallic,
-            reflectance: self.reflectance,
-            flags: flags.bits(),
-            alpha_cutoff,
-            parallax_depth_scale: self.parallax_depth_scale,
-            max_parallax_layer_count: self.max_parallax_layer_count,
-            max_relief_mapping_search_steps: self.max_relief_mapping_search_steps,
-        }
-    }
-}
-
 impl Material for TerrainMaterial {
+    fn enable_prepass() -> bool {
+        false
+    }
+
+    fn enable_shadows() -> bool {
+        false
+    }
+
     fn vertex_shader() -> ShaderRef {
-        "shaders/terrain.wgsl".into()
+        Default::default()
     }
 
     fn fragment_shader() -> ShaderRef {
-        // "shaders/terrain.wgsl".into()
-        StandardMaterial::fragment_shader()
+        Default::default()
     }
 
     fn specialize(
-        _pipeline: &bevy::pbr::MaterialPipeline<Self>,
+        _pipeline: &MaterialPipeline,
         descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
-        _layout: &bevy::render::mesh::MeshVertexBufferLayout,
+        _layout: &MeshVertexBufferLayoutRef,
         _key: bevy::pbr::MaterialPipelineKey<Self>,
     ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
-        let defines = [
+        let defines: Vec<ShaderDefVal> = vec![
             ShaderDefVal::Bool(String::from("VERTEX_UVS"), true),
             ShaderDefVal::Bool(String::from("STANDARDMATERIAL_NORMAL_MAP"), true),
             ShaderDefVal::Bool(String::from("VERTEX_TANGENTS"), true),
@@ -1218,15 +1188,21 @@ impl TerrainTextureManager {
         };
 
         let format = TextureFormat::Rgba8UnormSrgb;
-        let data_length = dimension.volume() * 4;
+        let data_length = dimension.width as usize
+            * dimension.height as usize
+            * dimension.depth_or_array_layers as usize
+            * 4;
 
         let mut placeholder_image = Image::new(
             dimension,
             TextureDimension::D2,
             vec![0u8; data_length],
             format,
+            bevy::asset::RenderAssetUsages::default(),
         );
-        placeholder_image.reinterpret_stacked_2d_as_array(2);
+        placeholder_image
+            .reinterpret_stacked_2d_as_array(2)
+            .unwrap();
 
         Ok(Self {
             loading_state: TerrainLoadingState::Loading {
@@ -1267,7 +1243,7 @@ fn terrain_texture_loading(
     mut images: ResMut<Assets<Image>>,
     terrain_material: ResMut<TerrainMaterialHandle>,
     mut terrain_material_assets: ResMut<Assets<TerrainMaterial>>,
-) -> Result<()> {
+) -> () {
     fn process_image(
         image_handle_container: &mut ImageSource,
         final_image_data: &mut Vec<u8>,
@@ -1277,30 +1253,37 @@ fn terrain_texture_loading(
     ) -> Result<bool> {
         match image_handle_container {
             ImageSource::Handle(image_handle) => {
-                let load_state = asset_server.get_load_state(image_handle.clone());
+                let load_state = asset_server.get_load_state(&image_handle.clone());
 
-                match load_state {
-                    LoadState::Loaded => {
-                        let image = images
-                            .remove(image_handle.clone())
-                            .context("Image wasn't actually loaded.")?;
-                        *image_handle_container = ImageSource::Loaded; // Mark that it's been transferred over.
+                if let Some(load_state) = load_state {
+                    match load_state {
+                        LoadState::Loaded => {
+                            let image_id = image_handle.clone();
+                            let image =
+                                images.get(&image_id).context("Image not found in assets")?;
+                            *image_handle_container = ImageSource::Loaded; // Mark that it's been transferred over.
 
-                        // We need all textures to be the same size. Make sure to enforce that.
-                        if image.texture_descriptor.size != *size {
-                            // TODO list the culprit.
-                            bail!("All textures must be of the same size and format.");
+                            // We need all textures to be the same size. Make sure to enforce that.
+                            if image.texture_descriptor.size != *size {
+                                // TODO list the culprit.
+                                bail!("All textures must be of the same size and format.");
+                            }
+
+                            if let Some(ref data) = image.data {
+                                final_image_data.extend_from_slice(data);
+                            }
+                            images.remove(&image_id);
+
+                            Ok(true)
                         }
-
-                        final_image_data.extend(image.data);
-
-                        Ok(true)
+                        LoadState::Failed(_) => {
+                            // TODO list the culprit.
+                            bail!("Failed to load a terrain texture.");
+                        }
+                        _ => Ok(false),
                     }
-                    LoadState::Failed => {
-                        // TODO list the culprit.
-                        bail!("Failed to load a terrain texture.");
-                    }
-                    _ => Ok(false),
+                } else {
+                    Ok(false)
                 }
             }
             ImageSource::Blank(fill) => {
@@ -1309,7 +1292,7 @@ fn terrain_texture_loading(
 
                 final_image_data.extend(
                     std::iter::repeat(fill)
-                        .zip(0..size.volume())
+                        .zip(0..size.width * size.height * size.depth_or_array_layers)
                         .flat_map(|(byte, _index)| byte),
                 );
 
@@ -1332,15 +1315,16 @@ fn terrain_texture_loading(
 
         let image = images
             .get_mut(final_image_handle)
-            .context("Texture image was not initially created.")?;
+            .context("Image handle not found in assets")?;
 
         *image = Image::new(
             pre_size,
             TextureDimension::D2,
             final_image_data,
             TextureFormat::Rgba8UnormSrgb,
+            bevy::asset::RenderAssetUsages::default(),
         );
-        image.reinterpret_stacked_2d_as_array(num_layers);
+        image.reinterpret_stacked_2d_as_array(num_layers).unwrap();
 
         *terrain_material_image_handle = Some(final_image_handle.clone());
 
@@ -1367,35 +1351,40 @@ fn terrain_texture_loading(
                 size,
                 &asset_server,
                 &mut images,
-            )?;
+            )
+            .unwrap_or(false);
             ready &= process_image(
                 &mut image_set.emissive,
                 emissive_image_data,
                 size,
                 &asset_server,
                 &mut images,
-            )?;
+            )
+            .unwrap_or(false);
             ready &= process_image(
                 &mut image_set.metallic,
                 metallic_image_data,
                 size,
                 &asset_server,
                 &mut images,
-            )?;
+            )
+            .unwrap_or(false);
             ready &= process_image(
                 &mut image_set.occlusion,
                 occlusion_image_data,
                 size,
                 &asset_server,
                 &mut images,
-            )?;
+            )
+            .unwrap_or(false);
             ready &= process_image(
                 &mut image_set.normal,
                 normal_image_data,
                 size,
                 &asset_server,
                 &mut images,
-            )?;
+            )
+            .unwrap_or(false);
 
             // Bail out early so we can guarantee the loading order.
             if !ready {
@@ -1423,59 +1412,57 @@ fn terrain_texture_loading(
                     .get_mut(&terrain_material.0)
                     .expect("Terrain material is not available.");
 
-                finalize_image(
+                let _ = finalize_image(
                     size,
                     num_layers,
                     &mut images,
                     &texture.color_image_handle,
                     final_color_image_data,
                     &mut terrain_material.base_color_texture,
-                )?;
+                );
 
-                finalize_image(
+                let _ = finalize_image(
                     size,
                     num_layers,
                     &mut images,
                     &texture.emissive_image_handle,
                     emissive_image_data,
                     &mut terrain_material.emissive_texture,
-                )?;
+                );
 
-                finalize_image(
+                let _ = finalize_image(
                     size,
                     num_layers,
                     &mut images,
                     &texture.metallic_image_handle,
                     metallic_image_data,
                     &mut terrain_material.metallic_roughness_texture,
-                )?;
+                );
 
-                finalize_image(
+                let _ = finalize_image(
                     size,
                     num_layers,
                     &mut images,
                     &texture.occlusion_image_handle,
                     occlusion_image_data,
                     &mut terrain_material.occlusion_texture,
-                )?;
+                );
 
-                finalize_image(
+                let _ = finalize_image(
                     size,
                     num_layers,
                     &mut images,
                     &texture.normal_image_handle,
                     final_normal_image_data,
                     &mut terrain_material.normal_map_texture,
-                )?;
+                );
 
                 log::info!("Terrain data loaded and ready.");
             } else {
-                bail!("Texture was not loading.");
+                log::error!("Texture was not loading.");
             }
         }
     }
-
-    Ok(())
 }
 
 pub type ChunkIndex = IVec3;
@@ -1527,7 +1514,7 @@ struct PreChunkBundle {
     chunk_position: ChunkPosition,
     global_transform: GlobalTransform,
     visibility: Visibility,
-    computed_visibility: ComputedVisibility,
+    computed_visibility: InheritedVisibility,
     modification_request_list: ChunkModificationRequestList,
     update_mesh: UpdateMesh,
 }
@@ -1550,7 +1537,7 @@ fn terrain_setup(
     asset_server: Res<AssetServer>,
     mut image_resources: ResMut<Assets<Image>>,
     mut terrain_material_assets: ResMut<Assets<TerrainMaterial>>,
-) -> anyhow::Result<()> {
+) -> () {
     // For terrain rendering.
     let terrain_texture = TerrainTextureManager::new(
         &asset_server,
@@ -1594,7 +1581,8 @@ fn terrain_setup(
             ),
         ]
         .drain(..),
-    )?;
+    )
+    .expect("terrain_setup");
 
     let block_registry = BlockRegistry::load(&terrain_texture).unwrap();
 
@@ -1605,42 +1593,43 @@ fn terrain_setup(
     commands.insert_resource(block_registry);
     commands.insert_resource(TerrainMaterialHandle(terrain_material_handle));
     commands.insert_resource(terrain_texture);
-
-    Ok(())
 }
 
-#[derive(Component)]
-#[component(storage = "SparseSet")]
+#[derive(bevy::prelude::Component)]
 pub struct UpdateMesh;
+
+#[derive(bevy::prelude::Component)]
+pub struct ChunkMesh {
+    mesh: Handle<Mesh>,
+    material: Handle<TerrainMaterial>,
+}
 
 #[allow(clippy::complexity)]
 fn generate_chunk_mesh(
     mut commands: Commands,
-    terrain_material: Res<TerrainMaterialHandle>,
-    block_registry: Res<BlockRegistry>,
-    chunks: Query<(Entity, &Chunk), (With<UpdateMesh>, Changed<Chunk>)>,
     mut meshes: ResMut<Assets<Mesh>>,
+    terrain_material: Res<TerrainMaterialHandle>,
+    chunks: Query<(Entity, &Chunk), Without<ChunkMesh>>,
+    block_registry: Res<BlockRegistry>,
 ) {
     for (entity, chunk) in chunks.iter() {
         let chunk_mesh = chunk.build_mesh(&block_registry);
 
-        commands
-            .entity(entity)
-            .insert((meshes.add(chunk_mesh), terrain_material.0.clone()));
+        commands.entity(entity).insert(ChunkMesh {
+            mesh: meshes.add(chunk_mesh),
+            material: terrain_material.0.clone(),
+        });
     }
 }
 
 fn remove_chunk_mesh(mut commands: Commands, mut removed: RemovedComponents<Chunk>) {
-    for entity in &mut removed {
+    for entity in removed.read() {
         // Sometimes the whole entity was removed.
-        if let Some(mut commands) = commands.get_entity(entity) {
-            commands
-                .remove::<Handle<TerrainMaterial>>()
-                .remove::<Handle<Mesh>>();
+        if let Ok(mut entity_cmd) = commands.get_entity(entity) {
+            entity_cmd.remove::<ChunkMesh>();
         }
     }
 }
-
 #[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 pub struct TerrainPlugin;
 
@@ -1648,23 +1637,27 @@ impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(MaterialPlugin::<TerrainMaterial>::default());
 
-        app.add_systems(
-            Startup,
-            (
-                terrain_setup
-                    .pipe(crate::error_handler)
-                    .in_set(TerrainPlugin),
-                apply_deferred.after(terrain_setup),
-            ),
-        );
+        app.add_systems(Startup, (terrain_setup, |mut commands: Commands| {}));
+        #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+        struct GenerateChunkMeshSet;
 
-        app.configure_set(Update, TerrainPlugin);
+        #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+        struct RemoveChunkMeshSet;
+
+        app.configure_sets(
+            Update,
+            GenerateChunkMeshSet.after(terrain_space::ModifyTerrain),
+        );
+        app.configure_sets(
+            Update,
+            RemoveChunkMeshSet.after(terrain_space::ModifyTerrain),
+        );
         app.add_systems(
             Update,
             (
-                generate_chunk_mesh.after(terrain_space::ModifyTerrain),
-                remove_chunk_mesh.after(terrain_space::ModifyTerrain),
-                terrain_texture_loading.pipe(crate::error_handler),
+                generate_chunk_mesh.in_set(GenerateChunkMeshSet),
+                remove_chunk_mesh.in_set(RemoveChunkMeshSet),
+                terrain_texture_loading,
             ),
         );
 

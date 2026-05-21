@@ -5,12 +5,10 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use bevy::prelude::*;
+use bevy::{ecs::message::MessageReader, prelude::*};
 use bytes::Bytes;
-use renet::{
-    transport::{NetcodeServerTransport, ServerAuthentication, ServerConfig},
-    RenetServer,
-};
+use renet::RenetServer;
+use renet_netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig};
 
 use crate::{
     multiplayer::connection_config,
@@ -31,6 +29,10 @@ use super::{
     ServerChannels,
 };
 
+fn has_host_context(host: Option<Res<HostContext>>) -> bool {
+    host.is_some()
+}
+
 #[derive(Resource)]
 pub struct HostContext {
     pub server: RenetServer,
@@ -42,34 +44,31 @@ impl HostContext {
         app.add_systems(
             PreUpdate,
             (
-                Self::update_host.run_if(resource_exists::<Self>()),
+                Self::update_host.run_if(has_host_context),
                 Self::control_client_terrain
                     .in_set(MultiplayerPlugin)
-                    .run_if(resource_exists::<Self>())
+                    .run_if(has_host_context)
                     .after(Self::update_host),
                 Self::transmit_terrain
                     .in_set(MultiplayerPlugin)
-                    .run_if(resource_exists::<Self>())
+                    .run_if(has_host_context)
                     .after(Self::control_client_terrain),
                 Self::spawn_remote_player
                     .in_set(MultiplayerPlugin)
                     .after(Self::update_host)
-                    .run_if(resource_exists::<Self>()),
+                    .run_if(has_host_context),
                 Self::despawn_remote_player
                     .in_set(MultiplayerPlugin)
                     .after(Self::update_host)
-                    .run_if(resource_exists::<Self>()),
+                    .run_if(has_host_context),
                 Self::select_entities_for_transmission
                     .in_set(MultiplayerPlugin)
                     .after(Self::update_host)
-                    .run_if(resource_exists::<Self>()),
+                    .run_if(has_host_context),
             ),
         );
 
-        app.add_systems(
-            PostUpdate,
-            Self::send_packets.run_if(resource_exists::<Self>()),
-        );
+        app.add_systems(PostUpdate, Self::send_packets.run_if(has_host_context));
     }
 
     pub fn start_session(
@@ -88,17 +87,19 @@ impl HostContext {
             max_clients
         );
 
-        let server_config = ServerConfig {
-            max_clients,
-            protocol_id: 0,
-            public_addr: socket_address,
-            authentication: ServerAuthentication::Unsecure,
-        };
         let current_time = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .context("Failed to get current time.")?;
 
-        let transport = NetcodeServerTransport::new(current_time, server_config, socket)
+        let server_config = ServerConfig {
+            max_clients,
+            protocol_id: 0,
+            public_addresses: vec![socket_address],
+            authentication: ServerAuthentication::Unsecure,
+            current_time,
+        };
+
+        let transport = NetcodeServerTransport::new(server_config, socket)
             .context("Failed to build transport layer.")?;
 
         let server = RenetServer::new(connection_config());
@@ -115,8 +116,8 @@ impl HostContext {
     fn update(
         &mut self,
         time_delta: Duration,
-        mut player_connect_event: EventWriter<PlayerConnect>,
-        mut player_disconnect_event: EventWriter<PlayerDisconnect>,
+        mut player_connect_event: MessageWriter<PlayerConnect>,
+        mut player_disconnect_event: MessageWriter<PlayerDisconnect>,
     ) -> Result<()> {
         self.server.update(time_delta);
         self.transport
@@ -143,7 +144,7 @@ impl HostContext {
 
                     if let Some(player_info) = player_info {
                         log::info!("New client: {}", client_id);
-                        player_connect_event.send(PlayerConnect {
+                        player_connect_event.write(PlayerConnect {
                             client_id,
                             name: player_info.name,
                         });
@@ -154,7 +155,7 @@ impl HostContext {
                 }
                 renet::ServerEvent::ClientDisconnected { client_id, reason } => {
                     log::info!("Client {} disconnected. Reason: {}", client_id, reason);
-                    player_disconnect_event.send(PlayerDisconnect { client_id });
+                    player_disconnect_event.write(PlayerDisconnect { client_id });
                 }
             }
         }
@@ -176,8 +177,8 @@ impl HostContext {
         mut context: ResMut<Self>,
         mut commands: Commands,
         time: Res<Time>,
-        player_connect_event: EventWriter<PlayerConnect>,
-        player_disconnect_event: EventWriter<PlayerDisconnect>,
+        player_connect_event: MessageWriter<PlayerConnect>,
+        player_disconnect_event: MessageWriter<PlayerDisconnect>,
     ) {
         if let Err(error) =
             context.update(time.delta(), player_connect_event, player_disconnect_event)
@@ -193,9 +194,9 @@ impl HostContext {
     fn despawn_remote_player(
         mut commands: Commands,
         online_players: Query<(Entity, &RemoteClientPlayer)>,
-        mut player_disconnect_events: EventReader<PlayerDisconnect>,
+        mut player_disconnect_events: MessageReader<PlayerDisconnect>,
     ) {
-        'event_loop: for event in player_disconnect_events.iter() {
+        'event_loop: for event in player_disconnect_events.read() {
             // Check if the player already exists in the world.
             for (player_entity, remote_player) in online_players.iter() {
                 if remote_player.client_id == event.client_id {
@@ -223,11 +224,11 @@ impl HostContext {
             Without<LocalPlayer>, // We can kick-out already present local players.
         >,
         player_spawn: Query<&Position, With<PlayerSpawner>>,
-        mut player_connect_events: EventReader<PlayerConnect>,
+        mut player_connect_events: MessageReader<PlayerConnect>,
     ) {
         // FIXME This needs to kick out an old session if a player logs in twice.
 
-        'event_loop: for event in player_connect_events.iter() {
+        'event_loop: for event in player_connect_events.read() {
             let remote_player = RemoteClientPlayer {
                 client_id: event.client_id,
             };
@@ -250,7 +251,7 @@ impl HostContext {
 
             // Looks like they don't.
             // Spawn them in.
-            if let Ok(spawn_position) = player_spawn.get_single() {
+            if let Some(spawn_position) = player_spawn.iter().next().map(|pos| pos.clone()) {
                 match PlayerEntity::spawn_deactivated(
                     world_entity.entity,
                     &mut commands,

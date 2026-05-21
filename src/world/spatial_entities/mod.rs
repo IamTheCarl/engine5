@@ -3,8 +3,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use bevy::prelude::Gizmos;
 use bevy::prelude::*;
-use bevy_prototype_debug_lines::DebugLines;
 
 use crate::config::graphics::DebugRenderSettings;
 
@@ -143,9 +143,9 @@ pub struct SpatialHashOffset {
 
 fn insert_spatial_hash(
     mut commands: Commands,
-    entities: Query<(Entity, With<Position>, Without<SpatialHash>)>,
+    entities: Query<Entity, (With<Position>, Without<SpatialHash>)>,
 ) {
-    for (entity, _, _) in entities.iter() {
+    for entity in entities.iter() {
         commands.entity(entity).insert(SpatialHash::default());
     }
 }
@@ -155,7 +155,7 @@ fn handle_removed_spatial_hash_entities(
     spatial_objects: Query<&SpatialHash>,
     mut spatial_object_tracker: ResMut<SpatialEntityTracker>,
 ) {
-    for entity in removals.iter() {
+    for entity in removals.read() {
         if let Ok(spatial_hash) = spatial_objects.get(entity) {
             spatial_object_tracker.remove_entity(*spatial_hash, entity);
         }
@@ -166,7 +166,7 @@ fn update_spatial_hash_entities(
     mut spatial_objects: Query<(Entity, &Position, &mut SpatialHash), Without<SpatialHashOffset>>,
     mut spatial_object_tracker: ResMut<SpatialEntityTracker>,
     debug_render_settings: Res<DebugRenderSettings>,
-    mut lines: ResMut<DebugLines>,
+    mut gizmos: Gizmos,
 ) {
     // TODO only update the hash for entities that have a velocity?
 
@@ -180,18 +180,16 @@ fn update_spatial_hash_entities(
         spatial_hash.z = translation.z as i16;
 
         if debug_render_settings.hashing_center_point {
-            lines.line_colored(
+            gizmos.line(
                 position.translation,
                 position.translation + Vec3::Y,
-                0.0,
-                Color::GREEN,
+                Color::srgba(0.0, 0.5, 0.0, 1.0),
             );
 
-            lines.line_colored(
+            gizmos.line(
                 position.translation,
                 translation * Chunk::CHUNK_DIAMETER as f32,
-                0.0,
-                Color::BLUE,
+                Color::srgba(0.0, 0.0, 1.0, 1.0),
             );
         }
 
@@ -211,7 +209,7 @@ fn update_spatial_hash_entities_with_offset(
     mut spatial_objects: Query<(Entity, &Position, &SpatialHashOffset, &mut SpatialHash)>,
     mut spatial_object_tracker: ResMut<SpatialEntityTracker>,
     debug_render_settings: Res<DebugRenderSettings>,
-    mut lines: ResMut<DebugLines>,
+    mut gizmos: Gizmos,
 ) {
     // TODO only update the hash for entities that have a velocity?
 
@@ -228,18 +226,16 @@ fn update_spatial_hash_entities_with_offset(
         spatial_hash.z = translation.z as i16;
 
         if debug_render_settings.hashing_center_point {
-            lines.line_colored(
+            gizmos.line(
                 offset_translation,
                 offset_translation + Vec3::Y,
-                0.0,
-                Color::GREEN,
+                Color::srgba(0.0, 0.5, 0.0, 1.0),
             );
 
-            lines.line_colored(
+            gizmos.line(
                 offset_translation,
                 translation * Chunk::CHUNK_DIAMETER as f32,
-                0.0,
-                Color::BLUE,
+                Color::srgba(0.0, 0.0, 1.0, 1.0),
             );
         }
 

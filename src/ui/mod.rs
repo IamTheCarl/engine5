@@ -1,6 +1,7 @@
 use anyhow::Result;
-use bevy::{prelude::*, utils::synccell::SyncCell};
-use bevy_ui_navigation::NavMarkerPropagationPlugin;
+use bevy::{platform::cell::SyncCell, prelude::*};
+// TODO: restore bevy_ui_navigation
+// use bevy_ui_navigation::NavMarkerPropagationPlugin;
 use copypasta::{ClipboardContext, ClipboardProvider};
 
 mod root_menus;
@@ -16,8 +17,9 @@ pub struct UserInterface;
 
 impl Plugin for UserInterface {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_clipboard.pipe(error_handler));
-        app.add_plugins(NavMarkerPropagationPlugin::<sub_menus::OverlayMenu>::new());
+        // app.add_systems(Startup, pipe(setup_clipboard, error_handler));
+        // TODO: restore bevy_ui_navigation
+        // app.add_plugins(NavMarkerPropagationPlugin::<sub_menus::OverlayMenu>::new());
 
         widgets::setup(app);
 

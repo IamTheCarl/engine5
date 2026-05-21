@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
+use bevy::prelude::Gizmos;
 use bevy::{math::Vec3Swizzles, prelude::*};
-use bevy_prototype_debug_lines::DebugLines;
 
 use crate::world::spatial_entities::{SpatialEntityTracker, SpatialHash};
 
@@ -11,7 +11,7 @@ pub(super) fn check_for_intersections(
     mut cylinders: Query<(Entity, &SpatialHash, &mut Position, &Cylinder)>,
     spatial_object_tracker: Res<SpatialEntityTracker>,
     debug_render_settings: Res<DebugRenderSettings>,
-    mut lines: ResMut<DebugLines>,
+    mut gizmos: Gizmos,
 ) {
     // We don't want to compare a set of entities more than once, so make sure we only get a set of unique comparisons.
     let mut to_compare = HashSet::new();
@@ -56,18 +56,16 @@ pub(super) fn check_for_intersections(
 
             if intersecting {
                 if debug_render_settings.cylinder_cylinder_checks {
-                    lines.line_colored(
+                    gizmos.line(
                         position_a.translation,
                         position_a.translation + Vec3::new(normal.x, 0.0, normal.y) * distance,
-                        0.0,
-                        Color::YELLOW,
+                        Color::srgba(1.0, 1.0, 0.0, 1.0),
                     );
 
-                    lines.line_colored(
+                    gizmos.line(
                         position_b.translation,
                         position_b.translation - Vec3::new(normal.x, 0.0, normal.y) * distance,
-                        0.0,
-                        Color::CYAN,
+                        Color::srgba(0.0, 1.0, 1.0, 1.0),
                     );
                 }
 

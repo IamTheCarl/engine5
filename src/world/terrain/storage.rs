@@ -93,31 +93,22 @@ impl TerrainStorage {
     }
 }
 
-type ToLoadQuery<'a, 'b, 'c, 'd> = Query<
-    'a,
-    'b,
-    (
-        Entity,
-        &'c Parent,
-        &'d ChunkPosition,
-        With<ToLoadTerrain>,
-        Without<Chunk>,
-    ),
->;
+type ToLoadQuery<'a, 'b, 'c, 'd> =
+    Query<'a, 'b, (Entity, &'c ChildOf, &'d ChunkPosition), (With<ToLoadTerrain>, Without<Chunk>)>;
 
 /// Load terrain from a file.
 fn load_terrain(
     mut commands: Commands,
     mut space: Query<(&TerrainStorage, &mut TerrainSpace)>,
     mut to_load: ToLoadQuery,
-) -> Result<()> {
-    for (entity, parent, position, _to_load, _without_chunk) in to_load.iter_mut() {
+) -> () {
+    for (entity, parent, position) in to_load.iter_mut() {
         // This chunk will no longer need to be loaded when we're done, so remove the marker.
         let mut entity = commands.entity(entity);
         entity.remove::<ToLoadTerrain>();
 
-        if let Ok((storage, mut terrain_space)) = space.get_mut(parent.get()) {
-            if let Some(storage_content) = storage.read_chunk(position)? {
+        if let Ok((storage, mut terrain_space)) = space.get_mut(parent.0) {
+            if let Some(storage_content) = storage.read_chunk(position).unwrap_or(None) {
                 if let Some(chunk) = storage_content {
                     // Sweet, add that into the world.
                     entity.insert((
@@ -148,18 +139,16 @@ fn load_terrain(
             entity.insert(ToGenerateTerrain);
         }
     }
-
-    Ok(())
 }
 
 /// Save terrain to a file.
 fn save_terrain(
     mut commands: Commands,
     storage: Query<&TerrainStorage>,
-    terrain: Query<(Entity, &Parent, &ChunkPosition, Option<&Chunk>), With<ToSaveTerrain>>,
+    terrain: Query<(Entity, &ChildOf, &ChunkPosition, Option<&Chunk>), With<ToSaveTerrain>>,
 ) {
     for (entity, this_storage, position, chunk) in terrain.iter() {
-        if let Ok(storage) = storage.get(this_storage.get()) {
+        if let Ok(storage) = storage.get(this_storage.0) {
             if let Err(error) = storage.write_chunk(chunk, position) {
                 // Crashing while saving would be very bad, so just log the error.
                 // We don't remove the "ToSave" tag so that we can try again the next frame (yes, this will spam the log)
@@ -181,14 +170,14 @@ struct SaveTimer {
 type SaveTimerStartTerrainQuery<'a, 'b> = Query<
     'a,
     'b,
+    (Entity,),
     (
-        Entity,
         With<Chunk>,
         Without<ToLoadTerrain>,
         Without<ToGenerateTerrain>,
         Without<ToSaveTerrain>,
+        Changed<Chunk>,
     ),
-    Changed<Chunk>,
 >;
 
 /// We don't want to stress the hard drive too hard so we start a timer with each modification, waiting for that to expire before we
@@ -200,9 +189,7 @@ fn save_timer_start(
 ) {
     let save_deadline = terrain_time.time + CHUNK_TIME_TO_SAVE;
 
-    for (entity, _with_chunk, _without_to_load, _without_to_generate, _without_to_save) in
-        terrain.iter()
-    {
+    for (entity,) in terrain.iter() {
         // This will replace a save deadline timer, thus extending its time to save.
         commands.entity(entity).insert(SaveTimer {
             deadline: save_deadline,
@@ -229,10 +216,10 @@ fn save_timer_trigger(
 
 fn save_on_shutdown(
     mut commands: Commands,
-    mut events: EventReader<AppExit>,
+    mut events: bevy::ecs::message::MessageReader<AppExit>,
     chunks: Query<Entity, With<Chunk>>,
 ) {
-    if events.iter().next().is_some() {
+    if events.read().next().is_some() {
         // Save! Save everything!
         for chunk in chunks.iter() {
             commands.entity(chunk).insert(ToSaveTerrain);
@@ -241,19 +228,41 @@ fn save_on_shutdown(
 }
 
 pub fn register_terrain_files(app: &mut App) {
+    #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+    struct SaveTimerStartSet;
+
+    #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+    struct SaveTimerTriggerSet;
+
+    #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+    struct SaveTerrainSet;
+
+    #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+    struct SaveOnShutdownSet;
+
+    app.configure_sets(Update, SaveTimerStartSet.after(super::terrain_time_tick));
+    app.configure_sets(
+        Update,
+        SaveTimerTriggerSet
+            .after(SaveTimerStartSet)
+            .before(SaveTerrainSet),
+    );
+    app.configure_sets(PostUpdate, SaveOnShutdownSet.before(SaveTerrainSet));
+
     app.add_systems(
         Update,
         (
-            load_terrain.pipe(crate::error_handler),
-            save_timer_start.before(super::terrain_time_tick),
-            save_timer_trigger
-                .after(save_timer_start)
-                .before(save_terrain),
+            load_terrain,
+            save_timer_start.in_set(SaveTimerStartSet),
+            save_timer_trigger.in_set(SaveTimerTriggerSet),
         ),
     );
 
     app.add_systems(
         PostUpdate,
-        (save_terrain, save_on_shutdown.before(save_terrain)),
+        (
+            save_terrain.in_set(SaveTerrainSet),
+            save_on_shutdown.in_set(SaveOnShutdownSet),
+        ),
     );
 }

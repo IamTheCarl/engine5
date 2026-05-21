@@ -13,6 +13,13 @@ pub mod generation;
 
 use crate::{config::player_info::PlayerInfo, error_handler, GameState};
 
+fn has_world_entity(we: Option<Res<WorldEntity>>) -> bool {
+    we.is_some()
+}
+fn has_spawn_request(sr: Option<Res<SpawnLocalPlayerRequest>>) -> bool {
+    sr.is_some()
+}
+
 use self::{
     generation::OscillatingHills,
     physics::Position,
@@ -113,12 +120,8 @@ pub fn raw_open_file_backed_world(
     Ok(())
 }
 
-pub fn client_world<'w, 's, 'a>(commands: &'a mut Commands<'w, 's>) -> EntityCommands<'w, 's, 'a> {
-    let world_commands = commands.spawn((
-        World,
-        TransformBundle::default(),
-        VisibilityBundle::default(),
-    ));
+pub fn client_world<'a>(commands: &'a mut Commands) -> EntityCommands<'a> {
+    let world_commands = commands.spawn((World, Transform::default(), Visibility::default()));
 
     let entity = world_commands.id();
     commands.insert_resource(WorldEntity { entity });
@@ -140,7 +143,7 @@ fn spawn_local_player(
     storage: Option<ResMut<EntityStorage>>,
     offline_players: Query<(Entity, &PlayerEntity), Without<ActivePlayer>>,
     player_spawn: Query<&Position, With<PlayerSpawner>>,
-) -> Result<()> {
+) {
     // Check if the player already exists in the world.
     for (player_entity, offline_player) in offline_players.iter() {
         if offline_player.name == local_player_request.name {
@@ -151,33 +154,27 @@ fn spawn_local_player(
                 .insert(ActivePlayer);
 
             commands.remove_resource::<SpawnLocalPlayerRequest>();
-            return Ok(());
+            return;
         }
     }
 
     // Looks like they don't.
     if let Some(storage) = storage {
         // Spawn them in, if it's a single player world.
-        if let Ok(spawn_position) = player_spawn.get_single() {
-            dbg!();
-            PlayerEntity::spawn_deactivated(
+        if let Some(spawn_position) = player_spawn.iter().next().map(|pos| pos.clone()) {
+            let _ = PlayerEntity::spawn_deactivated(
                 world_entity.entity,
                 &mut commands,
                 &storage,
-                spawn_position.clone(),
+                spawn_position,
                 local_player_request.name.clone(),
                 0.0,
-            )?
-            .insert(LocalPlayer)
-            .insert(ActivePlayer);
-
+            );
             commands.remove_resource::<SpawnLocalPlayerRequest>();
         }
     }
 
     // If it's not a single-player world, we'll just wait for the server to send us a player.
-
-    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash, States)]
@@ -195,8 +192,8 @@ pub struct ViewRadius {
 
 fn unload_world(mut commands: Commands, world_entities: Query<Entity, With<World>>) {
     for entity in world_entities.iter() {
-        if let Some(entity) = commands.get_entity(entity) {
-            entity.despawn_recursive();
+        if let Ok(mut entity) = commands.get_entity(entity) {
+            entity.despawn();
         }
     }
 
@@ -214,16 +211,9 @@ impl Plugin for WorldPlugin {
             spatial_entities::SpatialEntityPlugin,
         ));
 
-        app.add_state::<WorldState>();
+        app.init_state::<WorldState>();
         app.add_systems(OnExit(GameState::InGame), unload_world);
-        app.add_systems(
-            Update,
-            spawn_local_player
-                .pipe(error_handler)
-                .run_if(resource_exists::<WorldEntity>())
-                .run_if(resource_exists::<SpawnLocalPlayerRequest>())
-                .run_if(in_state(WorldState::Running)),
-        );
+        app.add_systems(Update, spawn_local_player);
 
         generation::setup_terrain_generation(app);
         commands::setup(app);

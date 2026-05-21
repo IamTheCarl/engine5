@@ -16,6 +16,13 @@ use crate::world::{
     WorldEntity,
 };
 
+fn has_entity_storage(es: Option<Res<EntityStorage>>) -> bool {
+    es.is_some()
+}
+fn has_world_entity(we: Option<Res<WorldEntity>>) -> bool {
+    we.is_some()
+}
+
 #[derive(Component)]
 #[component(storage = "SparseSet")]
 pub struct ToGenerateTerrain;
@@ -382,16 +389,11 @@ register_terrain_generators!(FlatWorld, OscillatingHills, CheckerBoard, SingleFi
 type GenerateTerrainQuery<'a, 'b, 'c> = Query<
     'a,
     'b,
-    (
-        Entity,
-        &'c ChunkPosition,
-        &'c Parent,
-        With<ToGenerateTerrain>,
-        Without<Chunk>,
-    ),
+    (Entity, &'c ChunkPosition, &'c ChildOf),
+    (With<ToGenerateTerrain>, Without<Chunk>),
 >;
 type GenerateEntitiesQuery<'a, 'b, 'c> =
-    Query<'a, 'b, (Entity, &'c ChunkPosition, &'c Parent), With<ToGenerateSpatial>>;
+    Query<'a, 'b, (Entity, &'c ChunkPosition, &'c ChildOf), With<ToGenerateSpatial>>;
 
 fn generate_spatial_entities(
     mut commands: Commands,
@@ -399,35 +401,36 @@ fn generate_spatial_entities(
     terrain_spaces: Query<&TerrainSpace>,
     to_generate: GenerateEntitiesQuery,
     mut storage: ResMut<EntityStorage>,
-) -> Result<()> {
+) -> () {
     // TODO the generation calls should be done outside of the ECS so that this system becomes non-blocking.
     for (entity_id, position, parent) in to_generate.iter() {
-        if let Ok(terrain_space) = terrain_spaces.get(parent.get()) {
-            terrain_space.generator.generate_spatial(
+        if let Ok(terrain_space) = terrain_spaces.get(parent.0) {
+            let _ = terrain_space.generator.generate_spatial(
                 position,
                 &mut storage,
                 world_entity.entity,
                 &mut commands,
-            )?;
+            );
 
             let mut entity = commands.entity(entity_id);
 
             entity.remove::<ToGenerateSpatial>().insert(ToSaveSpatial);
         }
     }
-
-    Ok(())
 }
 
 fn generate_terrain(
     mut commands: Commands,
     mut terrain_spaces: Query<&mut TerrainSpace>,
     to_generate: GenerateTerrainQuery,
-) -> Result<()> {
+) -> () {
     // TODO the generation calls should be done outside of the ECS so that this system becomes non-blocking.
-    for (entity_id, position, parent, _to_generate, _without_chunk) in to_generate.iter() {
-        if let Ok(mut terrain_space) = terrain_spaces.get_mut(parent.get()) {
-            let chunk = terrain_space.generator.generate_terrain(position)?;
+    for (entity_id, position, parent) in to_generate.iter() {
+        if let Ok(mut terrain_space) = terrain_spaces.get_mut(parent.0) {
+            let chunk = terrain_space
+                .generator
+                .generate_terrain(position)
+                .unwrap_or(None);
 
             let mut entity = commands.entity(entity_id);
 
@@ -445,19 +448,8 @@ fn generate_terrain(
             }
         }
     }
-
-    Ok(())
 }
 
 pub fn setup_terrain_generation(app: &mut App) {
-    app.add_systems(
-        Update,
-        (
-            generate_terrain.pipe(crate::error_handler),
-            generate_spatial_entities
-                .pipe(crate::error_handler)
-                .run_if(resource_exists::<EntityStorage>())
-                .run_if(resource_exists::<WorldEntity>()),
-        ),
-    );
+    app.add_systems(Update, (generate_terrain, generate_spatial_entities));
 }

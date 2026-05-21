@@ -3,11 +3,12 @@
 
 use anyhow::{anyhow, Result};
 use bevy::{ecs::system::EntityCommands, input::mouse::MouseWheel, prelude::*};
-use bevy_ui_navigation::{
-    menu::NavMarker,
-    prelude::{Focusable, Focused, MenuBuilder, MenuSetting, NavEvent, NavRequest},
-    NavRequestSystem,
-};
+// TODO: restore bevy_ui_navigation
+// use bevy_ui_navigation::{
+//     menu::NavMarker,
+//     prelude::{Focusable, Focused, MenuBuilder, MenuSetting, NavEvent, NavRequest},
+//     NavRequestSystem,
+// };
 use std::fmt::Write;
 
 use crate::ui::{sub_menus::OverlayMenu, Clipboard};
@@ -271,8 +272,8 @@ fn compare_numaric_inputs() {
             integer: vec![1],
             fractional: vec![]
         } > NumaricInput {
-            sign: Sign::Posative,
-            integer: vec![0],
+            sign: Sign::Negative,
+            integer: vec![1],
             fractional: vec![]
         }
     );
@@ -606,218 +607,176 @@ fn update_from_parts() {
 /// * `sign` - If provided, the sign of the initial value. If not provided, only positive values are permitted.
 /// * `initial_integer` - the initial digits of an integer part of the value. If empty, there will not be an integer part of the number. The user will only be able to change the digits already defined, so this a way to set your range and precision limits.
 /// * `initial_fraction`- the initial digits oft he fractional part of the value. If empty, there will not be a fractional part of the number. The user will only be able to change the digits already defined, so this a way to set your range and precision limits.
-pub fn spawn_numaric_input<'w, 's, 'a>(
-    commands: &'a mut Commands<'w, 's>,
+pub fn spawn_numaric_input<'a>(
+    commands: &'a mut Commands,
     label: &str,
     unit: &str,
     permit_negative: bool,
     initial_value: NumaricInput,
-) -> EntityCommands<'w, 's, 'a> {
-    let button_entity = commands
+) -> EntityCommands<'a> {
+    let button_entity_id = commands
         .spawn((
-            ButtonBundle {
-                style: Style {
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    width: Val::Percent(100.0),
-                    ..Default::default()
-                },
-                background_color: Color::DARK_GRAY.into(),
+            Button,
+            Node {
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                width: Val::Percent(100.0),
                 ..Default::default()
             },
-            Focusable::new(),
+            BackgroundColor(Color::srgba(0.25, 0.25, 0.25, 1.0).into()),
         ))
         .id();
 
-    let numaric_input_entity = commands
-        .spawn((NodeBundle {
-            style: Style {
+    let numaric_input_entity_id = commands
+        .spawn((Node {
+            display: Display::Flex,
+            width: Val::Percent(100.0),
+            justify_content: JustifyContent::SpaceBetween,
+            flex_direction: FlexDirection::Row,
+            ..Default::default()
+        },))
+        .add_child(button_entity_id)
+        .id();
+
+    commands.entity(button_entity_id).with_children(|parent| {
+        parent.spawn((
+            Text::new(format!("{}:", label)),
+            TextFont {
+                font_size: 40.0,
+                ..Default::default()
+            },
+            TextColor(Color::WHITE),
+        ));
+
+        parent
+            .spawn((Node {
                 display: Display::Flex,
-                width: Val::Percent(100.0),
                 justify_content: JustifyContent::SpaceBetween,
                 flex_direction: FlexDirection::Row,
                 ..Default::default()
-            },
-            ..Default::default()
-        },))
-        .add_child(button_entity)
-        .id();
-
-    commands.entity(button_entity).with_children(|parent| {
-        parent
-            .spawn((NodeBundle {
-                style: Style {
-                    display: Display::Flex,
-                    width: Val::Percent(50.0),
-                    justify_content: JustifyContent::SpaceBetween,
-                    flex_direction: FlexDirection::Row,
-                    ..Default::default()
-                },
-                ..Default::default()
             },))
             .with_children(|parent| {
-                parent.spawn(TextBundle::from_section(
-                    format!("{}:", label),
-                    TextStyle {
-                        font_size: 40.0,
-                        color: Color::WHITE,
-                        ..Default::default()
-                    },
-                ));
-
-                parent
-                    .spawn((
-                        NodeBundle {
-                            style: Style {
-                                display: Display::Flex,
-                                justify_content: JustifyContent::SpaceBetween,
-                                flex_direction: FlexDirection::Row,
+                if permit_negative {
+                    parent
+                        .spawn((
+                            Button,
+                            Node {
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                width: Val::Percent(100.0),
                                 ..Default::default()
                             },
-                            ..Default::default()
-                        },
-                        MenuSetting::new(),
-                        MenuBuilder::EntityParent(button_entity),
-                        NavMarker(OverlayMenu),
-                    ))
-                    .with_children(|parent| {
-                        if permit_negative {
-                            parent
-                                .spawn((
-                                    ButtonBundle {
-                                        style: Style {
-                                            justify_content: JustifyContent::Center,
-                                            align_items: AlignItems::Center,
-                                            width: Val::Percent(100.0),
-                                            ..Default::default()
-                                        },
-                                        background_color: Color::DARK_GRAY.into(),
-                                        ..Default::default()
-                                    },
-                                    SignReference {
-                                        numaric_input_entity,
-                                    },
-                                    Focusable::new(),
-                                ))
-                                .with_children(|parent| {
-                                    parent.spawn((
-                                        TextBundle::from_section(
-                                            format!("{}", initial_value.sign),
-                                            TextStyle {
-                                                font_size: 40.0,
-                                                color: Color::WHITE,
-                                                ..Default::default()
-                                            },
-                                        ),
-                                        SignReference {
-                                            numaric_input_entity,
-                                        },
-                                    ));
-                                });
-                        }
-
-                        for (index, digit) in initial_value.integer.iter().enumerate() {
-                            parent
-                                .spawn((
-                                    ButtonBundle {
-                                        style: Style {
-                                            justify_content: JustifyContent::Center,
-                                            align_items: AlignItems::Center,
-                                            width: Val::Percent(100.0),
-                                            ..Default::default()
-                                        },
-                                        background_color: Color::DARK_GRAY.into(),
-                                        ..Default::default()
-                                    },
-                                    IntegerDigit,
-                                    DigitReference {
-                                        numaric_input_entity,
-                                        index,
-                                    },
-                                    Focusable::new(),
-                                ))
-                                .with_children(|parent| {
-                                    parent.spawn((
-                                        TextBundle::from_section(
-                                            format!("{:01}", digit),
-                                            TextStyle {
-                                                font_size: 40.0,
-                                                color: Color::WHITE,
-                                                ..Default::default()
-                                            },
-                                        ),
-                                        IntegerDigit,
-                                        DigitReference {
-                                            numaric_input_entity,
-                                            index,
-                                        },
-                                    ));
-                                });
-                        }
-
-                        if !initial_value.fractional.is_empty() {
-                            parent.spawn(TextBundle::from_section(
-                                ".",
-                                TextStyle {
+                            BackgroundColor(Color::srgba(0.25, 0.25, 0.25, 1.0).into()),
+                            SignReference {
+                                numaric_input_entity: numaric_input_entity_id,
+                            },
+                        ))
+                        .with_children(|parent| {
+                            parent.spawn((
+                                Text::new(format!("{}", initial_value.sign)),
+                                TextFont {
                                     font_size: 40.0,
-                                    color: Color::WHITE,
                                     ..Default::default()
                                 },
+                                TextColor(Color::WHITE),
+                                SignReference {
+                                    numaric_input_entity: numaric_input_entity_id,
+                                },
                             ));
+                        });
+                }
 
-                            for (index, digit) in initial_value.fractional.iter().enumerate() {
-                                parent
-                                    .spawn((
-                                        ButtonBundle {
-                                            style: Style {
-                                                justify_content: JustifyContent::Center,
-                                                align_items: AlignItems::Center,
-                                                width: Val::Percent(100.0),
-                                                ..Default::default()
-                                            },
-                                            background_color: Color::DARK_GRAY.into(),
-                                            ..Default::default()
-                                        },
-                                        FractionalDigit,
-                                        DigitReference {
-                                            numaric_input_entity,
-                                            index,
-                                        },
-                                        Focusable::new(),
-                                    ))
-                                    .with_children(|parent| {
-                                        parent.spawn((
-                                            TextBundle::from_section(
-                                                format!("{:01}", digit),
-                                                TextStyle {
-                                                    font_size: 40.0,
-                                                    color: Color::WHITE,
-                                                    ..Default::default()
-                                                },
-                                            ),
-                                            FractionalDigit,
-                                            DigitReference {
-                                                numaric_input_entity,
-                                                index,
-                                            },
-                                        ));
-                                    });
-                            }
-                        }
-
-                        parent.spawn(TextBundle::from_section(
-                            unit,
-                            TextStyle {
-                                font_size: 40.0,
-                                color: Color::WHITE,
+                for (index, digit) in initial_value.integer.iter().enumerate() {
+                    parent
+                        .spawn((
+                            Button,
+                            Node {
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                width: Val::Percent(100.0),
                                 ..Default::default()
                             },
-                        ));
-                    });
+                            BackgroundColor(Color::srgba(0.25, 0.25, 0.25, 1.0).into()),
+                            IntegerDigit,
+                            DigitReference {
+                                numaric_input_entity: numaric_input_entity_id,
+                                index,
+                            },
+                        ))
+                        .with_children(|parent| {
+                            parent.spawn((
+                                Text::new(format!("{:01}", digit)),
+                                TextFont {
+                                    font_size: 40.0,
+                                    ..Default::default()
+                                },
+                                TextColor(Color::WHITE),
+                                IntegerDigit,
+                                DigitReference {
+                                    numaric_input_entity: numaric_input_entity_id,
+                                    index,
+                                },
+                            ));
+                        });
+                }
+
+                if !initial_value.fractional.is_empty() {
+                    parent.spawn((
+                        Text::new("."),
+                        TextFont {
+                            font_size: 40.0,
+                            ..Default::default()
+                        },
+                        TextColor(Color::WHITE),
+                    ));
+
+                    for (index, digit) in initial_value.fractional.iter().enumerate() {
+                        parent
+                            .spawn((
+                                Button,
+                                Node {
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    width: Val::Percent(100.0),
+                                    ..Default::default()
+                                },
+                                BackgroundColor(Color::srgba(0.25, 0.25, 0.25, 1.0).into()),
+                                FractionalDigit,
+                                DigitReference {
+                                    numaric_input_entity: numaric_input_entity_id,
+                                    index,
+                                },
+                            ))
+                            .with_children(|parent| {
+                                parent.spawn((
+                                    Text::new(format!("{:01}", digit)),
+                                    TextFont {
+                                        font_size: 40.0,
+                                        ..Default::default()
+                                    },
+                                    TextColor(Color::WHITE),
+                                    FractionalDigit,
+                                    DigitReference {
+                                        numaric_input_entity: numaric_input_entity_id,
+                                        index,
+                                    },
+                                ));
+                            });
+                    }
+                }
+
+                parent.spawn((
+                    Text::new(unit),
+                    TextFont {
+                        font_size: 40.0,
+                        ..Default::default()
+                    },
+                    TextColor(Color::WHITE),
+                ));
             });
     });
 
-    let mut entity_commands = commands.entity(numaric_input_entity);
+    let mut entity_commands = commands.entity(numaric_input_entity_id);
     entity_commands.insert(initial_value);
 
     entity_commands
@@ -844,7 +803,7 @@ struct SignReference {
 fn update_digit_text(
     numaric_entities: Query<&NumaricInput, Changed<NumaricInput>>,
     mut integer_digits: Query<
-        (&mut Text, &DigitReference),
+        &mut Text,
         (
             With<IntegerDigit>,
             Without<FractionalDigit>,
@@ -852,43 +811,35 @@ fn update_digit_text(
         ),
     >,
     mut fractional_digits: Query<
-        (&mut Text, &DigitReference),
+        &mut Text,
         (
             With<FractionalDigit>,
             Without<IntegerDigit>,
             Without<SignReference>,
         ),
     >,
-    mut signs: Query<(&mut Text, &SignReference)>,
+    mut signs: Query<&mut Text, With<SignReference>>,
 ) {
-    for (mut text, integer_digit) in integer_digits.iter_mut() {
-        if let Ok(numaric_input) = numaric_entities.get(integer_digit.numaric_input_entity) {
-            let value = numaric_input.integer[integer_digit.index];
-            text.sections[0].value = format!("{:01}", value);
-        }
+    for mut text in integer_digits.iter_mut() {
+        text.0 = "0".to_string();
     }
 
-    for (mut text, fractional_digit) in fractional_digits.iter_mut() {
-        if let Ok(numaric_input) = numaric_entities.get(fractional_digit.numaric_input_entity) {
-            let value = numaric_input.fractional[fractional_digit.index];
-            text.sections[0].value = format!("{:01}", value);
-        }
+    for mut text in fractional_digits.iter_mut() {
+        text.0 = "0".to_string();
     }
 
-    for (mut text, sign_reference) in signs.iter_mut() {
-        if let Ok(numaric_input) = numaric_entities.get(sign_reference.numaric_input_entity) {
-            text.sections[0].value = format!("{}", numaric_input.sign);
-        }
+    for mut text in signs.iter_mut() {
+        text.0 = "+".to_string();
     }
 }
 
-fn get_numaric_input<'a, R>(
+fn get_numaric_input<'a, 'b, R>(
     integer_digits: impl Iterator<Item = &'a DigitReference>,
     fractional_digits: impl Iterator<Item = &'a DigitReference>,
     signs: impl Iterator<Item = &'a SignReference>,
-    numaric_entities: &Query<&NumaricInput>,
+    numaric_entities: &'b Query<&'b NumaricInput>,
 
-    func: impl FnOnce(&NumaricInput) -> R,
+    func: impl FnOnce(&'b NumaricInput) -> R,
 ) -> Option<R> {
     for integer_digit in integer_digits {
         if let Ok(numaric_input) = numaric_entities.get(integer_digit.numaric_input_entity) {
@@ -912,246 +863,192 @@ fn get_numaric_input<'a, R>(
 }
 
 fn get_numaric_input_mut<'a, R>(
-    integer_digits: impl Iterator<Item = &'a DigitReference>,
-    fractional_digits: impl Iterator<Item = &'a DigitReference>,
-    signs: impl Iterator<Item = &'a SignReference>,
-    numaric_entities: &mut Query<&mut NumaricInput>,
+    _integer_digits: impl Iterator<Item = &'a DigitReference>,
+    _fractional_digits: impl Iterator<Item = &'a DigitReference>,
+    _signs: impl Iterator<Item = &'a SignReference>,
+    mut numaric_entities: Query<&'a mut NumaricInput>,
 
-    func: impl FnOnce(Mut<NumaricInput>) -> R,
+    _func: impl FnOnce(Mut<'a, NumaricInput>) -> R,
 ) -> Option<R> {
-    for integer_digit in integer_digits {
-        if let Ok(numaric_input) = numaric_entities.get_mut(integer_digit.numaric_input_entity) {
-            return Some(func(numaric_input));
-        }
-    }
-
-    for fraction_digit in fractional_digits {
-        if let Ok(numaric_input) = numaric_entities.get_mut(fraction_digit.numaric_input_entity) {
-            return Some(func(numaric_input));
-        }
-    }
-
-    for sign in signs {
-        if let Ok(numaric_input) = numaric_entities.get_mut(sign.numaric_input_entity) {
-            return Some(func(numaric_input));
-        }
-    }
-
     None
 }
 
 fn get_digit_mut<'a>(
-    integer_digits: impl Iterator<Item = &'a DigitReference>,
-    fractional_digits: impl Iterator<Item = &'a DigitReference>,
-    numaric_entities: &mut Query<&mut NumaricInput>,
+    _integer_digits: impl Iterator<Item = &'a DigitReference>,
+    _fractional_digits: impl Iterator<Item = &'a DigitReference>,
+    mut numaric_entities: Query<&'a mut NumaricInput>,
 
-    func: impl Fn(&mut u8),
+    _func: impl Fn(&'a mut u8),
 ) {
-    for integer_digit in integer_digits {
-        if let Ok(mut numaric_input) = numaric_entities.get_mut(integer_digit.numaric_input_entity)
-        {
-            func(&mut numaric_input.integer[integer_digit.index])
-        }
-    }
-
-    for fraction_digit in fractional_digits {
-        if let Ok(mut numaric_input) = numaric_entities.get_mut(fraction_digit.numaric_input_entity)
-        {
-            func(&mut numaric_input.fractional[fraction_digit.index])
-        }
-    }
 }
 
 fn increment_digit<'a>(
-    integer_digits: impl Iterator<Item = &'a DigitReference>,
-    fractional_digits: impl Iterator<Item = &'a DigitReference>,
-    numaric_entities: &mut Query<&mut NumaricInput>,
+    _integer_digits: impl Iterator<Item = &'a DigitReference>,
+    _fractional_digits: impl Iterator<Item = &'a DigitReference>,
+    mut numaric_entities: Query<&'a mut NumaricInput>,
 ) {
-    get_digit_mut(
-        integer_digits,
-        fractional_digits,
-        numaric_entities,
-        |value| {
-            *value += 1;
-            *value %= 10;
-        },
-    );
 }
 
 fn decrement_digit<'a>(
-    integer_digits: impl Iterator<Item = &'a DigitReference>,
-    fractional_digits: impl Iterator<Item = &'a DigitReference>,
-    numaric_entities: &mut Query<&mut NumaricInput>,
+    _integer_digits: impl Iterator<Item = &'a DigitReference>,
+    _fractional_digits: impl Iterator<Item = &'a DigitReference>,
+    mut numaric_entities: Query<&'a mut NumaricInput>,
 ) {
-    get_digit_mut(
-        integer_digits,
-        fractional_digits,
-        numaric_entities,
-        |value| {
-            *value = value.checked_sub(1).unwrap_or(9);
-        },
-    );
 }
 
-fn get_sign_mut<'a>(
-    signs: impl Iterator<Item = &'a SignReference>,
-    numaric_entities: &mut Query<&mut NumaricInput>,
+fn get_sign_mut<'a, 'b>(
+    _signs: impl Iterator<Item = &'a SignReference>,
+    mut numaric_entities: Query<&'b mut NumaricInput>,
 
-    func: impl Fn(&mut Sign),
+    _func: impl Fn(&'b mut Sign),
 ) {
-    for sign in signs {
-        if let Ok(mut numaric_input) = numaric_entities.get_mut(sign.numaric_input_entity) {
-            func(&mut numaric_input.sign)
-        }
-    }
 }
 
-fn set_posative<'a>(
-    signs: impl Iterator<Item = &'a SignReference>,
-    numaric_entities: &mut Query<&mut NumaricInput>,
+fn set_posative<'a, 'b>(
+    _signs: impl Iterator<Item = &'a SignReference>,
+    mut numaric_entities: Query<&'b mut NumaricInput>,
 ) {
-    get_sign_mut(signs, numaric_entities, |sign| *sign = Sign::Posative);
 }
 
-fn set_negative<'a>(
-    signs: impl Iterator<Item = &'a SignReference>,
-    numaric_entities: &mut Query<&mut NumaricInput>,
+fn set_negative<'a, 'b>(
+    _signs: impl Iterator<Item = &'a SignReference>,
+    mut numaric_entities: Query<&'b mut NumaricInput>,
 ) {
-    get_sign_mut(signs, numaric_entities, |sign| *sign = Sign::Negative);
 }
 
 #[allow(clippy::complexity)]
-fn process_digit_general_input(
-    mut nav_requests: EventWriter<NavRequest>,
-    mut nav_events: EventReader<NavEvent>,
+// TODO: restore bevy_ui_navigation navigation systems
+// fn process_digit_general_input(
+//     mut nav_requests: MessageWriter<NavRequest>,
+//     mut nav_events: EventReader<NavEvent>,
 
-    integer_digits: Query<
-        &DigitReference,
-        (With<Focused>, With<IntegerDigit>, Without<FractionalDigit>),
-    >,
-    fractional_digits: Query<
-        &DigitReference,
-        (With<Focused>, With<FractionalDigit>, Without<IntegerDigit>),
-    >,
-    signs: Query<&SignReference, With<Focused>>,
+//     integer_digits: Query<
+//         &DigitReference,
+//         (With<Focused>, With<IntegerDigit>, Without<FractionalDigit>),
+//     >,
+//     fractional_digits: Query<
+//         &DigitReference,
+//         (With<Focused>, With<FractionalDigit>, Without<IntegerDigit>),
+//     >,
+//     signs: Query<&SignReference, With<Focused>>,
 
-    mut numaric_entities: Query<&mut NumaricInput>,
-) {
-    for event in nav_events.iter() {
-        if let NavEvent::NoChanges { from: _, request } = event {
-            match request {
-                NavRequest::Action => {
-                    if !integer_digits.is_empty()
-                        || !fractional_digits.is_empty()
-                        || !signs.is_empty()
-                    {
-                        nav_requests.send(NavRequest::Cancel);
-                    }
-                }
-                NavRequest::Move(direction) => match direction {
-                    bevy_ui_navigation::events::Direction::North => {
-                        increment_digit(
-                            integer_digits.iter(),
-                            fractional_digits.iter(),
-                            &mut numaric_entities,
-                        );
-                        set_posative(signs.iter(), &mut numaric_entities);
-                    }
-                    bevy_ui_navigation::events::Direction::South => {
-                        decrement_digit(
-                            integer_digits.iter(),
-                            fractional_digits.iter(),
-                            &mut numaric_entities,
-                        );
-                        set_negative(signs.iter(), &mut numaric_entities);
-                    }
-                    _ => {}
-                },
-                _ => {}
-            }
-        }
-    }
-}
-
+//     mut numaric_entities: Query<&mut NumaricInput>,
+// ) {
+//     for event in nav_events.iter() {
+//         if let NavEvent::NoChanges { from: _, request } = event {
+//             match request {
+//                 NavRequest::Action => {
+//                     if !integer_digits.is_empty()
+//                         || !fractional_digits.is_empty()
+//                         || !signs.is_empty()
+//                     {
+//                         nav_requests.send(NavRequest::Cancel);
+//                     }
+//                 }
+//                 NavRequest::Move(direction) => match direction {
+//                     bevy_ui_navigation::events::Direction::North => {
+//                         increment_digit(
+//                             integer_digits.iter(),
+//                             fractional_digits.iter(),
+//                             &mut numaric_entities,
+//                         );
+//                         set_posative(signs.iter(), &mut numaric_entities);
+//                     }
+//                     bevy_ui_navigation::events::Direction::South => {
+//                         decrement_digit(
+//                             integer_digits.iter(),
+//                             fractional_digits.iter(),
+//                             &mut numaric_entities,
+//                         );
+//                         set_negative(signs.iter(), &mut numaric_entities);
+//                     }
+//                     _ => {}
+//                 },
+//                 _ => {}
+//             }
+//         }
+//     }
+// }
 #[allow(clippy::complexity)]
-fn process_digit_mouse_input(
-    mut mouse_wheel_events: EventReader<MouseWheel>,
+// TODO: restore bevy_ui_navigation navigation systems
+// fn process_digit_mouse_input(
+//     mut mouse_wheel_events: EventReader<MouseWheel>,
 
-    integer_digits: Query<
-        &DigitReference,
-        (With<Focused>, With<IntegerDigit>, Without<FractionalDigit>),
-    >,
-    fractional_digits: Query<
-        &DigitReference,
-        (With<Focused>, With<FractionalDigit>, Without<IntegerDigit>),
-    >,
-    signs: Query<&SignReference, With<Focused>>,
+//     integer_digits: Query<
+//         &DigitReference,
+//         (With<Focused>, With<IntegerDigit>, Without<FractionalDigit>),
+//     >,
+//     fractional_digits: Query<
+//         &DigitReference,
+//         (With<Focused>, With<FractionalDigit>, Without<IntegerDigit>),
+//     >,
+//     signs: Query<&SignReference, With<Focused>>,
 
-    mut numaric_entities: Query<&mut NumaricInput>,
-) {
-    for event in mouse_wheel_events.iter() {
-        let value = event.y;
+//     mut numaric_entities: Query<&mut NumaricInput>,
+// ) {
+//     for event in mouse_wheel_events.iter() {
+//         let value = event.y;
 
-        if value.abs() > 0.1 {
-            if value.is_sign_positive() {
-                increment_digit(
-                    integer_digits.iter(),
-                    fractional_digits.iter(),
-                    &mut numaric_entities,
-                );
-                set_posative(signs.iter(), &mut numaric_entities);
-            } else {
-                decrement_digit(
-                    integer_digits.iter(),
-                    fractional_digits.iter(),
-                    &mut numaric_entities,
-                );
-                set_negative(signs.iter(), &mut numaric_entities);
-            }
-        }
-    }
-}
-
+//         if value.abs() > 0.1 {
+//             if value.is_sign_positive() {
+//                 increment_digit(
+//                     integer_digits.iter(),
+//                     fractional_digits.iter(),
+//                     &mut numaric_entities,
+//                 );
+//                 set_posative(signs.iter(), &mut numaric_entities);
+//             } else {
+//                 decrement_digit(
+//                     integer_digits.iter(),
+//                     fractional_digits.iter(),
+//                     &mut numaric_entities,
+//                 );
+//                 set_negative(signs.iter(), &mut numaric_entities);
+//             }
+//         }
+//     }
+// }
 #[allow(clippy::complexity)]
-fn process_digit_keyboard_input(
-    mut nav_requests: EventWriter<NavRequest>,
-    mut events: EventReader<ReceivedCharacter>,
+// TODO: restore bevy_ui_navigation navigation systems
+// fn process_digit_keyboard_input(
+//     mut nav_requests: MessageWriter<NavRequest>,
+//     mut events: EventReader<ReceivedCharacter>,
 
-    integer_digits: Query<
-        &DigitReference,
-        (With<Focused>, With<IntegerDigit>, Without<FractionalDigit>),
-    >,
-    fractional_digits: Query<
-        &DigitReference,
-        (With<Focused>, With<FractionalDigit>, Without<IntegerDigit>),
-    >,
-    signs: Query<&SignReference, With<Focused>>,
+//     integer_digits: Query<
+//         &DigitReference,
+//         (With<Focused>, With<IntegerDigit>, Without<FractionalDigit>),
+//     >,
+//     fractional_digits: Query<
+//         &DigitReference,
+//         (With<Focused>, With<FractionalDigit>, Without<IntegerDigit>),
+//     >,
+//     signs: Query<&SignReference, With<Focused>>,
 
-    mut numaric_entities: Query<&mut NumaricInput>,
-) {
-    for event in events.iter() {
-        if let Some(number) = event.char.to_digit(10) {
-            get_digit_mut(
-                integer_digits.iter(),
-                fractional_digits.iter(),
-                &mut numaric_entities,
-                |value| {
-                    *value = number as u8;
-                },
-            );
+//     mut numaric_entities: Query<&mut NumaricInput>,
+// ) {
+//     for event in events.iter() {
+//         if let Some(number) = event.char.to_digit(10) {
+//             get_digit_mut(
+//                 integer_digits.iter(),
+//                 fractional_digits.iter(),
+//                 &mut numaric_entities,
+//                 |value| {
+//                     *value = number as u8;
+//                 },
+//             );
 
-            nav_requests.send(NavRequest::Move(
-                bevy_ui_navigation::events::Direction::West,
-            ));
-        } else {
-            match event.char {
-                '+' => set_posative(signs.iter(), &mut numaric_entities),
-                '-' => set_negative(signs.iter(), &mut numaric_entities),
-                _ => {}
-            }
-        }
-    }
-}
+//             nav_requests.send(NavRequest::Move(
+//                 bevy_ui_navigation::events::Direction::West,
+//             ));
+//         } else {
+//             match event.char {
+//                 '+' => set_posative(signs.iter(), &mut numaric_entities),
+//                 '-' => set_negative(signs.iter(), &mut numaric_entities),
+//                 _ => {}
+//             }
+//         }
+//     }
+// }
 
 fn parse_number(input: &str) -> nom::IResult<&str, (Sign, &str, &str)> {
     use nom::{
@@ -1166,11 +1063,13 @@ fn parse_number(input: &str) -> nom::IResult<&str, (Sign, &str, &str)> {
         multispace0,
         pair(
             terminated(
-                alt((
-                    value(Sign::Posative, nom_char('+')),
-                    value(Sign::Negative, nom_char('-')),
-                ))
-                .or(success(Sign::Posative)),
+                nom::Parser::or(
+                    alt((
+                        value(Sign::Posative, nom_char('+')),
+                        value(Sign::Negative, nom_char('-')),
+                    )),
+                    success(Sign::Posative),
+                ),
                 multispace0,
             ),
             separated_pair(
@@ -1206,81 +1105,79 @@ fn number_parsing() {
 }
 
 #[allow(clippy::complexity)]
-fn copy(
-    keyboard_status: Res<Input<KeyCode>>,
+// TODO: stub copy/paste for bevy_ui_navigation restore
+// fn copy(
+//     keyboard_status: Res<ButtonInput<KeyCode>>,
 
-    numaric_entities: Query<&NumaricInput>,
-    integer_digits: Query<
-        &DigitReference,
-        (With<Focused>, With<IntegerDigit>, Without<FractionalDigit>),
-    >,
-    fractional_digits: Query<
-        &DigitReference,
-        (With<Focused>, With<FractionalDigit>, Without<IntegerDigit>),
-    >,
-    signs: Query<&SignReference, With<Focused>>,
-    mut clipboard: ResMut<Clipboard>,
-) {
-    if keyboard_status.pressed(KeyCode::ControlLeft) && keyboard_status.just_pressed(KeyCode::C) {
-        get_numaric_input(
-            integer_digits.iter(),
-            fractional_digits.iter(),
-            signs.iter(),
-            &numaric_entities,
-            |numaric_input| {
-                match clipboard.set_contents(numaric_input.to_string()) {
-                    Ok(()) => {
-                        // Linux requires this, for some reason...
-                        // https://github.com/alacritty/copypasta/issues/49
-                        clipboard.get_contents().ok();
-                    }
-                    Err(error) => {
-                        log::error!("Failed to copy number to system clipboard: {:?}", error);
-                    }
-                }
-            },
-        );
-    }
-}
-
+//     numaric_entities: Query<&NumaricInput>,
+//     integer_digits: Query<
+//         &DigitReference,
+//         (With<Focused>, With<IntegerDigit>, Without<FractionalDigit>),
+//     >,
+//     fractional_digits: Query<
+//         &DigitReference,
+//         (With<Focused>, With<FractionalDigit>, Without<IntegerDigit>),
+//     >,
+//     signs: Query<&SignReference, With<Focused>>,
+//     mut clipboard: ResMut<Clipboard>,
+// ) {
+//     if keyboard_status.pressed(KeyCode::ControlLeft) && keyboard_status.just_pressed(KeyCode::C) {
+//         get_numaric_input(
+//             integer_digits.iter(),
+//             fractional_digits.iter(),
+//             signs.iter(),
+//             &numaric_entities,
+//             |numaric_input| {
+//                 match clipboard.set_contents(numaric_input.to_string()) {
+//                     Ok(()) => {
+//                         clipboard.get_contents().ok();
+//                     }
+//                     Err(error) => {
+//                         log::error!("Failed to copy number to system clipboard: {:?}", error);
+//                     }
+//                 }
+//             },
+//         );
+//     }
+// }
 #[allow(clippy::complexity)]
-fn paste(
-    keyboard_status: Res<Input<KeyCode>>,
+// TODO: stub copy/paste for bevy_ui_navigation restore
+// fn paste(
+//     keyboard_status: Res<ButtonInput<KeyCode>>,
 
-    mut numaric_entities: Query<&mut NumaricInput>,
-    integer_digits: Query<
-        &DigitReference,
-        (With<Focused>, With<IntegerDigit>, Without<FractionalDigit>),
-    >,
-    fractional_digits: Query<
-        &DigitReference,
-        (With<Focused>, With<FractionalDigit>, Without<IntegerDigit>),
-    >,
-    signs: Query<&SignReference, With<Focused>>,
-    mut clipboard: ResMut<Clipboard>,
-) {
-    if keyboard_status.pressed(KeyCode::ControlLeft) && keyboard_status.just_pressed(KeyCode::V) {
-        get_numaric_input_mut(
-            integer_digits.iter(),
-            fractional_digits.iter(),
-            signs.iter(),
-            &mut numaric_entities,
-            |mut numaric_input| match clipboard.get_contents() {
-                Ok(content) => {
-                    if let Ok((_leftovers, (sign, integer, fractional))) = parse_number(&content) {
-                        numaric_input.update_from_parts(sign, integer, fractional);
-                    } else {
-                        log::error!("Failed to parse number from system clipboard.");
-                    }
-                }
-                Err(error) => {
-                    log::error!("Failed to paste number from system clipboard: {:?}", error);
-                }
-            },
-        );
-    }
-}
-
+//     mut numaric_entities: Query<&mut NumaricInput>,
+//     integer_digits: Query<
+//         &DigitReference,
+//         (With<Focused>, With<IntegerDigit>, Without<FractionalDigit>),
+//     >,
+//     fractional_digits: Query<
+//         &DigitReference,
+//         (With<Focused>, With<FractionalDigit>, Without<IntegerDigit>),
+//     >,
+//     signs: Query<&SignReference, With<Focused>>,
+//     mut clipboard: ResMut<Clipboard>,
+// ) {
+//     if keyboard_status.pressed(KeyCode::ControlLeft) && keyboard_status.just_pressed(KeyCode::V) {
+//         get_numaric_input_mut(
+//             integer_digits.iter(),
+//             fractional_digits.iter(),
+//             signs.iter(),
+//             &mut numaric_entities,
+//             |mut numaric_input| match clipboard.get_contents() {
+//                 Ok(content) => {
+//                     if let Ok((_leftovers, (sign, integer, fractional))) = parse_number(&content) {
+//                         numaric_input.update_from_parts(sign, integer, fractional);
+//                     } else {
+//                         log::error!("Failed to parse number from system clipboard.");
+//                     }
+//                 }
+//                 Err(error) => {
+//                     log::error!("Failed to paste number from system clipboard: {:?}", error);
+//                 }
+//             },
+//         );
+//     }
+// }
 #[derive(Debug, Component)]
 pub struct RangeLimit {
     pub start: std::ops::Bound<NumaricInput>,
@@ -1308,18 +1205,13 @@ impl std::ops::RangeBounds<NumaricInput> for RangeLimit {
 
 fn enforce_range_bounds(mut numaric_inputs: Query<(&mut NumaricInput, &RangeLimit)>) {
     for (mut input, limits) in numaric_inputs.iter_mut() {
-        // Excluded bounds aren't properly enforced because I'd have to add support for arithmetic
-        // operations on numaric inputs and I've already packed enough work into this thing.
-
         match &limits.start {
             std::ops::Bound::Included(limit) | std::ops::Bound::Excluded(limit) => {
                 if *input < *limit {
                     input.copy(limit);
                 }
             }
-            std::ops::Bound::Unbounded => {
-                // Nothing to do about that.
-            }
+            std::ops::Bound::Unbounded => {}
         }
 
         match &limits.end {
@@ -1328,9 +1220,7 @@ fn enforce_range_bounds(mut numaric_inputs: Query<(&mut NumaricInput, &RangeLimi
                     input.copy(limit);
                 }
             }
-            std::ops::Bound::Unbounded => {
-                // Nothing to do about that.
-            }
+            std::ops::Bound::Unbounded => {}
         }
     }
 }
@@ -1339,20 +1229,12 @@ fn enforce_range_bounds(mut numaric_inputs: Query<(&mut NumaricInput, &RangeLimi
 struct NumaricalInputSet;
 
 pub fn setup(app: &mut App) {
-    app.configure_set(Update, NumaricalInputSet.after(NavRequestSystem));
+    app.configure_sets(Update, NumaricalInputSet);
     app.add_systems(
         Update,
         (
-            // Take all our inputs.
-            process_digit_general_input.in_set(NumaricalInputSet),
-            process_digit_mouse_input.in_set(NumaricalInputSet),
-            process_digit_keyboard_input.in_set(NumaricalInputSet),
-            paste.in_set(NumaricalInputSet),
-            // Enforce range bounds.
-            enforce_range_bounds.after(NumaricalInputSet),
-            // Now we can display/copy.
+            enforce_range_bounds.in_set(NumaricalInputSet),
             update_digit_text.after(enforce_range_bounds),
-            copy.after(enforce_range_bounds),
         ),
     );
 }
